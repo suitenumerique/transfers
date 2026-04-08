@@ -1,0 +1,323 @@
+"""Tests for mbox import with labels and flags via API."""
+# pylint: disable=redefined-outer-name,R0801
+# TODO: fix R0801 by refactoring the tests and merge into one filetest_messages_import_labels.py
+
+from django.core.files.storage import storages
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models import F, Q
+
+import pytest
+from rest_framework import status
+from rest_framework.test import APIClient
+
+from core import models
+from core.api.utils import get_file_key
+from core.factories import MailboxFactory, UserFactory
+
+IMPORT_FILE_URL = "/api/v1.0/import/file/"
+
+
+@pytest.fixture
+def api_client():
+    """Create an API client."""
+    return APIClient()
+
+
+@pytest.fixture
+def user():
+    """Create a test user."""
+    return UserFactory()
+
+
+@pytest.fixture
+def mailbox(user):
+    """Create a test mailbox with user access."""
+    mailbox = MailboxFactory()
+    mailbox.accesses.create(user=user, role=models.MailboxRoleChoices.ADMIN)
+    return mailbox
+
+
+@pytest.fixture
+def authenticated_client(api_client, user):
+    """Create an authenticated API client."""
+    api_client.force_authenticate(user=user)
+    return api_client
+
+
+@pytest.fixture
+def mbox_file_path():
+    """Get the path to the test mbox file."""
+    return "core/tests/resources/All mail Including Spam and Trash.mbox"
+
+
+@pytest.fixture
+def mbox_file(user, mbox_file_path):
+    """Get the test mbox file from test data and put it in the message imports bucket."""
+    with open(mbox_file_path, "rb") as f:
+        storage = storages["message-imports"]
+        s3_client = storage.connection.meta.client
+        file_content = f.read()
+        file = SimpleUploadedFile(
+            "test.mbox", file_content, content_type="application/mbox"
+        )
+        file_key = get_file_key(user.id, file.name)
+        s3_client.put_object(
+            Bucket=storage.bucket_name,
+            Key=file_key,
+            Body=file_content,
+            ContentType=file.content_type,
+        )
+
+    yield file
+
+    # Remove the file from the bucket at teardown
+    s3_client.delete_object(
+        Bucket=storage.bucket_name,
+        Key=file_key,
+    )
+
+
+def upload_mbox_file(client, mailbox, mbox_file):
+    """Helper function to upload mbox file via API."""
+    response = client.post(
+        IMPORT_FILE_URL,
+        {"filename": mbox_file.name, "recipient": str(mailbox.id)},
+        format="multipart",
+    )
+    return response
+
+
+@pytest.mark.django_db
+def test_api_import_labels_import_mbox_with_labels_and_flags(
+    authenticated_client, mailbox, mbox_file
+):
+    """Test that mbox import correctly creates labels and sets flags."""
+    # check db is empty
+    assert not models.Message.objects.exists()
+
+    # Import the mbox file via API
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+
+    # Check that the import was accepted
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    assert response.data["type"] == "mbox"
+    assert "task_id" in response.data
+
+    # Wait for the task to complete (in a real scenario, you'd poll the task status)
+    # For now, we'll assume the task completes and check the results
+
+    # Check that messages were created
+    messages = models.Message.objects.filter(thread__accesses__mailbox=mailbox)
+    assert messages.count() > 0
+
+    # Test specific message with "Inbox,Unread,Conseil municipal" labels
+    unread_filter = Q(
+        thread__accesses__mailbox=mailbox,
+        thread__accesses__read_at__isnull=True,
+    ) | Q(
+        thread__accesses__mailbox=mailbox,
+        created_at__gt=F("thread__accesses__read_at"),
+    )
+    unread_message = messages.filter(unread_filter).first()
+    assert unread_message is not None
+
+    # Check that "Conseil municipal" label was created
+    conseil_label = models.Label.objects.filter(
+        name="Conseil municipal", mailbox=mailbox
+    ).first()
+    assert conseil_label is not None
+    convocation_message = messages.get(
+        subject="Convocation au conseil municipal du 25 juin"
+    )
+    assert messages.filter(unread_filter, pk=convocation_message.pk).exists()
+    assert conseil_label in convocation_message.thread.labels.all()
+
+    # Test sent message with "Sent" labels is a flag and marked as read
+    sent_message = messages.filter(is_sender=True).first()
+    assert sent_message is not None
+    sent_access = models.ThreadAccess.objects.get(
+        thread=sent_message.thread, mailbox=mailbox
+    )
+    assert sent_access.read_at is not None
+    assert sent_access.read_at >= sent_message.created_at
+
+    # Check that "Trash" label is now a flag
+    assert models.Message.objects.filter(is_trashed=True).exists()
+    assert not models.Label.objects.filter(name="Trash").exists()
+
+    # Test draft message
+    draft_message = messages.filter(is_draft=True).first()
+    assert draft_message is not None
+    draft_access = models.ThreadAccess.objects.get(
+        thread=draft_message.thread, mailbox=mailbox
+    )
+    assert draft_access.read_at is not None
+    assert draft_access.read_at >= draft_message.created_at
+    assert not models.Label.objects.filter(name="Draft").exists()
+
+    # Test starred message (starred is now on ThreadAccess, not Message)
+    starred_access = models.ThreadAccess.objects.filter(
+        starred_at__isnull=False, mailbox=mailbox
+    ).first()
+    assert starred_access is not None
+    assert not models.Label.objects.filter(name="Starred").exists()
+
+    # Test archived message
+    assert messages.filter(is_archived=True).exists()
+    assert not models.Label.objects.filter(name="Archived").exists()
+
+    # Test hierarchical labels
+    hierarchical_label = models.Label.objects.filter(
+        name__startswith="Petite enfance", mailbox=mailbox
+    ).first()
+    assert hierarchical_label is not None
+    assert models.Label.objects.filter(name="Petite enfance", mailbox=mailbox).exists()
+    assert models.Label.objects.filter(
+        name="Petite enfance/Centre loisir", mailbox=mailbox
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_api_import_labels_gmail_system_labels_are_ignored(
+    authenticated_client, mbox_file, mailbox
+):
+    """Test that Gmail system labels are not created as user labels."""
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+    assert response.status_code == status.HTTP_202_ACCEPTED
+
+    # These Gmail system labels should not be created
+    ignored_labels = ["Inbox", "Promotions", "Social", "Boîte de réception"]
+    for label_name in ignored_labels:
+        label = models.Label.objects.filter(name=label_name, mailbox=mailbox).first()
+        assert label is None, f"Label '{label_name}' should not be created"
+
+
+@pytest.mark.django_db
+def test_api_import_labels_read_unread_labels_set_correctly(
+    authenticated_client, mbox_file, mailbox
+):
+    """Test that read/unread status is set correctly based on Gmail labels."""
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+    assert response.status_code == status.HTTP_202_ACCEPTED
+
+    messages = models.Message.objects.filter(thread__accesses__mailbox=mailbox)
+
+    # Check that we have both read and unread messages
+    unread_filter = Q(
+        thread__accesses__mailbox=mailbox,
+        thread__accesses__read_at__isnull=True,
+    ) | Q(
+        thread__accesses__mailbox=mailbox,
+        created_at__gt=F("thread__accesses__read_at"),
+    )
+    unread_messages = messages.filter(unread_filter)
+    read_messages = messages.exclude(unread_filter)
+
+    assert unread_messages.count() > 0
+    assert read_messages.count() > 0
+
+
+@pytest.mark.django_db
+def test_api_import_labels_special_cases_for_sent_and_draft_messages(
+    authenticated_client, mbox_file, mailbox
+):
+    """Test that sent and draft messages are automatically marked as read."""
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+    assert response.status_code == status.HTTP_202_ACCEPTED
+
+    # Sent messages should be read (read_at >= message.created_at)
+    sent_messages = models.Message.objects.filter(
+        thread__accesses__mailbox=mailbox, is_sender=True
+    )
+    for message in sent_messages:
+        access = models.ThreadAccess.objects.get(thread=message.thread, mailbox=mailbox)
+        assert access.read_at is not None and access.read_at >= message.created_at
+
+    # Draft messages should be read (read_at >= message.created_at)
+    draft_messages = models.Message.objects.filter(
+        thread__accesses__mailbox=mailbox, is_draft=True
+    )
+    for message in draft_messages:
+        access = models.ThreadAccess.objects.get(thread=message.thread, mailbox=mailbox)
+        assert access.read_at is not None and access.read_at >= message.created_at
+
+
+@pytest.mark.django_db
+def test_api_import_labels_hierarchical_labels_are_created_correctly(
+    authenticated_client, mbox_file, mailbox
+):
+    """Test that hierarchical labels are created with proper structure."""
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+    assert response.status_code == status.HTTP_202_ACCEPTED
+
+    # Check that parent labels are created
+    parent_label = models.Label.objects.filter(
+        name="Petite enfance", mailbox=mailbox
+    ).first()
+    assert parent_label is not None
+    assert parent_label.parent_name is None
+    assert parent_label.depth == 0
+
+    # Check that child labels are created
+    child_label = models.Label.objects.filter(
+        name="Petite enfance/Centre loisir", mailbox=mailbox
+    ).first()
+    assert child_label is not None
+    assert child_label.parent_name == "Petite enfance"
+    assert child_label.depth == 1
+
+
+@pytest.mark.django_db
+def test_api_import_labels_thread_stats_are_updated_correctly(
+    authenticated_client, mbox_file, mailbox
+):
+    """Test that thread statistics are updated after flag changes."""
+    # check db is empty
+    assert not models.Message.objects.exists()
+    assert not models.Thread.objects.exists()
+
+    response = upload_mbox_file(authenticated_client, mailbox, mbox_file)
+    assert response.status_code == status.HTTP_202_ACCEPTED
+
+    messages_all = models.Message.objects.filter(thread__accesses__mailbox=mailbox)
+    unread_filter = Q(
+        thread__accesses__mailbox=mailbox,
+        thread__accesses__read_at__isnull=True,
+    ) | Q(
+        thread__accesses__mailbox=mailbox,
+        created_at__gt=F("thread__accesses__read_at"),
+    )
+    messages_unread = messages_all.filter(unread_filter)
+    assert messages_unread.count() > 0
+
+    # check that thread stats are updated
+    for message in messages_unread:
+        assert message.thread.has_messages
+
+
+@pytest.mark.django_db
+def test_api_import_labels_api_authentication_required(api_client, mbox_file, mailbox):
+    """Test that API authentication is required for mbox import."""
+    response = api_client.post(
+        IMPORT_FILE_URL,
+        {"filename": mbox_file.name, "recipient": str(mailbox.id)},
+        format="multipart",
+    )
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.django_db
+def test_api_import_labels_mailbox_access_required(api_client, mbox_file, mailbox):
+    """Test that user must have access to mailbox for mbox import."""
+    # Create user without mailbox access
+    other_user = UserFactory()
+    api_client.force_authenticate(user=other_user)
+
+    response = api_client.post(
+        IMPORT_FILE_URL,
+        {"filename": mbox_file.name, "recipient": str(mailbox.id)},
+        format="multipart",
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN

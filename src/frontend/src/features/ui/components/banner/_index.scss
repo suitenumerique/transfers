@@ -1,0 +1,81 @@
+.banner {
+    display: flex;
+    flex-direction: row;
+    gap: var(--c--globals--spacings--base);
+    padding: var(--c--globals--spacings--xs);
+    border-radius: 4px;
+}
+
+.banner--neutral {
+    background-color: var(--c--contextuals--background--semantic--neutral--tertiary);
+    border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.banner--info {
+    background-color: var(--c--contextuals--background--semantic--info--tertiary);
+    border: 1px solid var(--c--contextuals--border--semantic--info--tertiary);
+    color: var(--c--contextuals--content--semantic--info--primary);
+}
+
+.banner--error {
+    background-color: var(--c--contextuals--background--semantic--error--tertiary);
+    border: 1px solid var(--c--contextuals--border--semantic--error--tertiary);
+    color: var(--c--contextuals--content--semantic--error--primary);
+}
+
+.banner--warning {
+    background-color: var(--c--contextuals--background--semantic--warning--tertiary);
+    border: 1px solid var(--c--contextuals--border--semantic--warning--tertiary);
+    color: var(--c--contextuals--content--semantic--warning--primary);
+}
+
+.banner__icon {
+    height: 1.5rem;
+    line-height: 1;
+    flex-shrink: 0;
+
+    & > .material-icons {
+        height: 100%;
+        width: auto;
+    }
+}
+
+.banner__content {
+    display: flex;
+    flex-direction: row;
+    gap: var(--c--globals--spacings--4xs);
+    font-size: var(--c--globals--font--sizes--sm);
+    flex: 1;
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+
+.banner__content__text {
+    align-items: center;
+    text-align: left;
+    line-height: 1.5rem;
+    flex: 1;
+    min-width: 65%;
+}
+
+.banner__content__actions {
+    display: flex;
+    margin-left: calc(var(--c--globals--spacings--xs) * -1);
+    gap: var(--c--globals--spacings--4xs);
+    flex-wrap: wrap;
+}
+
+.banner--compact {
+    padding: var(--c--globals--spacings--xs);
+    font-size: var(--c--globals--font--sizes--sm);
+
+    .banner__icon {
+        font-size: 1rem;
+        height: 16px;
+    }
+}
+
+.banner--full-width {
+    width: 100%;
+}

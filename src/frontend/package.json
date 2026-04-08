@@ -1,0 +1,81 @@
+{
+  "name": "st-messages",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "npx serve -s out",
+    "lint": "eslint .",
+    "build-theme": "cunningham -g css,scss,ts -o src/styles",
+    "api:update": "orval --config ./orval.config.ts",
+    "test": "vitest run",
+    "test:update": "vitest run --update",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "ts:check": "tsc --noEmit",
+    "i18n:extract": "i18next-cli extract"
+  },
+  "dependencies": {
+    "@blocknote/core": "0.46.2",
+    "@blocknote/mantine": "0.46.2",
+    "@blocknote/react": "0.46.2",
+    "@gouvfr-lasuite/drive-sdk": "0.0.1",
+    "@gouvfr-lasuite/ui-kit": "0.19.10",
+    "@hookform/resolvers": "5.2.2",
+    "@gouvfr-lasuite/cunningham-react": "4.2.0",
+    "@react-email/components": "1.0.6",
+    "@sentry/nextjs": "10.38.0",
+    "@tanstack/react-query": "5.90.20",
+    "@tanstack/react-query-devtools": "5.91.3",
+    "@tanstack/react-table": "8.21.3",
+    "@viselect/react": "3.9.0",
+    "clsx": "2.1.1",
+    "date-fns": "4.1.0",
+    "dompurify": "3.3.1",
+    "downshift": "9.2.0",
+    "i18next": "25.7.4",
+    "i18next-http-backend": "3.0.2",
+    "next": "16.1.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-dropzone": "14.4.0",
+    "react-email": "5.2.5",
+    "react-hook-form": "7.71.1",
+    "react-i18next": "16.5.4",
+    "react-markdown": "10.1.0",
+    "react-resizable-panels": "4.2.2",
+    "react-toastify": "11.0.5",
+    "sass": "1.97.3",
+    "ts-ics": "2.4.0",
+    "zod": "4.3.6",
+    "zod-from-json-schema": "0.5.2"
+  },
+  "devDependencies": {
+    "@tanstack/eslint-plugin-query": "5.91.4",
+    "@types/node": "25.2.0",
+    "@types/react": "19.2.10",
+    "@types/react-dom": "19.2.3",
+    "@vitest/coverage-v8": "4.0.18",
+    "@vitest/ui": "4.0.18",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.1.6",
+    "i18next-cli": "1.34.1",
+    "jsdom": "27.4.0",
+    "orval": "7.21.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.57.1",
+    "@rollup/rollup-linux-x64-musl": "4.57.1"
+  },
+  "overrides": {
+    "zod": "4.3.6"
+  }
+}

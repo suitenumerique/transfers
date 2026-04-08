@@ -1,0 +1,13 @@
+.app__home {
+    background-color: var(--c--contextuals--background--surface--primary);
+    height: 100%;
+    overflow: auto;
+
+    .c__hero {
+        height: calc(100vh - var(--header-height));
+    }
+
+    .c__hero__display img {
+        object-fit: contain;
+    }
+}

@@ -1,0 +1,244 @@
+import { Icon, IconSize, Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Button, Checkbox, Column, DataGrid, useModal, useModals } from "@gouvfr-lasuite/cunningham-react";
+import { useTranslation } from "react-i18next";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { MailDomainAdmin, ReadMessageTemplate, MessageTemplateTypeChoices, useMaildomainsMessageTemplatesList, useMaildomainsMessageTemplatesDestroy, useMaildomainsMessageTemplatesPartialUpdate } from "@/features/api/gen";
+import { Banner } from "@/features/ui/components/banner";
+import { addToast, ToasterItem } from "@/features/ui/components/toaster";
+import { ModalComposeSignature } from "../modal-compose-signature";
+
+type SignatureDataGridProps = {
+    domain: MailDomainAdmin;
+}
+
+export const SignatureDataGrid = ({ domain }: SignatureDataGridProps) => {
+    const { t } = useTranslation();
+    const modals = useModals();
+    const modal = useModal();
+    const { data: { data: signatures = [] } = {}, isLoading, error } = useMaildomainsMessageTemplatesList(
+        domain.id,
+        {
+            type: MessageTemplateTypeChoices.signature,
+        },
+        {
+            query: {
+                enabled: !!domain.id,
+            },
+        }
+    );
+    const { mutateAsync: updateSignature, isPending: isUpdating } = useMaildomainsMessageTemplatesPartialUpdate();
+    const { mutateAsync: deleteSignature, isPending: isDeleting } = useMaildomainsMessageTemplatesDestroy();
+    const [selectedSignature, setSelectedSignature] = useState<ReadMessageTemplate | undefined>();
+    const queryClient = useQueryClient();
+    const invalidateMessageTemplates = async () => {
+        await queryClient.invalidateQueries({ queryKey: [`/api/v1.0/maildomains/${domain.id}/message-templates/`], exact: false });
+    }
+    const handleModifyRow = (signature: ReadMessageTemplate) => {
+        setSelectedSignature(signature);
+        modal.open();
+    }
+    const addUpdateSucceededToast = () => {
+        addToast(
+            <ToasterItem type="info">
+                <span>{t("Signature updated!")}</span>
+            </ToasterItem>,
+        );
+    }
+    const handleDeleteRow = async (signature: ReadMessageTemplate) => {
+        const decision = await modals.deleteConfirmationModal({
+            title: <span className="c__modal__text--centered">{t('Delete signature "{{signature}}"', { signature: signature.name })}</span>,
+            children: t('Are you sure you want to delete this signature? This action is irreversible!'),
+        });
+        if (decision === 'delete') {
+            try {
+                await deleteSignature({ maildomainPk: domain.id, id: signature.id });
+                invalidateMessageTemplates();
+                addToast(
+                    <ToasterItem type="info">
+                        <span>{t("Signature deleted!")}</span>
+                    </ToasterItem>,
+                );
+            } catch {
+                addToast(
+                    <ToasterItem type="error">
+                        <span>{t("Failed to delete signature.")}</span>
+                    </ToasterItem>,
+                );
+            }
+        }
+    }
+    const toggleActive = async (signature: ReadMessageTemplate) => {
+        try {
+            await updateSignature({
+                maildomainPk: domain.id,
+                id: signature.id,
+                data: { is_active: !signature.is_active },
+            });
+            invalidateMessageTemplates();
+            addUpdateSucceededToast();
+        } catch {
+            addToast(
+                <ToasterItem type="error">
+                    <span>{t("Failed to update signature.")}</span>
+                </ToasterItem>,
+            );
+        }
+    }
+    const toggleForced = async (signature: ReadMessageTemplate) => {
+        try {
+            await updateSignature({
+                maildomainPk: domain.id,
+                id: signature.id,
+                data: { is_forced: !signature.is_forced, is_active: true },
+            });
+            invalidateMessageTemplates();
+            addUpdateSucceededToast();
+        } catch {
+            addToast(
+                <ToasterItem type="error">
+                    <span>{t("Failed to update signature.")}</span>
+                </ToasterItem>,
+            );
+        }
+    }
+    const toggleDefault = async (signature: ReadMessageTemplate) => {
+        try {
+            await updateSignature({
+                maildomainPk: domain.id,
+                id: signature.id,
+                data: { is_default: !signature.is_default, is_active: true },
+            });
+            invalidateMessageTemplates();
+            addUpdateSucceededToast();
+        } catch {
+            addToast(
+                <ToasterItem type="error">
+                    <span>{t("Failed to update signature.")}</span>
+                </ToasterItem>,
+            );
+        }
+    }
+    const columns: Column<ReadMessageTemplate>[] = [
+        {
+            id: "is_active",
+            headerName: t("Active"),
+            size: 75,
+            renderCell: ({ row }) => (
+                <div className="flex-row flex-justify-center">
+                    <Checkbox
+                        checked={row.is_active}
+                        onChange={() => toggleActive(row)}
+                        disabled={isUpdating}
+                        aria-label={t("Active")}
+                    />
+                </div>
+            ),
+        },
+        {
+            id: "is_default",
+            headerName: t("Default"),
+            size: 75,
+            renderCell: ({ row }) => (
+                <div className="flex-row flex-justify-center">
+                    <Checkbox
+                        checked={row.is_default}
+                        onChange={() => toggleDefault(row)}
+                        disabled={isUpdating}
+                        aria-label={t("Default")}
+                    />
+                </div>
+            ),
+        },
+        {
+            id: "is_forced",
+            headerName: t("Forced"),
+            size: 75,
+            renderCell: ({ row }) => (
+                <div className="flex-row flex-justify-center">
+                    <Checkbox
+                        checked={row.is_forced}
+                        onChange={() => toggleForced(row)}
+                        disabled={isUpdating}
+                        aria-label={t("Forced")}
+                    />
+                </div>
+            ),
+        },
+        {
+            id: "name",
+            headerName: t("Name"),
+            renderCell: ({ row }) => row.name,
+        },
+        {
+            id: "actions",
+            size: 150,
+            headerName: t("Actions"),
+            renderCell: ({ row }) => (
+                <div className="flex-row flex-justify-start" style={{ width: "100%", gap: "0.5rem" }}>
+                    <Button
+                        variant="bordered"
+                        size="small"
+                        onClick={() => handleModifyRow(row)}
+                    >
+                        {t("Modify")}
+                    </Button>
+                    <Button
+                        color="error"
+                        size="small"
+                        icon={isDeleting ? <Spinner size="sm" /> : <Icon name="delete" size={IconSize.SMALL} />}
+                        onClick={() => handleDeleteRow(row)}
+                        disabled={isDeleting}
+                        aria-label={t("Delete")}
+                        style={{ paddingInline: "var(--c--globals--spacings--2xs)" }}
+                    >
+                    </Button>
+                </div>
+            ),
+        },
+    ];
+
+    if (isLoading) {
+        return (
+            <div className="admin-data-grid">
+                <Banner type="info" icon={<Spinner />}>
+                    {t("Loading signatures...")}
+                </Banner>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="admin-data-grid">
+                <Banner type="error">
+                    {t("Error while loading signatures")}
+                </Banner>
+            </div>
+        );
+    }
+
+    return (
+        <div className="admin-data-grid">
+            <DataGrid
+                columns={columns}
+                rows={signatures}
+                onSortModelChange={() => undefined}
+                enableSorting={false}
+                emptyPlaceholderLabel={t("No signatures found")}
+            />
+            <ModalComposeSignature
+                isOpen={modal.isOpen}
+                onClose={
+                    () => {
+                        modal.close();
+                        if (selectedSignature) {
+                            setSelectedSignature(undefined);
+                        }
+                    }
+                }
+                signature={selectedSignature}
+            />
+        </div>
+    );
+}

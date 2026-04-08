@@ -1,0 +1,209 @@
+@use "./utils" as *;
+
+:root {
+  --header-height: 52px;
+  --c--components--forms-checkbox--size: 24px;
+  --toastify-z-index: 9999999;
+}
+
+@media screen and (max-width: breakpoint(tablet)) {
+  :root {
+    --header-height: 104px;
+  }
+}
+
+body {
+  margin: 0;
+  background-color: var(--c--contextuals--background--surface--tertiary);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+// Related to 'react-resizable-panels'
+// By default, it sets overflow to 'hidden', this is not compatible
+// with our ui mainly because of tooltips.
+*[data-panel],
+*[data-panel-group],
+.c__main-layout__content__center__children {
+  overflow: auto !important;
+}
+
+// Customize resize handle to add an hover effect to explicit that
+// this component is interactive.
+.panel__resize-handle {
+  width: 1px;
+  background-color: var(--c--contextuals--border--surface--primary);
+  position: relative;
+
+  &:before {
+    content: '';
+    width: 3px;
+    left: -1px;
+    top: 0;
+    bottom: 0;
+    background: var(--c--contextuals--border--surface--primary);
+    position: absolute;
+    opacity: 0;
+    transition: opacity 250ms var(--c--globals--transitions--ease-in-out);
+    z-index: 10;
+  }
+
+  // Little tricks to expand the area to catch hover
+  &:after {
+    content: '';
+    width: 11px;
+    left: -5px;
+    top:0;
+    bottom: 0;
+    position: absolute;
+  }
+
+  &:hover:before {
+    opacity: 1;
+  }
+}
+
+
+// Cunningham tweaks
+.c__datagrid__table__container > table tbody tr:not(:last-child) {
+  border-bottom: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.c__dropdown-menu-trigger .c__button {
+  font-size: var(--c--globals--font--sizes--sm);
+}
+
+// Cunningham: force label up for datetime-local/time inputs
+// The browser always renders native placeholder text for these input types,
+// which overlaps with Cunningham's floating label in "placeholder" position.
+.labelled-box:has(input[type="datetime-local"], input[type="time"]) .labelled-box__label.placeholder {
+  top: 8px;
+  font-size: 11px;
+  line-height: 16.5px;
+}
+
+// Cunningham icon sizes tweaks
+.material-icons.icon--size-sm {
+  font-size: var(--c--globals--font--sizes--sm);
+}
+
+// Cunningham modal class utilities
+.c__modal__text--centered {
+  display: inline-block;
+  width: 100%;
+  text-align: center;
+}
+
+
+// Hide toast container as we use react-toastify
+.c__toast__container {
+  display: none;
+}
+
+// React Modal tweaks
+// Make it always on top of the other modals
+.ReactModalPortal {
+  position: relative;
+  z-index: 999999;
+}
+
+// Related to @viselect/react
+.selection-area {
+  background: rgba(46, 115, 252, 0.11);
+  border: 2px solid rgba(98, 155, 255, 0.81);
+  border-radius: 0.1em;
+
+  &__container {
+    user-select: none;
+  }
+}
+
+// Class utilities
+.flex-row {
+  display: flex;
+  flex-direction: row;
+}
+
+.flex-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-align-center {
+  align-items: center;
+}
+
+.flex-align-end {
+  align-items: flex-end;
+}
+
+.flex-justify-center {
+  justify-content: center;
+}
+
+.flex-justify-end {
+  justify-content: flex-end;
+}
+
+.flex-justify-space-between {
+  justify-content: space-between;
+}
+
+.p-0 {
+  padding: var(--c--globals--spacings--2xs);
+}
+
+.p-2xs {
+  padding: var(--c--globals--spacings--2xs);
+}
+
+.p-xs {
+  padding: var(--c--globals--spacings--xs);
+}
+
+.p-sm {
+  padding: var(--c--globals--spacings--sm);
+}
+
+.p-md {
+  padding: var(--c--globals--spacings--md);
+}
+
+.p-base {
+  padding: var(--c--globals--spacings--base);
+}
+
+.m-0 {
+  margin: 0;
+}
+
+.m-2xs {
+  margin: var(--c--globals--spacings--2xs);
+}
+
+.m-xs {
+  margin: var(--c--globals--spacings--xs);
+}
+
+.m-sm {
+  margin: var(--c--globals--spacings--sm);
+}
+
+.m-md {
+  margin: var(--c--globals--spacings--md);
+}
+
+.m-base {
+  margin: var(--c--globals--spacings--base);
+}
+
+.hidden {
+  visibility: hidden;
+}
+
+.text-nowrap {
+  white-space: nowrap;
+}

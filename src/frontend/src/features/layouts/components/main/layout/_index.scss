@@ -1,0 +1,44 @@
+.c__main-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+
+  &--resizing {
+    .c__left-panel__mobile,
+    .c__right-panel__mobile,
+    .c__right-panel {
+      transition: none !important;
+    }
+  }
+}
+
+.c__main-layout__header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+}
+
+.c__main-layout__content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  margin-top: var(--header-height);
+  overflow: hidden;
+
+  .c__left-panel {
+    border-right: 0;
+  }
+
+  &__center {
+    display: flex;
+
+    &__children {
+      height: calc(100dvh - var(--header-height));
+      width: 100%;
+      flex: 1;
+      overflow-y: auto;
+    }
+  }
+}

@@ -1,0 +1,127 @@
+.badge {
+    font-size: var(--c--globals--font--sizes--t);
+    line-height: 1;
+    display: flex;
+    padding: var(--c--globals--spacings--3xs);
+    box-sizing: border-box;
+    border-radius: 4px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    .c__tooltip {
+        line-height: initial;
+    }
+
+    &--compact {
+        padding: var(--c--globals--spacings--4xs);
+    }
+}
+
+.badge--brand {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--brand--primary);
+        color: var(--c--contextuals--content--semantic--brand--on-brand);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--brand--secondary);
+        color: var(--c--contextuals--content--semantic--brand--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--brand--tertiary);
+    }
+}
+
+.badge--neutral {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--neutral--primary);
+        color: var(--c--contextuals--content--semantic--neutral--on-neutral);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--neutral--secondary);
+        color: var(--c--contextuals--content--semantic--neutral--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--neutral--tertiary);
+    }
+}
+
+.badge--error {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--error--primary);
+        color: var(--c--contextuals--content--semantic--error--on-error);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--error--secondary);
+        color: var(--c--contextuals--content--semantic--error--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--error--tertiary);
+    }
+}
+
+.badge--success {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--success--primary);
+        color: var(--c--contextuals--content--semantic--success--on-success);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--success--secondary);
+        color: var(--c--contextuals--content--semantic--success--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--success--tertiary);
+    }
+}
+
+.badge--warning {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--warning--primary);
+        color: var(--c--contextuals--content--semantic--warning--on-warning);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--warning--secondary);
+        color: var(--c--contextuals--content--semantic--warning--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--warning--tertiary);
+    }
+}
+
+.badge--info {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--semantic--info--primary);
+        color: var(--c--contextuals--content--semantic--info--on-info);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--semantic--info--secondary);
+        color: var(--c--contextuals--content--semantic--info--secondary);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--content--semantic--info--tertiary);
+    }
+}
+
+.badge--yellow {
+    &.badge--primary {
+        background-color: var(--c--contextuals--background--palette--yellow--primary);
+        color: var(--c--contextuals--content--semantic--neutral--on-neutral);
+    }
+    &.badge--secondary {
+        background-color: var(--c--contextuals--background--palette--yellow--secondary);
+        color: var(--c--contextuals--content--semantic--neutral--on-neutral);
+    }
+    &.badge--tertiary {
+        background-color: transparent;
+        color: var(--c--contextuals--background--palette--yellow--secondary);
+    }
+}
