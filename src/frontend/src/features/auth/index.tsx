@@ -1,4 +1,4 @@
-import React, { PropsWithChildren, useEffect, useMemo } from "react";
+import React, { PropsWithChildren, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 interface User {
@@ -7,14 +7,19 @@ interface User {
   full_name: string;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_ORIGIN || "";
+function getApiOrigin() {
+  return (
+    process.env.NEXT_PUBLIC_API_ORIGIN ||
+    (typeof window !== "undefined" ? window.location.origin : "")
+  );
+}
 
 export const logout = () => {
-  window.location.replace(`${API_BASE}/api/v1.0/logout/`);
+  window.location.replace(`${getApiOrigin()}/api/v1.0/logout/`);
 };
 
 export const login = () => {
-  window.location.replace(`${API_BASE}/api/v1.0/authenticate/`);
+  window.location.replace(`${getApiOrigin()}/api/v1.0/authenticate/`);
 };
 
 interface AuthContextInterface {
@@ -26,7 +31,7 @@ export const AuthContext = React.createContext<AuthContextInterface>({});
 export const useAuth = () => React.useContext(AuthContext);
 
 const fetchMe = async (): Promise<User> => {
-  const res = await fetch(`${API_BASE}/api/v1.0/users/me/`, {
+  const res = await fetch(`${getApiOrigin()}/api/v1.0/users/me/`, {
     credentials: "include",
   });
   if (!res.ok) {
