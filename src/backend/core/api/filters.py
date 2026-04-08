@@ -1,1 +1,1 @@
-"""API filters for messages' core application."""
+"""API filters for the transferts core app."""

@@ -2,7 +2,7 @@
 # pylint: disable=invalid-name
 
 bind = ["0.0.0.0:8000"]
-name = "messages"
+name = "transferts"
 python_path = "/app"
 
 # Run

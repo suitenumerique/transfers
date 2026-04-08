@@ -1,4 +1,4 @@
 # Postgresql db container configuration
-POSTGRES_DB=messages
+POSTGRES_DB=transferts
 POSTGRES_USER=user
 POSTGRES_PASSWORD=pass

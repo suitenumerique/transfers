@@ -1,4 +1,4 @@
-name: st-messages
+name: transferts
 
 services:
   postgresql:
@@ -19,32 +19,6 @@ services:
     ports:
       - "8913:6379"
 
-  opensearch:
-    image: opensearchproject/opensearch:2.19.2
-    environment:
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "DISABLE_INSTALL_DEMO_CONFIG=true"
-      - "DISABLE_SECURITY_PLUGIN=true"
-      # - http.cors.enabled=true
-      # - "http.cors.allow-origin=/.*/"
-    ports:
-      - "8914:9200"  # REST API
-      - "8915:9600"  # Performance Analyzer
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200"]
-      interval: 1s
-      timeout: 5s
-      retries: 60
-    ulimits:
-      memlock:
-        soft: -1 # Set memlock to unlimited (no soft or hard limit)
-        hard: -1
-      nofile:
-        soft: 65536 # Maximum number of open files for the opensearch user - set to at least 65536
-        hard: 65536
-
   mailcatcher:
     image: maildev/maildev:2.2.1
     ports:
@@ -52,10 +26,9 @@ services:
       - "8917:1025"
 
   objectstorage:
-    # user: ${DOCKER_USER:-1000}
     image: rustfs/rustfs:1.0.0-alpha.83
     environment:
-      - RUSTFS_ACCESS_KEY=st-messages
+      - RUSTFS_ACCESS_KEY=transferts
       - RUSTFS_SECRET_KEY=password
       - RUSTFS_CONSOLE_ENABLE=true
       - RUSTFS_ADDRESS=0.0.0.0:9000
@@ -109,14 +82,9 @@ services:
     depends_on:
       postgresql:
         condition: service_healthy
-        # restart: true
       objectstorage:
-       condition: service_healthy
-      redis:
-        condition: service_started
-      opensearch:
         condition: service_healthy
-      keycloak:
+      redis:
         condition: service_started
       mailcatcher:
         condition: service_started
@@ -135,7 +103,6 @@ services:
     depends_on:
       postgresql:
         condition: service_healthy
-        # restart: true
 
   backend-uv:
     profiles:
@@ -185,7 +152,7 @@ services:
       - ./src/backend:/app
     ports:
       - "8903:8803"
-    command: celery -A messages.celery_app flower --port=8803
+    command: celery -A transferts.celery_app flower --port=8803
 
   frontend-base:
     user: "${DOCKER_USER:-1000}"
@@ -212,179 +179,7 @@ services:
     profiles:
       - frontend-tools
     volumes:
-      - ./src/backend/core/api/openapi.json:/home/backend/core/api/openapi.json
       - ./src/frontend/:/home/frontend/
-
-  frontend-tools-amd64:
-    extends: frontend-tools
-    platform: linux/amd64
-
-  crowdin:
-    image: crowdin/cli:4.11.0
-    volumes:
-      - ".:/app"
-    env_file:
-      - env.d/development/crowdin.defaults
-      - env.d/development/crowdin.local
-    user: "${DOCKER_USER:-1000}"
-    working_dir: /app
-
-  mta-in:
-    build:
-      context: src/mta-in
-      target: runtime-prod
-    env_file:
-      - env.d/development/mta-in.defaults
-      - env.d/development/mta-in.local
-    ports:
-      - "8910:25"
-    depends_on:
-      - backend-dev
-
-  mta-in-test:
-    profiles:
-      - tools
-    build:
-      context: src/mta-in
-      target: runtime-dev
-    env_file:
-      - env.d/development/mta-in.defaults
-      - env.d/development/mta-in.local
-    environment:
-      - EXEC_CMD=true
-      - MDA_API_BASE_URL=http://localhost:8000/api/mail/
-      - MTA_HOST=localhost
-    command: pytest -vvs tests/
-    volumes:
-      - ./src/mta-in:/app
-
-  mta-in-uv:
-    profiles:
-      - tools
-    volumes:
-      - ./src/mta-in:/app
-    build:
-      context: src/mta-in
-      target: uv
-    pull_policy: build
-
-  mta-out:
-    build:
-      context: src/mta-out
-      target: runtime-prod
-    env_file:
-      - env.d/development/mta-out.defaults
-      - env.d/development/mta-out.local
-    ports:
-      - "8911:587"
-    depends_on:
-      mailcatcher:
-        condition: service_started
-
-  mta-out-test:
-    profiles:
-      - tools
-    build:
-      context: src/mta-out
-      target: runtime-dev
-    env_file:
-      - env.d/development/mta-out.defaults
-      - env.d/development/mta-out.local
-    environment:
-      - EXEC_CMD=true
-      - MTA_OUT_SMTP_HOST=localhost:587
-      - MTA_OUT_SMTP_USERNAME=user
-      - MTA_OUT_SMTP_PASSWORD=pass
-      - SMTP_RELAY_HOST=localhost:2525
-    command: pytest -vvs tests/
-    volumes:
-      - ./src/mta-out:/app
-
-  socks-proxy:
-    build:
-      context: src/socks-proxy
-      target: runtime
-    env_file:
-      - env.d/development/socks-proxy.defaults
-      - env.d/development/socks-proxy.local
-    ports:
-      - "8916:1080"
-
-  socks-proxy-test:
-    profiles:
-      - tools
-    build:
-      context: src/socks-proxy/tests
-    environment:
-      - SOCKS_PROXY1=user1:pwd1@socks-proxy:1080
-      - SOCKS_PROXY2=user2:pwd2@socks-proxy:1080
-    depends_on:
-      socks-proxy:
-        condition: service_started
-
-  mta-out-uv:
-    profiles:
-      - tools
-    volumes:
-      - ./src/mta-out:/app
-    build:
-      context: src/mta-out
-      target: uv
-    pull_policy: build
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.5.4
-    volumes:
-      - ./src/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
-      - ./src/keycloak/themes/dsfr-2.2.1.jar:/opt/keycloak/providers/keycloak-theme.jar:ro
-    environment:
-      - HOST=http://localhost:8902
-      - ADMIN_HOST=http://localhost:8902
-    command:
-      - start-dev
-      - --features=preview
-      - --import-realm
-      - --proxy-headers=xforwarded
-      - --http-enabled=true
-      - --hostname=$${HOST}
-      - --hostname-admin=$${ADMIN_HOST}
-      - --http-port=8802
-    env_file:
-      - env.d/development/keycloak.defaults
-      - env.d/development/keycloak.local
-    ports:
-      - "8902:8802"
-    depends_on:
-      - postgresql
-
-  mpa:
-    build:
-      context: src/mpa/rspamd
-    environment:
-      - RSPAMD_password=password
-      - PORT=8010
-    ports:
-      - "8918:8010"
-    depends_on:
-      redis:
-        condition: service_started
-
-  mpa-test:
-    profiles:
-      - tools
-    build:
-      context: src/mpa/tests
-    environment:
-      - RSPAMD_URL=http://mpa:8010/_api
-      - RSPAMD_AUTH=Bearer password
-    command: pytest -vvs tests/
-    volumes:
-      - ./src/mpa/tests:/app/tests
-    depends_on:
-      mpa:
-        condition: service_started
-      redis:
-        condition: service_started
 
 volumes:
   objectstorage-data:

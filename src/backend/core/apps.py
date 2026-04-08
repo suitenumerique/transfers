@@ -1,28 +1,14 @@
-"""Messages Core application"""
+"""Transferts core application."""
 
 from django.apps import AppConfig
 
 
 class CoreConfig(AppConfig):
-    """Configuration class for the messages core app."""
+    """Configuration class for the transferts core app."""
 
     name = "core"
     app_label = "core"
-    verbose_name = "messages core application"
+    verbose_name = "Transferts core"
 
     def ready(self):
-        """Register signal handlers and prometheus collector when the app is ready."""
-        # pylint: disable=unused-import, import-outside-toplevel
-
-        from django.conf import settings
-
-        if settings.ENABLE_PROMETHEUS:
-            from prometheus_client.core import REGISTRY
-
-            from .metrics import CustomDBPrometheusMetricsCollector
-
-            REGISTRY.register(CustomDBPrometheusMetricsCollector())
-
-        # Import signal handlers to register them
-        # pylint: disable=unused-import, import-outside-toplevel
-        import core.signals  # noqa
+        import core.signals  # noqa: F401

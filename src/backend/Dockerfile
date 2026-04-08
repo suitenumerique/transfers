@@ -61,9 +61,9 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-proj
 
 # ---- Static file collector ----
 FROM base-with-deps AS link-collector
-ARG MESSAGES_STATIC_ROOT=/data/static
+ARG STATIC_ROOT=/data/static
 
-# Copy messages application (see .dockerignore)
+# Copy application (see .dockerignore)
 COPY . /app/
 
 WORKDIR /app
@@ -72,7 +72,7 @@ WORKDIR /app
 RUN <<EOR
 DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput
 # Replace duplicated file by a symlink to decrease the overall size of the final image
-rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${MESSAGES_STATIC_ROOT}
+rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${STATIC_ROOT}
 EOR
 
 # ---- Strip Python for production (remove pip, idle, tkinter, tcl, headers, tests) ----
@@ -144,7 +144,6 @@ COPY . /app/
 RUN rm -rf \
     /app/core/tests \
     /app/core/factories.py \
-    /app/e2e \
     /app/Dockerfile \
     /app/.pylintrc \
     /app/pyproject.toml \
@@ -155,15 +154,15 @@ RUN rm -rf \
 
 # ---- Production runtime ----
 FROM runtime-base AS runtime-prod
-ARG MESSAGES_STATIC_ROOT=/data/static
+ARG STATIC_ROOT=/data/static
 
 COPY --from=python-runtime /opt/python /opt/python
 COPY --from=base-with-deps /venv /venv
-COPY --from=link-collector ${MESSAGES_STATIC_ROOT} ${MESSAGES_STATIC_ROOT}
+COPY --from=link-collector ${STATIC_ROOT} ${STATIC_ROOT}
 COPY --from=app-prod /app/ /app/
 
-# The default command runs gunicorn WSGI server in messages's main module
-CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "messages.wsgi:application"]
+# The default command runs gunicorn WSGI server
+CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transferts.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
   CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
@@ -184,7 +183,7 @@ RUN mkdir -p /shared-libs/usr/lib /shared-libs/usr/share/misc && \
 # Uses cc-debian13 (C runtime only) + python-build-standalone from uv.
 # Debug with: docker run --entrypoint='' gcr.io/distroless/cc-debian13:debug-nonroot sh
 FROM gcr.io/distroless/cc-debian13:nonroot AS runtime-distroless-prod
-ARG MESSAGES_STATIC_ROOT=/data/static
+ARG STATIC_ROOT=/data/static
 
 WORKDIR /app
 
@@ -195,7 +194,7 @@ COPY --from=base-with-deps /venv /venv
 # libmagic shared library + magic database
 COPY --from=shared-libs /shared-libs/ /
 # Static files
-COPY --from=link-collector ${MESSAGES_STATIC_ROOT} ${MESSAGES_STATIC_ROOT}
+COPY --from=link-collector ${STATIC_ROOT} ${STATIC_ROOT}
 # Application code
 COPY --from=app-prod /app/ /app/
 
@@ -206,7 +205,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Distroless has no ldconfig — tell the dynamic linker where to find libmagic
 ENV LD_LIBRARY_PATH=/usr/lib
 
-CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "messages.wsgi:application"]
+CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transferts.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
   CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]

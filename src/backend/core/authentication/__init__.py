@@ -1,1 +1,1 @@
-"""Custom authentication classes for the messages core app"""
+"""Custom authentication classes for the transferts core app."""

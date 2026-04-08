@@ -1,104 +1,71 @@
 import React, { PropsWithChildren, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import { getRequestUrl } from "@/features/api/utils";
-import { useUsersMeRetrieve } from "@/features/api/gen/users/users";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { UserWithAbilities } from "../api/gen/models/user_with_abilities";
-import { addToast, ToasterItem } from "../ui/components/toaster";
-import { useTranslation } from "react-i18next";
-import { SESSION_EXPIRED_KEY } from "../config/constants";
-import { useConfig } from "../providers/config";
-import { attemptSilentLogin, canAttemptSilentLogin } from "./silent-login";
+interface User {
+  id: string;
+  email: string;
+  full_name: string;
+}
+
+const API_BASE = process.env.NEXT_PUBLIC_API_ORIGIN || "";
 
 export const logout = () => {
-  window.location.replace(getRequestUrl("/api/v1.0/logout/"));
+  window.location.replace(`${API_BASE}/api/v1.0/logout/`);
 };
 
 export const login = () => {
-  window.location.replace(getRequestUrl("/api/v1.0/authenticate/"));
+  window.location.replace(`${API_BASE}/api/v1.0/authenticate/`);
 };
 
 interface AuthContextInterface {
-  user?: UserWithAbilities | null;
+  user?: User | null;
 }
 
 export const AuthContext = React.createContext<AuthContextInterface>({});
 
 export const useAuth = () => React.useContext(AuthContext);
 
-export const Auth = ({
-  children,
-  redirect,
-}: PropsWithChildren & { redirect?: boolean }) => {
-  const { t } = useTranslation();
-  const config = useConfig();
-  const query = useUsersMeRetrieve({
-    query: {
-      meta: {
-        noGlobalError: true,
-      },
-    },
-    request: { logoutOn401: false },
+const fetchMe = async (): Promise<User> => {
+  const res = await fetch(`${API_BASE}/api/v1.0/users/me/`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const error = new Error("Not authenticated") as Error & { code: number };
+    error.code = res.status;
+    throw error;
+  }
+  return res.json();
+};
+
+export const Auth = ({ children }: PropsWithChildren) => {
+  const query = useQuery<User, Error & { code?: number }>({
+    queryKey: ["auth", "me"],
+    queryFn: fetchMe,
+    retry: false,
   });
 
-  /* User is null if the query is 401 error
-   * User is the user object if the query is successful
-   * Otherwise, user is undefined
-   */
   const user = useMemo(() => {
-    if (query.data?.data) return query.data.data;
+    if (query.data) return query.data;
     if (query.isError && query.error?.code === 401) return null;
     return undefined;
   }, [query.isError, query.error?.code, query.data]);
-  const shouldAttemptSilentLogin = useMemo(
-    () => config.FRONTEND_SILENT_LOGIN_ENABLED && user === null && canAttemptSilentLogin(),
-    [config.FRONTEND_SILENT_LOGIN_ENABLED, user]
- );
 
-  useEffect(() => {
-    if (user !== null) return;
-
-    if (shouldAttemptSilentLogin) {
-      attemptSilentLogin();
-      return;
-    }
-
-    if (redirect) {
-      login();
-    }
-  }, [user]);
-
-  // When the session is expired, display a toast to
-  // inform the user that they have been disconnected for that reason
-  useEffect(() => {
-    if (sessionStorage.getItem(SESSION_EXPIRED_KEY)) {
-      sessionStorage.removeItem(SESSION_EXPIRED_KEY);
-      addToast(
-        <ToasterItem type="info">
-          {t('Your session has expired. Please log in again.')}
-        </ToasterItem>
-      )
-    }
-  }, []);
-
-  if (query.isLoading || shouldAttemptSilentLogin) {
+  if (query.isLoading) {
     return (
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          height: "100vh"
+          height: "100vh",
         }}
       >
-        <Spinner size="xl" />
+        Loading...
       </div>
     );
   }
 
   return (
-    <AuthContext.Provider value={{ user }}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={{ user }}>{children}</AuthContext.Provider>
   );
 };

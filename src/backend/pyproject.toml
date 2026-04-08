@@ -1,13 +1,13 @@
 #
-# messages backend package
+# transferts backend package
 #
 
 [project]
-name = "messages-backend"
-version = "0.5.0"
+name = "transferts-backend"
+version = "0.1.0"
 authors = [{ "name" = "ANCT", "email" = "suiteterritoriale@anct.gouv.fr" }]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
     "Framework :: Django",
     "Framework :: Django :: 5",
     "Intended Audience :: Developers",
@@ -17,82 +17,59 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-description = "A Django MDA"
-keywords = ["Django", "Contacts", "Templates", "RBAC"]
+description = "Sovereign file transfer service for La Suite territoriale"
+keywords = ["Django", "File Transfer", "S3"]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.13,<4.0"
 
-# Note: after changing this list you must re-run `make deps-lock-back`
 dependencies = [
+    "argon2-cffi==25.1.0",
     "boto3==1.42.53",
     "botocore==1.42.53",
     "celery[redis]==5.6.2",
-    "cryptography==46.0.5",
     "dj-database-url==3.1.2",
     "django==5.2.11",
     "django-celery-beat==2.8.1",
     "django-celery-results==2.6.0",
     "django-configurations==2.5.1",
     "django-cors-headers==4.9.0",
-    "django-countries==8.2.0",
-    "django-fernet-encrypted-fields==0.3.1",
     "django-filter==25.2",
     "django-lasuite[all]==0.0.24",
-    "django-prometheus==2.4.1",
     "django-redis==6.0.0",
     "django-storages==1.14.6",
     "django-timezone-field==7.2.1",
     "djangorestframework==3.16.1",
-    "dkimpy==1.1.8",
-    "dnspython==2.8.0",
     "drf_spectacular==0.29.0",
-    "opensearch-py==2.8.0",
     "factory_boy==3.3.3",
-    "flanker@git+https://github.com/sylvinus/flanker@f94ba2c15ab310e333610a78828d09be4e11a6b6",
     "gunicorn==25.1.0",
-    "jsonschema==4.26.0",
-    "nested-multipart-parser==1.6.0",
-    "openai==2.21.0",
     "psycopg[binary]==3.3.3",
     "PyJWT==2.11.0",
-    "PySocks==1.7.1",
-    "python-keycloak==5.5.1",
     "python-magic==0.4.27",
-    "pyzstd==0.19.1",
     "redis==6.4.0",
     "requests==2.32.5",
     "sentry-sdk[django]==2.53.0",
-    "libpff-python==20231205",
-    "url-normalize==2.2.1",
     "whitenoise==6.11.0",
-    "prometheus-client==0.24.1",
 ]
 
 [project.urls]
-"Bug Tracker" = "https://github.com/suitenumerique/st-messages/issues/new"
-"Changelog" = "https://github.com/suitenumerique/st-messages/blob/main/CHANGELOG.md"
-"Homepage" = "https://github.com/suitenumerique/st-messages"
-"Repository" = "https://github.com/suitenumerique/st-messages"
+"Repository" = "https://github.com/Nastaliss/transferts"
 
 [project.optional-dependencies]
 dev = [
     "django-extensions==4.1",
     "drf-spectacular-sidecar==2026.1.1",
     "flower==2.0.1",
-    "hypothesis==6.151.9",
     "pip-audit==2.10.0",
-    "pipdeptree==2.31.0",
     "pylint-django==2.7.0",
     "pylint==4.0.4",
     "pytest-cov==7.0.0",
     "pytest-django==4.12.0",
     "pytest==9.0.2",
     "pytest-icdiff==0.9",
-    "pytest-repeat==0.9.4",
     "pytest-xdist==3.8.0",
     "responses==0.26.0",
-    "ruff==0.15.2"
+    "ruff==0.15.2",
 ]
 
 [build-system]
@@ -132,13 +109,12 @@ select = [
     "S", # flake8-bandit
     "SLF", # flake8-self
     "T20", # flake8-print
-    "F"  # pyflakes
+    "F",  # pyflakes
 ]
 
 [tool.ruff.lint.isort]
-section-order = ["future","standard-library","django","third-party","messages","first-party","local-folder"]
-sections = { messages=["core"], django=["django"] }
-known-third-party = ["dns"]
+section-order = ["future", "standard-library", "django", "third-party", "transferts", "first-party", "local-folder"]
+sections = { transferts = ["core"], django = ["django"] }
 extra-standard-library = ["tomllib"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -149,16 +125,9 @@ addopts = [
     "-v",
     "--cov-report",
     "term-missing",
-    # Allow test files to have the same name in different directories.
     "--import-mode=importlib",
-    # Exclude fuzz tests by default (run with: pytest -m fuzz)
-    "-m",
-    "not fuzz",
 ]
 python_files = [
     "test_*.py",
     "tests.py",
-]
-markers = [
-    "fuzz: marks tests as fuzz tests (run with: pytest -m fuzz)",
 ]
