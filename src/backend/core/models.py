@@ -1,16 +1,24 @@
 """Models for the transferts core application."""
 
+import secrets
 import uuid
 
 from django.conf import settings
 from django.contrib.auth import models as auth_models
 from django.contrib.auth.base_user import AbstractBaseUser
+from django.contrib.auth.hashers import check_password, make_password
 from django.core import validators
 from django.db import models
+from django.utils import timezone
 
 from timezone_field import TimeZoneField
 
-from core.enums import UserAbilities
+from core.enums import (
+    ActorType,
+    TransferEventType,
+    TransferStatus,
+    UserAbilities,
+)
 
 
 class DuplicateEmailError(Exception):
@@ -160,3 +168,126 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
         return {
             UserAbilities.CAN_CREATE_TRANSFER: self.is_active,
         }
+
+
+def _generate_public_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+class Transfer(BaseModel):
+    """A file transfer created by an agent."""
+
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="transfers",
+    )
+    title = models.CharField(max_length=255, blank=True, default="")
+    message = models.TextField(blank=True, default="")
+    password_hash = models.CharField(max_length=255, blank=True, default="")
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=10,
+        choices=TransferStatus.choices,
+        default=TransferStatus.ACTIVE,
+    )
+    public_token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        default=_generate_public_token,
+    )
+
+    class Meta:
+        db_table = "core_transfer"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title or f"Transfer {self.public_token[:8]}"
+
+    def set_password(self, raw_password: str) -> None:
+        self.password_hash = make_password(raw_password, hasher="argon2")
+
+    def check_password(self, raw_password: str) -> bool:
+        return check_password(raw_password, self.password_hash)
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password_hash)
+
+    @property
+    def is_expired(self) -> bool:
+        return self.status == TransferStatus.EXPIRED or self.expires_at <= timezone.now()
+
+    @property
+    def is_revoked(self) -> bool:
+        return self.status == TransferStatus.REVOKED
+
+    @property
+    def is_accessible(self) -> bool:
+        return self.status == TransferStatus.ACTIVE and not self.is_expired
+
+
+class TransferFile(BaseModel):
+    """A file attached to a transfer."""
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
+    filename = models.CharField(max_length=255)
+    size = models.PositiveBigIntegerField()
+    mime_type = models.CharField(max_length=255, blank=True, default="")
+    s3_key = models.CharField(max_length=512)
+
+    class Meta:
+        db_table = "core_transfer_file"
+
+    def __str__(self):
+        return self.filename
+
+
+class TransferRecipient(BaseModel):
+    """An email recipient of a transfer."""
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="recipients",
+    )
+    email = models.EmailField()
+
+    class Meta:
+        db_table = "core_transfer_recipient"
+
+    def __str__(self):
+        return self.email
+
+
+class TransferEvent(BaseModel):
+    """An auditable event on a transfer. Not FK-constrained to survive deletion."""
+
+    transfer_id = models.UUIDField(db_index=True)
+    recipient_id = models.UUIDField(null=True, blank=True, db_index=True)
+    event_type = models.CharField(
+        max_length=30,
+        choices=TransferEventType.choices,
+    )
+    actor_type = models.CharField(
+        max_length=10,
+        choices=ActorType.choices,
+    )
+    actor_id = models.UUIDField(null=True, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "core_transfer_event"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.event_type} on {self.transfer_id}"

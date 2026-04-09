@@ -1,7 +1,6 @@
 """API viewsets."""
 
 import rest_framework as drf
-from rest_framework import viewsets
 
 
 class SerializerPerActionMixin:

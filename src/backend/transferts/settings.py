@@ -10,8 +10,6 @@ import sentry_sdk
 from configurations import Configuration, values
 from sentry_sdk.integrations.django import DjangoIntegration
 
-from core.utils import JSONValue
-
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,9 +116,15 @@ class Base(Configuration):
         "s3v4", environ_name="AWS_S3_SIGNATURE_VERSION", environ_prefix=None
     )
 
-    # Transfers bucket
+    # Transfers
     TRANSFERS_BUCKET_NAME = values.Value(
         "transferts", environ_name="TRANSFERS_BUCKET_NAME", environ_prefix=None
+    )
+    TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
+        7, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
+    )
+    TRANSFER_MAX_EXPIRY_DAYS = values.PositiveIntegerValue(
+        30, environ_name="TRANSFER_MAX_EXPIRY_DAYS", environ_prefix=None
     )
 
     STORAGES = {
@@ -527,6 +531,7 @@ class Test(Base):
 
     PASSWORD_HASHERS = [
         "django.contrib.auth.hashers.MD5PasswordHasher",
+        "django.contrib.auth.hashers.Argon2PasswordHasher",
     ]
     USE_SWAGGER = True
     CELERY_TASK_ALWAYS_EAGER = values.BooleanValue(True)
