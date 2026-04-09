@@ -17,5 +17,8 @@
 @use "./../features/ui/components/progress-bar";
 @use "./../features/ui/components/text-loader";
 
+// Transfer components
+@use "./../features/transfers/components/transfers";
+
 // Application views
 @use "./../pages";

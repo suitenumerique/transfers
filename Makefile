@@ -67,8 +67,14 @@ update: ## Update the project with latest changes
 	@$(MAKE) build
 	@$(MAKE) collectstatic
 	@$(MAKE) migrate
+	@$(MAKE) create-bucket
 	@$(MAKE) install-frozen-front
 .PHONY: update
+
+create-bucket: ## Create the S3 transfers bucket
+	@$(COMPOSE) up -d objectstorage --wait
+	@$(COMPOSE_RUN_APP_DB) python -c "import boto3; from django.conf import settings; s3=boto3.client('s3',endpoint_url=settings.AWS_S3_ENDPOINT_URL,aws_access_key_id=settings.AWS_S3_ACCESS_KEY_ID,aws_secret_access_key=settings.AWS_S3_SECRET_ACCESS_KEY); s3.create_bucket(Bucket=settings.TRANSFERS_BUCKET_NAME)" 2>/dev/null || true
+.PHONY: create-bucket
 
 # -- Docker/compose
 
