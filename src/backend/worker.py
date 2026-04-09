@@ -4,7 +4,6 @@
 import argparse
 import logging
 import os
-import sys
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transferts.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
