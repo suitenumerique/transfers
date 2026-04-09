@@ -33,7 +33,6 @@ class TransferFactory(factory.django.DjangoModelFactory):
 
     owner = factory.SubFactory(UserFactory)
     title = factory.Faker("sentence", nb_words=4)
-    message = factory.Faker("paragraph")
     expires_at = factory.LazyFunction(lambda: timezone.now() + timedelta(days=7))
     status = TransferStatus.ACTIVE
 
@@ -49,9 +48,3 @@ class TransferFileFactory(factory.django.DjangoModelFactory):
     s3_key = factory.LazyFunction(lambda: f"transfers/{uuid.uuid4()}/test-file.bin")
 
 
-class TransferRecipientFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = models.TransferRecipient
-
-    transfer = factory.SubFactory(TransferFactory)
-    email = factory.Faker("email")

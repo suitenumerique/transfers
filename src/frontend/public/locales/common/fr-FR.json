@@ -33,6 +33,7 @@
   "password_attempt": "Tentative de mot de passe",
   "file_downloaded": "Fichier téléchargé",
   "all_files_downloaded": "Tous les fichiers téléchargés",
+  "transfer_reactivated": "Transfert réactivé",
   "transfer_revoked": "Transfert révoqué",
   "transfer_expired": "Transfert expiré",
   "files_deleted": "Fichiers supprimés",
@@ -65,5 +66,15 @@
   "Download": "Télécharger",
   "Download all (.zip)": "Tout télécharger (.zip)",
   "Transfer not found, expired or revoked.": "Ce transfert est introuvable, expiré ou a été révoqué.",
-  "Sovereign file transfer service": "Service de transfert de fichiers souverain"
+  "Sovereign file transfer service": "Service de transfert de fichiers souverain",
+  "File": "Fichier",
+  "Expiration": "Expiration",
+  "{{count}} days_one": "{{count}} jour",
+  "{{count}} days_other": "{{count}} jours",
+  "Sensitive document": "Document sensible",
+  "Create link": "Créer le lien",
+  "Reactivate": "Réactiver",
+  "This link has expired. Contact the sender for a new one.": "Ce lien a expiré. Contactez l'émetteur pour en obtenir un nouveau.",
+  "Consulted": "Consulté",
+  "Downloaded": "Téléchargé"
 }

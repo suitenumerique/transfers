@@ -3,12 +3,7 @@
 import pytest
 from rest_framework.test import APIClient
 
-from core.factories import (
-    TransferFactory,
-    TransferFileFactory,
-    TransferRecipientFactory,
-    UserFactory,
-)
+from core.factories import TransferFactory, TransferFileFactory, UserFactory
 from core.models import TransferEvent
 
 
@@ -44,14 +39,6 @@ def transfer(user):
 
 
 @pytest.fixture
-def transfer_with_files(transfer):
+def transfer_with_file(transfer):
     TransferFileFactory(transfer=transfer, filename="doc.pdf", size=1024)
-    TransferFileFactory(transfer=transfer, filename="photo.jpg", size=2048)
-    return transfer
-
-
-@pytest.fixture
-def transfer_with_recipients(transfer):
-    TransferRecipientFactory(transfer=transfer, email="alice@example.com")
-    TransferRecipientFactory(transfer=transfer, email="bob@example.com")
     return transfer

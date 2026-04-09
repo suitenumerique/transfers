@@ -71,7 +71,7 @@ class TransferViewSet(
     def get_queryset(self):
         return (
             models.Transfer.objects.filter(owner=self.request.user)
-            .prefetch_related("files", "recipients")
+            .prefetch_related("files")
             .order_by("-created_at")
         )
 
@@ -81,32 +81,34 @@ class TransferViewSet(
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "message": {"type": "string"},
-                    "password": {"type": "string"},
-                    "expires_in_days": {"type": "integer"},
-                    "recipients": {
-                        "type": "array",
-                        "items": {"type": "string", "format": "email"},
+                    "expires_in_days": {
+                        "type": "integer",
+                        "enum": settings.TRANSFER_EXPIRY_CHOICES,
                     },
-                    "files": {
-                        "type": "array",
-                        "items": {"type": "string", "format": "binary"},
-                    },
+                    "sensitive": {"type": "boolean"},
+                    "file": {"type": "string", "format": "binary"},
                 },
-                "required": ["recipients", "files"],
+                "required": ["file"],
             }
         },
         responses={201: TransferDetailSerializer},
     )
     def create(self, request, *args, **kwargs):
-        """Create a new transfer with files and recipients."""
+        """Create a new transfer with a single file."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        files = request.FILES.getlist("files")
-        if not files:
-            raise drf.exceptions.ValidationError({"files": "At least one file is required."})
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            raise drf.exceptions.ValidationError(
+                {"file": "A file is required."}
+            )
+
+        if uploaded_file.size > settings.TRANSFER_MAX_FILE_SIZE:
+            raise drf.exceptions.ValidationError(
+                {"file": f"File exceeds maximum size of {settings.TRANSFER_MAX_FILE_SIZE // (1024**3)} Go."}
+            )
 
         expires_in_days = serializer.get_expires_in_days(data)
 
@@ -114,34 +116,22 @@ class TransferViewSet(
             transfer = models.Transfer.objects.create(
                 owner=request.user,
                 title=data.get("title", ""),
-                message=data.get("message", ""),
+                sensitive=data.get("sensitive", False),
                 expires_at=timezone.now() + timedelta(days=expires_in_days),
             )
 
-            if data.get("password"):
-                transfer.set_password(data["password"])
-                transfer.save(update_fields=["password_hash"])
-
-            # Upload files to S3
+            # Upload file to S3
             s3 = _get_s3_client()
             bucket = settings.TRANSFERS_BUCKET_NAME
-            for uploaded_file in files:
-                s3_key = f"transfers/{transfer.id}/{uuid.uuid4()}/{uploaded_file.name}"
-                s3.upload_fileobj(uploaded_file, bucket, s3_key)
-                models.TransferFile.objects.create(
-                    transfer=transfer,
-                    filename=uploaded_file.name,
-                    size=uploaded_file.size,
-                    mime_type=uploaded_file.content_type or "",
-                    s3_key=s3_key,
-                )
-
-            # Create recipients
-            for email in data["recipients"]:
-                models.TransferRecipient.objects.create(
-                    transfer=transfer,
-                    email=email,
-                )
+            s3_key = f"transfers/{transfer.id}/{uuid.uuid4()}/{uploaded_file.name}"
+            s3.upload_fileobj(uploaded_file, bucket, s3_key)
+            models.TransferFile.objects.create(
+                transfer=transfer,
+                filename=uploaded_file.name,
+                size=uploaded_file.size,
+                mime_type=uploaded_file.content_type or "",
+                s3_key=s3_key,
+            )
 
             # Log event
             models.TransferEvent.objects.create(
@@ -152,8 +142,6 @@ class TransferViewSet(
                 ip=request.META.get("REMOTE_ADDR"),
                 user_agent=request.META.get("HTTP_USER_AGENT", ""),
             )
-
-        # TODO: send notification emails to recipients
 
         detail_serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(detail_serializer.data, status=201)
@@ -178,6 +166,34 @@ class TransferViewSet(
         models.TransferEvent.objects.create(
             transfer_id=transfer.id,
             event_type=TransferEventType.TRANSFER_REVOKED,
+            actor_type=ActorType.AGENT,
+            actor_id=request.user.id,
+            ip=request.META.get("REMOTE_ADDR"),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+        )
+
+        serializer = TransferDetailSerializer(transfer)
+        return drf.response.Response(serializer.data)
+
+    @extend_schema(responses={200: TransferDetailSerializer})
+    @action(detail=True, methods=["post"])
+    def reactivate(self, request, pk=None):
+        """Reactivate an expired transfer — same public_token, new expiry."""
+        transfer = self.get_object()
+
+        if transfer.status != TransferStatus.EXPIRED:
+            raise drf.exceptions.ValidationError(
+                {"status": "Only expired transfers can be reactivated."}
+            )
+
+        transfer.status = TransferStatus.ACTIVE
+        transfer.expires_at = timezone.now() + timedelta(days=settings.TRANSFER_DEFAULT_EXPIRY_DAYS)
+        transfer.revoked_at = None
+        transfer.save(update_fields=["status", "expires_at", "revoked_at", "updated_at"])
+
+        models.TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.TRANSFER_REACTIVATED,
             actor_type=ActorType.AGENT,
             actor_id=request.user.id,
             ip=request.META.get("REMOTE_ADDR"),

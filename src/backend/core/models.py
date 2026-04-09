@@ -6,7 +6,6 @@ import uuid
 from django.conf import settings
 from django.contrib.auth import models as auth_models
 from django.contrib.auth.base_user import AbstractBaseUser
-from django.contrib.auth.hashers import check_password, make_password
 from django.core import validators
 from django.db import models
 from django.utils import timezone
@@ -184,8 +183,6 @@ class Transfer(BaseModel):
         related_name="transfers",
     )
     title = models.CharField(max_length=255, blank=True, default="")
-    message = models.TextField(blank=True, default="")
-    password_hash = models.CharField(max_length=255, blank=True, default="")
     expires_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
@@ -199,6 +196,10 @@ class Transfer(BaseModel):
         db_index=True,
         default=_generate_public_token,
     )
+    sensitive = models.BooleanField(
+        default=False,
+        help_text="Marked as sensitive document by the agent. Behaviour TBD.",
+    )
 
     class Meta:
         db_table = "core_transfer"
@@ -206,16 +207,6 @@ class Transfer(BaseModel):
 
     def __str__(self):
         return self.title or f"Transfer {self.public_token[:8]}"
-
-    def set_password(self, raw_password: str) -> None:
-        self.password_hash = make_password(raw_password, hasher="argon2")
-
-    def check_password(self, raw_password: str) -> bool:
-        return check_password(raw_password, self.password_hash)
-
-    @property
-    def has_password(self) -> bool:
-        return bool(self.password_hash)
 
     @property
     def is_expired(self) -> bool:
@@ -248,23 +239,6 @@ class TransferFile(BaseModel):
 
     def __str__(self):
         return self.filename
-
-
-class TransferRecipient(BaseModel):
-    """An email recipient of a transfer."""
-
-    transfer = models.ForeignKey(
-        Transfer,
-        on_delete=models.CASCADE,
-        related_name="recipients",
-    )
-    email = models.EmailField()
-
-    class Meta:
-        db_table = "core_transfer_recipient"
-
-    def __str__(self):
-        return self.email
 
 
 class TransferEvent(BaseModel):
