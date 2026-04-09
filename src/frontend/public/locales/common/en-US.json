@@ -33,6 +33,7 @@
   "password_attempt": "Password attempt",
   "file_downloaded": "File downloaded",
   "all_files_downloaded": "All files downloaded",
+  "transfer_reactivated": "Transfer reactivated",
   "transfer_revoked": "Transfer revoked",
   "transfer_expired": "Transfer expired",
   "files_deleted": "Files deleted",
@@ -65,5 +66,15 @@
   "Download": "Download",
   "Download all (.zip)": "Download all (.zip)",
   "Transfer not found, expired or revoked.": "Transfer not found, expired or revoked.",
-  "Sovereign file transfer service": "Sovereign file transfer service"
+  "Sovereign file transfer service": "Sovereign file transfer service",
+  "File": "File",
+  "Expiration": "Expiration",
+  "{{count}} days_one": "{{count}} day",
+  "{{count}} days_other": "{{count}} days",
+  "Sensitive document": "Sensitive document",
+  "Create link": "Create link",
+  "Reactivate": "Reactivate",
+  "This link has expired. Contact the sender for a new one.": "This link has expired. Contact the sender for a new one.",
+  "Consulted": "Consulted",
+  "Downloaded": "Downloaded"
 }

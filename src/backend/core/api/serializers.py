@@ -7,6 +7,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from core import models
+from core.enums import TransferEventType
 
 
 class AbilitiesModelSerializer(serializers.ModelSerializer):
@@ -79,13 +80,6 @@ class TransferFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class TransferRecipientSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = models.TransferRecipient
-        fields = ["id", "email"]
-        read_only_fields = ["id"]
-
-
 class TransferEventSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferEvent
@@ -107,11 +101,10 @@ class TransferEventSerializer(serializers.ModelSerializer):
 class TransferListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for transfer list."""
 
-    file_count = serializers.IntegerField(source="files.count", read_only=True)
-    total_size = serializers.SerializerMethodField()
-    recipient_count = serializers.IntegerField(
-        source="recipients.count", read_only=True
-    )
+    filename = serializers.SerializerMethodField()
+    filesize = serializers.SerializerMethodField()
+    consulted = serializers.SerializerMethodField()
+    downloaded = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Transfer
@@ -119,40 +112,55 @@ class TransferListSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "status",
-            "has_password",
+            "sensitive",
             "expires_at",
             "revoked_at",
             "created_at",
-            "file_count",
-            "total_size",
-            "recipient_count",
+            "filename",
+            "filesize",
+            "consulted",
+            "downloaded",
         ]
         read_only_fields = fields
 
-    def get_total_size(self, obj) -> int:
-        return sum(f.size for f in obj.files.all())
+    def get_filename(self, obj) -> str:
+        first = obj.files.first()
+        return first.filename if first else ""
+
+    def get_filesize(self, obj) -> int:
+        first = obj.files.first()
+        return first.size if first else 0
+
+    def get_consulted(self, obj) -> bool:
+        return models.TransferEvent.objects.filter(
+            transfer_id=obj.id,
+            event_type=TransferEventType.LINK_OPENED,
+        ).exists()
+
+    def get_downloaded(self, obj) -> bool:
+        return models.TransferEvent.objects.filter(
+            transfer_id=obj.id,
+            event_type=TransferEventType.FILE_DOWNLOADED,
+        ).exists()
 
 
 class TransferDetailSerializer(serializers.ModelSerializer):
     """Full serializer for transfer detail."""
 
     files = TransferFileSerializer(many=True, read_only=True)
-    recipients = TransferRecipientSerializer(many=True, read_only=True)
 
     class Meta:
         model = models.Transfer
         fields = [
             "id",
             "title",
-            "message",
             "status",
-            "has_password",
+            "sensitive",
             "public_token",
             "expires_at",
             "revoked_at",
             "created_at",
             "files",
-            "recipients",
         ]
         read_only_fields = fields
 
@@ -161,26 +169,17 @@ class TransferCreateSerializer(serializers.Serializer):
     """Serializer for creating a transfer (handles files via multipart)."""
 
     title = serializers.CharField(max_length=255, required=False, default="")
-    message = serializers.CharField(required=False, default="")
-    password = serializers.CharField(required=False, default="", write_only=True)
-    expires_in_days = serializers.IntegerField(required=False)
-    recipients = serializers.ListField(
-        child=serializers.EmailField(),
-        min_length=1,
+    expires_in_days = serializers.ChoiceField(
+        choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
+        required=False,
     )
-
-    def validate_expires_in_days(self, value):
-        max_days = settings.TRANSFER_MAX_EXPIRY_DAYS
-        if value < 1 or value > max_days:
-            raise serializers.ValidationError(
-                f"Must be between 1 and {max_days} days."
-            )
-        return value
+    sensitive = serializers.BooleanField(required=False, default=False)
 
     def get_expires_in_days(self, validated_data):
-        return validated_data.get(
-            "expires_in_days", settings.TRANSFER_DEFAULT_EXPIRY_DAYS
-        )
+        value = validated_data.get("expires_in_days")
+        if value is not None:
+            return int(value)
+        return settings.TRANSFER_DEFAULT_EXPIRY_DAYS
 
 
 # -- Download serializers --
@@ -193,25 +192,10 @@ class DownloadTransferFileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class DownloadTransferLockedSerializer(serializers.ModelSerializer):
-    """Minimal serializer when transfer is password-protected (before unlock)."""
-
-    has_password = serializers.BooleanField(read_only=True)
-
-    class Meta:
-        model = models.Transfer
-        fields = [
-            "title",
-            "has_password",
-        ]
-        read_only_fields = fields
-
-
 class DownloadTransferSerializer(serializers.ModelSerializer):
-    """Full serializer for the download page (no password or already unlocked)."""
+    """Serializer for the public download page."""
 
     files = DownloadTransferFileSerializer(many=True, read_only=True)
-    has_password = serializers.BooleanField(read_only=True)
     owner_name = serializers.CharField(source="owner.full_name", read_only=True)
     owner_email = serializers.CharField(source="owner.email", read_only=True)
 
@@ -219,8 +203,6 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
         model = models.Transfer
         fields = [
             "title",
-            "message",
-            "has_password",
             "expires_at",
             "created_at",
             "files",
@@ -228,7 +210,3 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "owner_email",
         ]
         read_only_fields = fields
-
-
-class VerifyPasswordSerializer(serializers.Serializer):
-    password = serializers.CharField(required=True)

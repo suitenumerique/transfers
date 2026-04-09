@@ -4,11 +4,9 @@ import type { TransferDetail } from "@/features/api/types";
 
 interface CreateTransferInput {
   title: string;
-  message: string;
-  password: string;
   expires_in_days: number;
-  recipients: string[];
-  files: File[];
+  sensitive: boolean;
+  file: File;
 }
 
 export function useCreateTransfer() {
@@ -18,16 +16,9 @@ export function useCreateTransfer() {
     mutationFn: async (input: CreateTransferInput) => {
       const formData = new FormData();
       if (input.title) formData.append("title", input.title);
-      if (input.message) formData.append("message", input.message);
-      if (input.password) formData.append("password", input.password);
       formData.append("expires_in_days", String(input.expires_in_days));
-
-      input.recipients.forEach((email) => {
-        formData.append("recipients", email);
-      });
-      input.files.forEach((file) => {
-        formData.append("files", file);
-      });
+      if (input.sensitive) formData.append("sensitive", "true");
+      formData.append("file", input.file);
 
       return apiFetch<TransferDetail>("/transfers/", {
         method: "POST",

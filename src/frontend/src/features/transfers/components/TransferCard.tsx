@@ -7,7 +7,7 @@ import { formatFileSize } from "@/features/utils/string-helper";
 export function TransferCard({ transfer }: { transfer: TransferListItem }) {
   const { t } = useTranslation();
 
-  const date = new Date(transfer.created_at).toLocaleDateString("fr-FR", {
+  const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -22,10 +22,11 @@ export function TransferCard({ transfer }: { transfer: TransferListItem }) {
         <TransferStatusBadge status={transfer.status} />
       </div>
       <div className="transfer-card__meta">
-        <span>{t("{{count}} file", { count: transfer.file_count })}</span>
-        <span>{formatFileSize(transfer.total_size)}</span>
-        <span>{t("{{count}} recipient", { count: transfer.recipient_count })}</span>
-        <span>{date}</span>
+        <span>{transfer.filename}</span>
+        <span>{formatFileSize(transfer.filesize)}</span>
+        <span>{expiresAt}</span>
+        <span>{transfer.consulted ? "✓" : "—"} {t("Consulted")}</span>
+        <span>{transfer.downloaded ? "✓" : "—"} {t("Downloaded")}</span>
       </div>
     </Link>
   );

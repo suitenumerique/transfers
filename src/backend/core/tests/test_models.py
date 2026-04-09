@@ -22,15 +22,6 @@ class TestTransferModel:
         t2 = TransferFactory()
         assert t1.public_token != t2.public_token
 
-    def test_set_and_check_password(self):
-        transfer = TransferFactory()
-        assert not transfer.has_password
-
-        transfer.set_password("secret123")
-        assert transfer.has_password
-        assert transfer.check_password("secret123")
-        assert not transfer.check_password("wrong")
-
     def test_is_expired(self):
         expired = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))
         assert expired.is_expired

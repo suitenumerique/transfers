@@ -121,10 +121,16 @@ class Base(Configuration):
         "transferts", environ_name="TRANSFERS_BUCKET_NAME", environ_prefix=None
     )
     TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
-        7, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
+        30, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
     )
     TRANSFER_MAX_EXPIRY_DAYS = values.PositiveIntegerValue(
-        30, environ_name="TRANSFER_MAX_EXPIRY_DAYS", environ_prefix=None
+        90, environ_name="TRANSFER_MAX_EXPIRY_DAYS", environ_prefix=None
+    )
+    TRANSFER_EXPIRY_CHOICES = [7, 30, 90]
+    TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
+        20 * 1024 * 1024 * 1024,  # 20 Go
+        environ_name="TRANSFER_MAX_FILE_SIZE",
+        environ_prefix=None,
     )
 
     STORAGES = {

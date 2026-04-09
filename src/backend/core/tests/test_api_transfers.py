@@ -57,52 +57,27 @@ class TestTransferCreate:
     def test_create_transfer(self, mock_s3, authenticated_client, user):
         mock_s3.return_value = MagicMock()
 
-        file1 = SimpleUploadedFile("doc.pdf", b"pdf-content", content_type="application/pdf")
-        file2 = SimpleUploadedFile("photo.jpg", b"jpg-content", content_type="image/jpeg")
+        file = SimpleUploadedFile("doc.pdf", b"pdf-content", content_type="application/pdf")
 
         response = authenticated_client.post(
             API_URL,
             {
                 "title": "My transfer",
-                "message": "Here are the files",
-                "recipients": ["alice@example.com", "bob@example.com"],
-                "files": [file1, file2],
+                "expires_in_days": 30,
+                "file": file,
             },
             format="multipart",
         )
 
         assert response.status_code == 201
         assert response.data["title"] == "My transfer"
-        assert len(response.data["files"]) == 2
-        assert len(response.data["recipients"]) == 2
+        assert len(response.data["files"]) == 1
         assert response.data["status"] == "active"
 
         transfer = Transfer.objects.get(id=response.data["id"])
         assert transfer.owner == user
-        assert not transfer.has_password
 
         assert_single_event(transfer.id, TransferEventType.TRANSFER_CREATED)
-
-    @patch("core.api.viewsets.transfer._get_s3_client")
-    def test_create_with_password(self, mock_s3, authenticated_client):
-        mock_s3.return_value = MagicMock()
-
-        file = SimpleUploadedFile("doc.pdf", b"content", content_type="application/pdf")
-        response = authenticated_client.post(
-            API_URL,
-            {
-                "recipients": ["alice@example.com"],
-                "password": "secret123",
-                "files": [file],
-            },
-            format="multipart",
-        )
-
-        assert response.status_code == 201
-        assert response.data["has_password"] is True
-
-        transfer = Transfer.objects.get(id=response.data["id"])
-        assert transfer.check_password("secret123")
 
     @patch("core.api.viewsets.transfer._get_s3_client")
     def test_create_with_custom_expiry(self, mock_s3, authenticated_client):
@@ -112,54 +87,57 @@ class TestTransferCreate:
         response = authenticated_client.post(
             API_URL,
             {
-                "recipients": ["alice@example.com"],
-                "expires_in_days": 14,
-                "files": [file],
+                "expires_in_days": 90,
+                "file": file,
             },
             format="multipart",
         )
 
         assert response.status_code == 201
         transfer = Transfer.objects.get(id=response.data["id"])
-        expected_min = timezone.now() + timedelta(days=13)
+        expected_min = timezone.now() + timedelta(days=89)
         assert transfer.expires_at > expected_min
 
-    def test_create_no_files(self, authenticated_client):
+    def test_create_no_file(self, authenticated_client):
         response = authenticated_client.post(
             API_URL,
-            {
-                "recipients": ["alice@example.com"],
-            },
-            format="multipart",
-        )
-        assert response.status_code == 400
-
-    def test_create_no_recipients(self, authenticated_client):
-        file = SimpleUploadedFile("doc.pdf", b"content", content_type="application/pdf")
-        response = authenticated_client.post(
-            API_URL,
-            {
-                "files": [file],
-            },
+            {},
             format="multipart",
         )
         assert response.status_code == 400
 
     @patch("core.api.viewsets.transfer._get_s3_client")
-    def test_create_expiry_too_long(self, mock_s3, authenticated_client):
+    def test_create_invalid_expiry(self, mock_s3, authenticated_client):
         mock_s3.return_value = MagicMock()
 
         file = SimpleUploadedFile("doc.pdf", b"content", content_type="application/pdf")
         response = authenticated_client.post(
             API_URL,
             {
-                "recipients": ["alice@example.com"],
                 "expires_in_days": 999,
-                "files": [file],
+                "file": file,
             },
             format="multipart",
         )
         assert response.status_code == 400
+
+    @patch("core.api.viewsets.transfer._get_s3_client")
+    def test_create_sensitive(self, mock_s3, authenticated_client):
+        mock_s3.return_value = MagicMock()
+
+        file = SimpleUploadedFile("doc.pdf", b"content", content_type="application/pdf")
+        response = authenticated_client.post(
+            API_URL,
+            {
+                "sensitive": True,
+                "file": file,
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == 201
+        transfer = Transfer.objects.get(id=response.data["id"])
+        assert transfer.sensitive is True
 
 
 @pytest.mark.django_db
@@ -186,6 +164,32 @@ class TestTransferRevoke:
         other_transfer = TransferFactory()
         response = authenticated_client.post(f"{API_URL}{other_transfer.id}/revoke/")
         assert response.status_code == 404
+
+
+@pytest.mark.django_db
+class TestTransferReactivate:
+    def test_reactivate_expired(self, authenticated_client, transfer):
+        transfer.status = TransferStatus.EXPIRED
+        transfer.expires_at = timezone.now() - timedelta(hours=1)
+        transfer.save(update_fields=["status", "expires_at"])
+        old_token = transfer.public_token
+
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/reactivate/")
+
+        assert response.status_code == 200
+        assert response.data["status"] == "active"
+        assert response.data["public_token"] == old_token  # same token kept
+
+    def test_reactivate_active_fails(self, authenticated_client, transfer):
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/reactivate/")
+        assert response.status_code == 400
+
+    def test_reactivate_revoked_fails(self, authenticated_client, transfer):
+        transfer.status = TransferStatus.REVOKED
+        transfer.save(update_fields=["status"])
+
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/reactivate/")
+        assert response.status_code == 400
 
 
 @pytest.mark.django_db

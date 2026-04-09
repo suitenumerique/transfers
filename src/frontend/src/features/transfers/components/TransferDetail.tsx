@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { useRevokeTransfer } from "../api/useRevokeTransfer";
+import { useReactivateTransfer } from "../api/useReactivateTransfer";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 import { formatFileSize } from "@/features/utils/string-helper";
 
@@ -13,6 +14,7 @@ export function TransferDetail({
 }) {
   const { t } = useTranslation();
   const revokeTransfer = useRevokeTransfer();
+  const reactivateTransfer = useReactivateTransfer();
   const [copied, setCopied] = useState(false);
 
   const downloadUrl = `${window.location.origin}/t/${transfer.public_token}`;
@@ -26,6 +28,10 @@ export function TransferDetail({
   const handleRevoke = () => {
     if (!confirm(t("Confirm revoke"))) return;
     revokeTransfer.mutate(transfer.id);
+  };
+
+  const handleReactivate = () => {
+    reactivateTransfer.mutate(transfer.id);
   };
 
   const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
@@ -60,17 +66,24 @@ export function TransferDetail({
       </div>
 
       <div className="transfer-detail__actions">
-        <Button size="small" onClick={copyLink}>
-          {copied ? t("Link copied!") : t("Copy link")}
-        </Button>
         {transfer.status === "active" && (
-          <Button
-            size="small"
-            color="neutral"
-            onClick={handleRevoke}
-            disabled={revokeTransfer.isPending}
-          >
-            {t("Revoke")}
+          <>
+            <Button size="small" onClick={copyLink}>
+              {copied ? t("Link copied!") : t("Copy link")}
+            </Button>
+            <Button
+              size="small"
+              color="neutral"
+              onClick={handleRevoke}
+              disabled={revokeTransfer.isPending}
+            >
+              {t("Revoke")}
+            </Button>
+          </>
+        )}
+        {transfer.status === "expired" && (
+          <Button size="small" onClick={handleReactivate}>
+            {t("Reactivate")}
           </Button>
         )}
       </div>
@@ -89,14 +102,6 @@ export function TransferDetail({
         </ul>
       </section>
 
-      <section className="transfer-detail__section">
-        <h2>{t("Recipients ({{count}})", { count: transfer.recipients.length })}</h2>
-        <ul className="transfer-detail__recipients">
-          {transfer.recipients.map((r) => (
-            <li key={r.id}>{r.email}</li>
-          ))}
-        </ul>
-      </section>
     </div>
   );
 }

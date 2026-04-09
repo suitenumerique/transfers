@@ -23,9 +23,8 @@ class TransferEventType(models.TextChoices):
     TRANSFER_CREATED = "transfer_created"
     EMAIL_SENT = "email_sent"
     LINK_OPENED = "link_opened"
-    PASSWORD_ATTEMPT = "password_attempt"  # noqa: S105
     FILE_DOWNLOADED = "file_downloaded"
-    ALL_FILES_DOWNLOADED = "all_files_downloaded"
+    TRANSFER_REACTIVATED = "transfer_reactivated"
     TRANSFER_REVOKED = "transfer_revoked"
     TRANSFER_EXPIRED = "transfer_expired"
     FILES_DELETED = "files_deleted"

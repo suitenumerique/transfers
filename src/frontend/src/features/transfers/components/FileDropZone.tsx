@@ -6,23 +6,31 @@ import { formatFileSize } from "@/features/utils/string-helper";
 interface FileDropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
+  maxFiles?: number;
 }
 
-export function FileDropZone({ files, onChange }: FileDropZoneProps) {
+export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
   const { t } = useTranslation();
 
   const onDrop = useCallback(
     (accepted: File[]) => {
-      onChange([...files, ...accepted]);
+      if (maxFiles === 1) {
+        onChange(accepted.slice(0, 1));
+      } else {
+        onChange([...files, ...accepted]);
+      }
     },
-    [files, onChange],
+    [files, onChange, maxFiles],
   );
 
   const removeFile = (index: number) => {
     onChange(files.filter((_, i) => i !== index));
   };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    maxFiles,
+  });
 
   return (
     <div className="file-dropzone">

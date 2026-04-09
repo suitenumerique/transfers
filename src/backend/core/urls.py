@@ -6,12 +6,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from core.api.viewsets.config import ConfigView
-from core.api.viewsets.download import (
-    DownloadAllView,
-    DownloadFileView,
-    DownloadTransferView,
-    DownloadVerifyPasswordView,
-)
+from core.api.viewsets.download import DownloadFileView, DownloadTransferView
 from core.api.viewsets.transfer import TransferViewSet
 from core.api.viewsets.user import UserViewSet
 from core.authentication.urls import urlpatterns as oidc_urls
@@ -31,25 +26,15 @@ urlpatterns = [
         ),
     ),
     path(f"api/{settings.API_VERSION}/config/", ConfigView.as_view()),
-    # Public download endpoints (no auth, accessed via shared link)
+    # Public download endpoints (no auth)
     path(
         f"api/{settings.API_VERSION}/downloads/<str:public_token>/",
         DownloadTransferView.as_view(),
         name="download-transfer",
     ),
     path(
-        f"api/{settings.API_VERSION}/downloads/<str:public_token>/verify-password/",
-        DownloadVerifyPasswordView.as_view(),
-        name="download-verify-password",
-    ),
-    path(
         f"api/{settings.API_VERSION}/downloads/<str:public_token>/files/<uuid:file_id>/download/",
         DownloadFileView.as_view(),
         name="download-file",
-    ),
-    path(
-        f"api/{settings.API_VERSION}/downloads/<str:public_token>/download-all/",
-        DownloadAllView.as_view(),
-        name="download-all",
     ),
 ]
