@@ -1,0 +1,6 @@
+Bonjour,
+
+Votre fichier « {{ filename }} » du transfert « {{ transfer.title|default:filename }} » a été téléchargé.
+
+Cordialement,
+{{ transfer.owner.full_name|default:"L'équipe Transferts" }}

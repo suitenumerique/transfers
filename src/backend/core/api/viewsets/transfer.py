@@ -186,6 +186,14 @@ class TransferViewSet(
                 {"status": "Only expired transfers can be reactivated."}
             )
 
+        if transfer.files_deleted:
+            raise drf.exceptions.ValidationError(
+                {
+                    "status": "Files have been permanently deleted; "
+                    "this transfer cannot be reactivated."
+                }
+            )
+
         transfer.status = TransferStatus.ACTIVE
         transfer.expires_at = timezone.now() + timedelta(days=settings.TRANSFER_DEFAULT_EXPIRY_DAYS)
         transfer.revoked_at = None
