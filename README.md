@@ -1,4 +1,4 @@
-# Transferts
+# Transfers
 
 Service de transfert de fichiers souverain pour La Suite territoriale.
 

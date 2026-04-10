@@ -1,8 +1,28 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import Link from "next/link";
+import {
+  Alert,
+  Loader,
+  Pagination,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
+import { useState } from "react";
 import { useTransfers } from "../api/useTransfers";
 import { TransferCard } from "./TransferCard";
+
+const PAGE_SIZE = 20;
+
+function NewTransferCta() {
+  const { t } = useTranslation();
+  return (
+    <Link href="/transfers/new" className="transfer-list__new-cta">
+      <span className="transfer-list__new-cta-icon" aria-hidden="true">
+        +
+      </span>
+      <span>{t("New transfer")}</span>
+    </Link>
+  );
+}
 
 export function TransferList() {
   const { t } = useTranslation();
@@ -10,20 +30,33 @@ export function TransferList() {
   const { data, isLoading, isError } = useTransfers(page);
 
   if (isLoading) {
-    return <div className="transfer-list__loading">{t("Loading...")}</div>;
+    return (
+      <div className="transfer-list__loading">
+        <Loader aria-label={t("Loading...")} />
+      </div>
+    );
   }
 
   if (isError) {
-    return <div className="transfer-list__error">{t("Error loading transfers.")}</div>;
+    return (
+      <Alert type={VariantType.ERROR}>{t("Error loading transfers.")}</Alert>
+    );
   }
 
   if (!data || data.results.length === 0) {
     return (
-      <div className="transfer-list__empty">
-        <p>{t("No transfers yet.")}</p>
+      <div className="transfer-list">
+        <div className="transfer-list__empty">
+          <p>{t("No transfers yet.")}</p>
+        </div>
+        <div className="transfer-list__items">
+          <NewTransferCta />
+        </div>
       </div>
     );
   }
+
+  const pagesCount = Math.max(1, Math.ceil(data.count / PAGE_SIZE));
 
   return (
     <div className="transfer-list">
@@ -31,26 +64,16 @@ export function TransferList() {
         {data.results.map((transfer) => (
           <TransferCard key={transfer.id} transfer={transfer} />
         ))}
+        <NewTransferCta />
       </div>
-      {(data.previous || data.next) && (
+      {pagesCount > 1 && (
         <div className="transfer-list__pagination">
-          <Button
-            size="small"
-            color="neutral"
-            disabled={!data.previous}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            {t("Previous")}
-          </Button>
-          <span>{t("Page {{page}}", { page })}</span>
-          <Button
-            size="small"
-            color="neutral"
-            disabled={!data.next}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            {t("Next")}
-          </Button>
+          <Pagination
+            page={page}
+            pagesCount={pagesCount}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+          />
         </div>
       )}
     </div>

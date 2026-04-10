@@ -16,7 +16,7 @@ const TransferDetailPage: NextPageWithLayout = () => {
   if (isError || !transfer) return <p>Transfert introuvable.</p>;
 
   return (
-    <div>
+    <div className="app-content">
       <Link href="/">&larr; Retour</Link>
       <TransferDetail transfer={transfer} />
       <TransferTimeline transferId={transfer.id} />

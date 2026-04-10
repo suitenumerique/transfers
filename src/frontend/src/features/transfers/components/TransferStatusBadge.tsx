@@ -1,10 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/features/ui/components/badge";
+import { Badge } from "@gouvfr-lasuite/ui-kit";
 
 const STATUS_MAP = {
-  active: { labelKey: "Active", color: "success" as const },
-  expired: { labelKey: "Expired", color: "warning" as const },
-  revoked: { labelKey: "Revoked", color: "error" as const },
+  active: { labelKey: "Active", type: "success" as const },
+  expired: { labelKey: "Expired", type: "warning" as const },
+  revoked: { labelKey: "Revoked", type: "danger" as const },
 };
 
 export function TransferStatusBadge({
@@ -13,6 +13,6 @@ export function TransferStatusBadge({
   status: "active" | "expired" | "revoked";
 }) {
   const { t } = useTranslation();
-  const { labelKey, color } = STATUS_MAP[status];
-  return <Badge color={color}>{t(labelKey)}</Badge>;
+  const { labelKey, type } = STATUS_MAP[status];
+  return <Badge type={type}>{t(labelKey)}</Badge>;
 }

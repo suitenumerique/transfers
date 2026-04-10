@@ -19,12 +19,25 @@ export class StringHelper {
     }
 }
 
+import i18n from "i18next";
+
+const UNIT_KEYS = [
+    "unit_byte",
+    "unit_kilobyte",
+    "unit_megabyte",
+    "unit_gigabyte",
+    "unit_terabyte",
+];
+
 export function formatFileSize(bytes: number): string {
-    if (bytes === 0) return "0 o";
-    const units = ["o", "Ko", "Mo", "Go", "To"];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    if (bytes === 0) return `0 ${i18n.t(UNIT_KEYS[0])}`;
+    const i = Math.min(
+        Math.floor(Math.log(bytes) / Math.log(1024)),
+        UNIT_KEYS.length - 1,
+    );
     const value = bytes / Math.pow(1024, i);
-    return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
+    const unit = i18n.t(UNIT_KEYS[i]);
+    return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${unit}`;
 }
 
 export default StringHelper;

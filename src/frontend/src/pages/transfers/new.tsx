@@ -6,10 +6,12 @@ import type { NextPageWithLayout } from "../_app";
 
 const NewTransferPage: NextPageWithLayout = () => {
   return (
-    <div>
-      <Link href="/">&larr; Retour</Link>
-      <h1>Nouveau transfert</h1>
-      <TransferForm />
+    <div className="app-content">
+      <div className="new-transfer-page">
+        <Link href="/">&larr; Retour</Link>
+        <h1>Nouveau transfert</h1>
+        <TransferForm />
+      </div>
     </div>
   );
 };

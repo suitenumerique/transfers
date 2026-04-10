@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { formatFileSize } from "@/features/utils/string-helper";
 
 interface FileDropZoneProps {
@@ -51,13 +52,15 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
             <li key={`${file.name}-${i}`} className="file-dropzone__item">
               <span>{file.name}</span>
               <span className="file-dropzone__size">{formatFileSize(file.size)}</span>
-              <button
+              <Button
                 type="button"
-                className="file-dropzone__remove"
+                size="small"
+                color="tertiary"
                 onClick={() => removeFile(i)}
+                aria-label={t("Remove")}
               >
                 &times;
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

@@ -1,36 +1,50 @@
 import { type PropsWithChildren } from "react";
-import Link from "next/link";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { useTranslation } from "react-i18next";
+import {
+  LaGaufreV2,
+  MainLayout as UIKitLayout,
+  UserMenu,
+} from "@gouvfr-lasuite/ui-kit";
+import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
+import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
 import { useAuth, logout } from "@/features/auth";
 
 export function MainLayout({ children }: PropsWithChildren) {
-  const { t } = useTranslation();
   const { user } = useAuth();
 
+  // Unauthenticated pages (landing, callbacks) render standalone.
+  if (!user) {
+    return <>{children}</>;
+  }
+
   return (
-    <div className="main-layout">
-      <header className="main-layout__header">
-        <Link href="/" className="main-layout__logo">
-          {t("Transferts")}
-        </Link>
-        <nav className="main-layout__nav">
-          {user && (
-            <>
-              <Link href="/transfers/new">
-                <Button size="small">{t("New transfer")}</Button>
-              </Link>
-              <span className="main-layout__user">
-                {user.full_name || user.email}
-              </span>
-              <Button size="small" color="neutral" onClick={logout}>
-                {t("Logout")}
-              </Button>
-            </>
-          )}
-        </nav>
-      </header>
-      <main className="main-layout__content">{children}</main>
-    </div>
+    <UIKitLayout
+      hideLeftPanelOnDesktop
+      icon={
+        <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
+      }
+      rightHeaderContent={
+        <>
+          <LaGaufreV2
+            widgetPath={TERRITORIALE_GAUFRE.widgetPath}
+            apiUrl={TERRITORIALE_GAUFRE.apiUrl}
+            showMoreLimit={100}
+          />
+          <UserMenu
+            user={{
+              full_name: user.full_name ?? undefined,
+              email: user.email ?? "",
+            }}
+            logout={logout}
+            actions={
+              <div className="user-menu__footer-action">
+                <LanguagePicker size="small" compact />
+              </div>
+            }
+          />
+        </>
+      }
+    >
+      {children}
+    </UIKitLayout>
   );
 }
