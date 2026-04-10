@@ -33,7 +33,7 @@ class TestDownloadTransferView:
     def test_get_expired_transfer(self, api_client):
         t = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))
         response = api_client.get(f"{DOWNLOADS_URL}/{t.public_token}/")
-        assert response.status_code == 403
+        assert response.status_code == 410
 
     def test_get_revoked_transfer(self, api_client):
         t = TransferFactory(status=TransferStatus.REVOKED)
@@ -80,4 +80,4 @@ class TestDownloadFileView:
         response = api_client.get(
             f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/"
         )
-        assert response.status_code == 403
+        assert response.status_code == 410
