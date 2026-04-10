@@ -55,7 +55,7 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
               <Button
                 type="button"
                 size="small"
-                color="tertiary"
+                color="neutral"
                 onClick={() => removeFile(i)}
                 aria-label={t("Remove")}
               >

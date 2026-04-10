@@ -60,7 +60,9 @@ class TestDownloadFileView:
             f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/"
         )
         assert response.status_code == 200
-        assert response["Content-Disposition"] == f'attachment; filename="{tf.filename}"'
+        assert (
+            response["Content-Disposition"] == f'attachment; filename="{tf.filename}"'
+        )
 
         assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED)
 

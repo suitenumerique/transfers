@@ -27,7 +27,5 @@ class Command(BaseCommand):
             recipient_list=options["to_emails"],
         )
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Email sent to {', '.join(options['to_emails'])}"
-            )
+            self.style.SUCCESS(f"Email sent to {', '.join(options['to_emails'])}")
         )

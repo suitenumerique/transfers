@@ -68,18 +68,14 @@ class Base(Configuration):
             "NAME": values.Value(
                 "transferts", environ_name="DB_NAME", environ_prefix=None
             ),
-            "USER": values.Value(
-                "dbuser", environ_name="DB_USER", environ_prefix=None
-            ),
+            "USER": values.Value("dbuser", environ_name="DB_USER", environ_prefix=None),
             "PASSWORD": values.Value(
                 "dbpass", environ_name="DB_PASSWORD", environ_prefix=None
             ),
             "HOST": values.Value(
                 "localhost", environ_name="DB_HOST", environ_prefix=None
             ),
-            "PORT": values.Value(
-                5432, environ_name="DB_PORT", environ_prefix=None
-            ),
+            "PORT": values.Value(5432, environ_name="DB_PORT", environ_prefix=None),
         },
     }
     DEFAULT_AUTO_FIELD = "django.db.models.AutoField"

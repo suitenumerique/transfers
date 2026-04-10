@@ -17,9 +17,7 @@ class UserAdmin(auth_admin.UserAdmin):
         (None, {"fields": ("sub", "email", "full_name")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser")}),
     )
-    add_fieldsets = (
-        (None, {"fields": ("admin_email", "password1", "password2")}),
-    )
+    add_fieldsets = ((None, {"fields": ("admin_email", "password1", "password2")}),)
 
 
 class TransferFileInline(admin.TabularInline):

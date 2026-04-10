@@ -216,7 +216,9 @@ class Transfer(BaseModel):
 
     @property
     def is_expired(self) -> bool:
-        return self.status == TransferStatus.EXPIRED or self.expires_at <= timezone.now()
+        return (
+            self.status == TransferStatus.EXPIRED or self.expires_at <= timezone.now()
+        )
 
     @property
     def is_revoked(self) -> bool:

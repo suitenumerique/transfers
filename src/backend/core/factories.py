@@ -46,5 +46,3 @@ class TransferFileFactory(factory.django.DjangoModelFactory):
     size = factory.fuzzy.FuzzyInteger(1024, 10 * 1024 * 1024)
     mime_type = "application/octet-stream"
     s3_key = factory.LazyFunction(lambda: f"transfers/{uuid.uuid4()}/test-file.bin")
-
-

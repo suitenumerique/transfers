@@ -75,7 +75,7 @@ export function TransferDetail({
             </Button>
             <Button
               size="small"
-              color="danger"
+              color="error"
               onClick={revokeModal.open}
               disabled={revokeTransfer.isPending}
             >

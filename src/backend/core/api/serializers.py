@@ -1,6 +1,5 @@
 """Client serializers for the transferts core app."""
 
-
 from django.conf import settings
 
 from drf_spectacular.utils import extend_schema_field

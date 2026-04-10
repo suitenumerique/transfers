@@ -34,7 +34,11 @@ def main():
     logger = logging.getLogger(__name__)
     args = parse_args()
 
-    queues = [q.strip() for q in args.queues.split(",")] if args.queues else DEFAULT_QUEUES.copy()
+    queues = (
+        [q.strip() for q in args.queues.split(",")]
+        if args.queues
+        else DEFAULT_QUEUES.copy()
+    )
 
     worker_args = [
         "worker",

@@ -101,13 +101,13 @@ class TransferViewSet(
 
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
-            raise drf.exceptions.ValidationError(
-                {"file": "A file is required."}
-            )
+            raise drf.exceptions.ValidationError({"file": "A file is required."})
 
         if uploaded_file.size > settings.TRANSFER_MAX_FILE_SIZE:
             raise drf.exceptions.ValidationError(
-                {"file": f"File exceeds maximum size of {settings.TRANSFER_MAX_FILE_SIZE // (1024**3)} Go."}
+                {
+                    "file": f"File exceeds maximum size of {settings.TRANSFER_MAX_FILE_SIZE // (1024**3)} Go."
+                }
             )
 
         expires_in_days = serializer.get_expires_in_days(data)
@@ -195,9 +195,13 @@ class TransferViewSet(
             )
 
         transfer.status = TransferStatus.ACTIVE
-        transfer.expires_at = timezone.now() + timedelta(days=settings.TRANSFER_DEFAULT_EXPIRY_DAYS)
+        transfer.expires_at = timezone.now() + timedelta(
+            days=settings.TRANSFER_DEFAULT_EXPIRY_DAYS
+        )
         transfer.revoked_at = None
-        transfer.save(update_fields=["status", "expires_at", "revoked_at", "updated_at"])
+        transfer.save(
+            update_fields=["status", "expires_at", "revoked_at", "updated_at"]
+        )
 
         models.TransferEvent.objects.create(
             transfer_id=transfer.id,
@@ -216,9 +220,9 @@ class TransferViewSet(
     def events(self, request, pk=None):
         """List events for a transfer."""
         transfer = self.get_object()
-        events = models.TransferEvent.objects.filter(
-            transfer_id=transfer.id
-        ).order_by("-created_at")
+        events = models.TransferEvent.objects.filter(transfer_id=transfer.id).order_by(
+            "-created_at"
+        )
         page = self.paginate_queryset(events)
         if page is not None:
             serializer = TransferEventSerializer(page, many=True)
