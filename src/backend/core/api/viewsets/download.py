@@ -3,8 +3,8 @@
 from django.conf import settings
 from django.http import StreamingHttpResponse
 
-import rest_framework as drf
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core import models
@@ -14,23 +14,35 @@ from core.enums import ActorType, TransferEventType, TransferStatus
 from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 
-def _get_transfer_or_404(public_token: str) -> models.Transfer:
+TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
+
+
+def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
     try:
         return models.Transfer.objects.prefetch_related("files").get(
             public_token=public_token
         )
-    except models.Transfer.DoesNotExist as err:
-        raise drf.exceptions.NotFound("Transfer not found.") from err
+    except models.Transfer.DoesNotExist:
+        return None
 
 
-def _check_accessible(transfer: models.Transfer) -> None:
+def _denied_access_response(transfer: models.Transfer) -> Response | None:
+    """Return an error Response if the public visitor cannot access the transfer,
+    or None if access is allowed."""
     if transfer.status == TransferStatus.REVOKED:
-        raise drf.exceptions.PermissionDenied("This transfer has been revoked.")
-    if transfer.is_expired:
-        raise drf.exceptions.PermissionDenied("This transfer has expired.")
+        return Response(
+            {"detail": "This transfer has been revoked.", "reason": "revoked"},
+            status=403,
+        )
+    if transfer.is_expired or transfer.files_deleted_at:
+        return Response(
+            {"detail": "This transfer has expired.", "reason": "expired"},
+            status=410,
+        )
+    return None
 
 
-def _log_event(transfer, event_type, request, payload=None):
+def _record_visitor_event(transfer, event_type, request, payload=None):
     models.TransferEvent.objects.create(
         transfer_id=transfer.id,
         event_type=event_type,
@@ -48,12 +60,18 @@ class DownloadTransferView(APIView):
     authentication_classes = []
 
     def get(self, request, public_token):
-        transfer = _get_transfer_or_404(public_token)
-        _check_accessible(transfer)
-        _log_event(transfer, TransferEventType.LINK_OPENED, request)
+        transfer = _fetch_transfer_by_token(public_token)
+        if transfer is None:
+            return Response(TRANSFER_NOT_FOUND_BODY, status=404)
+
+        denied = _denied_access_response(transfer)
+        if denied is not None:
+            return denied
+
+        _record_visitor_event(transfer, TransferEventType.LINK_OPENED, request)
         send_link_opened_notification.delay(str(transfer.id))
         serializer = DownloadTransferSerializer(transfer)
-        return drf.response.Response(serializer.data)
+        return Response(serializer.data)
 
 
 class DownloadFileView(APIView):
@@ -63,19 +81,24 @@ class DownloadFileView(APIView):
     authentication_classes = []
 
     def get(self, request, public_token, file_id):
-        transfer = _get_transfer_or_404(public_token)
-        _check_accessible(transfer)
+        transfer = _fetch_transfer_by_token(public_token)
+        if transfer is None:
+            return Response(TRANSFER_NOT_FOUND_BODY, status=404)
+
+        denied = _denied_access_response(transfer)
+        if denied is not None:
+            return denied
 
         try:
             transfer_file = transfer.files.get(id=file_id)
-        except models.TransferFile.DoesNotExist as err:
-            raise drf.exceptions.NotFound("File not found.") from err
+        except models.TransferFile.DoesNotExist:
+            return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
         s3 = _get_s3_client()
         bucket = settings.TRANSFERS_BUCKET_NAME
-        s3_response = s3.get_object(Bucket=bucket, Key=transfer_file.s3_key)
+        s3_object = s3.get_object(Bucket=bucket, Key=transfer_file.s3_key)
 
-        _log_event(
+        _record_visitor_event(
             transfer,
             TransferEventType.FILE_DOWNLOADED,
             request,
@@ -84,7 +107,7 @@ class DownloadFileView(APIView):
         send_file_downloaded_notification.delay(str(transfer.id), transfer_file.filename)
 
         response = StreamingHttpResponse(
-            s3_response["Body"].iter_chunks(),
+            s3_object["Body"].iter_chunks(),
             content_type=transfer_file.mime_type or "application/octet-stream",
         )
         response["Content-Disposition"] = f'attachment; filename="{transfer_file.filename}"'

@@ -55,14 +55,9 @@ export function TransferDetail({
         <TransferStatusBadge status={transfer.status} />
       </div>
 
-      {transfer.message && (
-        <p className="transfer-detail__message">{transfer.message}</p>
-      )}
-
       <div className="transfer-detail__meta">
         <span>{t("Created on {{date}}", { date: createdAt })}</span>
         <span>{t("Expires on {{date}}", { date: expiresAt })}</span>
-        {transfer.has_password && <span>{t("Password protected")}</span>}
       </div>
 
       <div className="transfer-detail__actions">
@@ -81,7 +76,7 @@ export function TransferDetail({
             </Button>
           </>
         )}
-        {transfer.status === "expired" && (
+        {transfer.status === "expired" && !transfer.files_deleted_at && (
           <Button size="small" onClick={handleReactivate}>
             {t("Reactivate")}
           </Button>
