@@ -111,7 +111,11 @@ def delete_expired_transfer_files_task():
 def send_link_opened_notification(transfer_id):
     """Notify the owner that their transfer link was opened."""
     try:
-        transfer = Transfer.objects.select_related("owner").prefetch_related("files").get(id=transfer_id)
+        transfer = (
+            Transfer.objects.select_related("owner")
+            .prefetch_related("files")
+            .get(id=transfer_id)
+        )
     except Transfer.DoesNotExist:
         return
 

@@ -13,7 +13,6 @@ from core.api.viewsets.transfer import _get_s3_client
 from core.enums import ActorType, TransferEventType, TransferStatus
 from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
-
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
 
 
@@ -102,14 +101,21 @@ class DownloadFileView(APIView):
             transfer,
             TransferEventType.FILE_DOWNLOADED,
             request,
-            payload={"file_id": str(transfer_file.id), "filename": transfer_file.filename},
+            payload={
+                "file_id": str(transfer_file.id),
+                "filename": transfer_file.filename,
+            },
         )
-        send_file_downloaded_notification.delay(str(transfer.id), transfer_file.filename)
+        send_file_downloaded_notification.delay(
+            str(transfer.id), transfer_file.filename
+        )
 
         response = StreamingHttpResponse(
             s3_object["Body"].iter_chunks(),
             content_type=transfer_file.mime_type or "application/octet-stream",
         )
-        response["Content-Disposition"] = f'attachment; filename="{transfer_file.filename}"'
+        response["Content-Disposition"] = (
+            f'attachment; filename="{transfer_file.filename}"'
+        )
         response["Content-Length"] = transfer_file.size
         return response

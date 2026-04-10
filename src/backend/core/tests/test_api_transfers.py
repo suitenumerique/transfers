@@ -57,7 +57,9 @@ class TestTransferCreate:
     def test_create_transfer(self, mock_s3, authenticated_client, user):
         mock_s3.return_value = MagicMock()
 
-        file = SimpleUploadedFile("doc.pdf", b"pdf-content", content_type="application/pdf")
+        file = SimpleUploadedFile(
+            "doc.pdf", b"pdf-content", content_type="application/pdf"
+        )
 
         response = authenticated_client.post(
             API_URL,
