@@ -1,0 +1,81 @@
+name: Lint and tests
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '*'
+
+env:
+  COMPOSE_BAKE: true
+
+jobs:
+  lint-back:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create env files
+        run: make create-env-files
+      - name: Run backend linting
+        run: make lint-back
+
+  test-back:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_USER: 1001
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create env files
+        run: make create-env-files
+      - name: Setup data directories
+        run: |
+          mkdir -p data/static
+          sudo chown -R 1001:1001 data
+      - name: Collect static files
+        run: make collectstatic
+      - name: Create transfers bucket
+        run: make create-bucket
+      - name: Run backend tests
+        run: make test-back
+
+  lint-front:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create env files
+        run: make create-env-files
+      - name: Install frontend dependencies
+        run: make install-frozen-front
+      - name: Run frontend linting
+        run: make lint-front
+      - name: Run frontend type check
+        run: make typecheck-front
+
+  test-front:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create env files
+        run: make create-env-files
+      - name: Install frontend dependencies
+        run: make install-frozen-front
+      - name: Run frontend tests
+        run: make test-front
+
+  build-front:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create env files
+        run: make create-env-files
+      - name: Install frontend dependencies
+        run: make install-frozen-front
+      - name: Build frontend
+        run: make build-front
