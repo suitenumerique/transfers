@@ -25,7 +25,7 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
       <div className="download-view__header">
         <h1>{transfer.title || t("Transfer")}</h1>
         <p className="download-view__sender">
-          {t("From {{name}}", { name: transfer.owner_name || transfer.owner_email })}
+          {t("From {{name}}", { name: transfer.owner_name || transfer.owner_email || t("Unknown sender") })}
         </p>
         <p className="download-view__expires">{t("Expires on {{date}}", { date: expiresAt })}</p>
       </div>
