@@ -1,0 +1,8 @@
+Bonjour,
+
+Le lien de téléchargement de votre transfert « {{ transfer.title|default:filename }} » vient d'être consulté.
+
+Fichier : {{ filename }}
+
+Cordialement,
+{{ transfer.owner.full_name|default:"L'équipe Transferts" }}

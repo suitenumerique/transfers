@@ -200,6 +200,12 @@ class Transfer(BaseModel):
         default=False,
         help_text="Marked as sensitive document by the agent. Behaviour TBD.",
     )
+    files_deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when the underlying S3 files have been deleted. Once set, "
+        "the transfer cannot be reactivated.",
+    )
 
     class Meta:
         db_table = "core_transfer"
@@ -217,8 +223,20 @@ class Transfer(BaseModel):
         return self.status == TransferStatus.REVOKED
 
     @property
+    def files_deleted(self) -> bool:
+        return self.files_deleted_at is not None
+
+    @property
+    def can_be_reactivated(self) -> bool:
+        return self.status == TransferStatus.EXPIRED and not self.files_deleted
+
+    @property
     def is_accessible(self) -> bool:
-        return self.status == TransferStatus.ACTIVE and not self.is_expired
+        return (
+            self.status == TransferStatus.ACTIVE
+            and not self.is_expired
+            and not self.files_deleted
+        )
 
 
 class TransferFile(BaseModel):

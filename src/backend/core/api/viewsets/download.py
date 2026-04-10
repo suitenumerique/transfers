@@ -11,6 +11,7 @@ from core import models
 from core.api.serializers import DownloadTransferSerializer
 from core.api.viewsets.transfer import _get_s3_client
 from core.enums import ActorType, TransferEventType, TransferStatus
+from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 
 def _get_transfer_or_404(public_token: str) -> models.Transfer:
@@ -50,6 +51,7 @@ class DownloadTransferView(APIView):
         transfer = _get_transfer_or_404(public_token)
         _check_accessible(transfer)
         _log_event(transfer, TransferEventType.LINK_OPENED, request)
+        send_link_opened_notification.delay(str(transfer.id))
         serializer = DownloadTransferSerializer(transfer)
         return drf.response.Response(serializer.data)
 
@@ -79,6 +81,7 @@ class DownloadFileView(APIView):
             request,
             payload={"file_id": str(transfer_file.id), "filename": transfer_file.filename},
         )
+        send_file_downloaded_notification.delay(str(transfer.id), transfer_file.filename)
 
         response = StreamingHttpResponse(
             s3_response["Body"].iter_chunks(),

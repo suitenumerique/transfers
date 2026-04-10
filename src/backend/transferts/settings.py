@@ -127,6 +127,11 @@ class Base(Configuration):
         90, environ_name="TRANSFER_MAX_EXPIRY_DAYS", environ_prefix=None
     )
     TRANSFER_EXPIRY_CHOICES = [7, 30, 90]
+    TRANSFER_FILE_GRACE_PERIOD_DAYS = values.PositiveIntegerValue(
+        30,
+        environ_name="TRANSFER_FILE_GRACE_PERIOD_DAYS",
+        environ_prefix=None,
+    )
     TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
         20 * 1024 * 1024 * 1024,  # 20 Go
         environ_name="TRANSFER_MAX_FILE_SIZE",
@@ -288,6 +293,11 @@ class Base(Configuration):
     EMAIL_BRAND_NAME = values.Value(
         "La Suite territoriale",
         environ_name="DJANGO_EMAIL_BRAND_NAME",
+        environ_prefix=None,
+    )
+    DEFAULT_FROM_EMAIL = values.Value(
+        "transferts@suite-territoriale.fr",
+        environ_name="DEFAULT_FROM_EMAIL",
         environ_prefix=None,
     )
 
