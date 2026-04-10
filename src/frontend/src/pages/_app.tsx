@@ -6,8 +6,10 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
+import { CunninghamProvider } from "@gouvfr-lasuite/cunningham-react";
 import "../features/i18n/initI18n";
 import Head from "next/head";
+import { useTranslation } from "react-i18next";
 import { Auth } from "@/features/auth";
 import { ConfigProvider } from "@/features/providers/config";
 
@@ -28,22 +30,31 @@ const queryClient = new QueryClient({
   },
 });
 
-export default function MyApp({ Component, pageProps }: AppPropsWithLayout) {
+function AppContent({ Component, pageProps }: AppPropsWithLayout) {
+  const { i18n } = useTranslation();
   const getLayout = Component.getLayout ?? ((page) => page);
 
   return (
+    <CunninghamProvider currentLocale={i18n.language}>
+      <ConfigProvider>
+        <Auth>
+          {getLayout(<Component {...pageProps} />)}
+        </Auth>
+      </ConfigProvider>
+    </CunninghamProvider>
+  );
+}
+
+export default function MyApp(props: AppPropsWithLayout) {
+  return (
     <>
       <Head>
-        <title>Transferts</title>
+        <title>Transfers</title>
         <meta name="description" content="Service de transfert de fichiers" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <QueryClientProvider client={queryClient}>
-        <ConfigProvider>
-          <Auth>
-            {getLayout(<Component {...pageProps} />)}
-          </Auth>
-        </ConfigProvider>
+        <AppContent {...props} />
       </QueryClientProvider>
     </>
   );

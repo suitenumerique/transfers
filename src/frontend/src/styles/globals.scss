@@ -22,6 +22,43 @@ body {
   box-sizing: border-box;
 }
 
+// ui-kit Hero has height: 100vh by default, but it lives inside
+// .c__main-layout__content__center__children which is already 100dvh - header.
+// Clamp it so the landing page doesn't scroll by the header height,
+// and propagate full height down so the Hero stays vertically centered.
+.c__main-layout__content__center__children {
+  display: flex;
+}
+
+.c__home-gutter {
+  height: 100%;
+  min-height: 0;
+}
+
+.c__hero {
+  height: 100% !important;
+  max-height: 100%;
+}
+
+// Centered content container used by authenticated pages
+.app-content {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 3rem;
+  box-sizing: border-box;
+
+  @media (max-width: 768px) {
+    padding: 1rem;
+  }
+
+  h1 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+  }
+}
+
+
 // Cunningham tweaks
 .c__datagrid__table__container > table tbody tr:not(:last-child) {
   border-bottom: 1px solid var(--c--contextuals--border--surface--primary);

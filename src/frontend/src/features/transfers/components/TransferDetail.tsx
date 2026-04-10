@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Button,
+  DeleteConfirmationModal,
+  useModal,
+} from "@gouvfr-lasuite/cunningham-react";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { useRevokeTransfer } from "../api/useRevokeTransfer";
 import { useReactivateTransfer } from "../api/useReactivateTransfer";
@@ -16,6 +20,7 @@ export function TransferDetail({
   const revokeTransfer = useRevokeTransfer();
   const reactivateTransfer = useReactivateTransfer();
   const [copied, setCopied] = useState(false);
+  const revokeModal = useModal();
 
   const downloadUrl = `${window.location.origin}/t/${transfer.public_token}`;
 
@@ -25,9 +30,11 @@ export function TransferDetail({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRevoke = () => {
-    if (!confirm(t("Confirm revoke"))) return;
-    revokeTransfer.mutate(transfer.id);
+  const handleRevokeDecision = (decision?: string | null) => {
+    revokeModal.close();
+    if (decision === "delete") {
+      revokeTransfer.mutate(transfer.id);
+    }
   };
 
   const handleReactivate = () => {
@@ -68,8 +75,8 @@ export function TransferDetail({
             </Button>
             <Button
               size="small"
-              color="neutral"
-              onClick={handleRevoke}
+              color="danger"
+              onClick={revokeModal.open}
               disabled={revokeTransfer.isPending}
             >
               {t("Revoke")}
@@ -97,6 +104,14 @@ export function TransferDetail({
         </ul>
       </section>
 
+      <DeleteConfirmationModal
+        isOpen={revokeModal.isOpen}
+        onClose={revokeModal.close}
+        onDecide={handleRevokeDecision}
+        title={t("Confirm revoke")}
+      >
+        {t("This link will no longer work and files will be deleted.")}
+      </DeleteConfirmationModal>
     </div>
   );
 }

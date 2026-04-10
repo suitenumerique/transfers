@@ -1,11 +1,23 @@
 import { useTranslation } from "react-i18next";
+import { Loader } from "@gouvfr-lasuite/cunningham-react";
 import { useTransferEvents } from "../api/useTransferEvents";
+
+const EVENT_LABELS: Record<string, string> = {
+  transfer_created: "Transfer created",
+  email_sent: "Notification email sent",
+  link_opened: "Link opened",
+  file_downloaded: "File downloaded",
+  transfer_reactivated: "Transfer reactivated",
+  transfer_revoked: "Transfer revoked",
+  transfer_expired: "Transfer expired",
+  files_deleted: "Files deleted",
+};
 
 export function TransferTimeline({ transferId }: { transferId: string }) {
   const { t } = useTranslation();
   const { data, isLoading } = useTransferEvents(transferId);
 
-  if (isLoading) return <p>{t("Loading...")}</p>;
+  if (isLoading) return <Loader aria-label={t("Loading...")} />;
   if (!data || data.results.length === 0) return null;
 
   return (
@@ -19,7 +31,8 @@ export function TransferTimeline({ transferId }: { transferId: string }) {
             hour: "2-digit",
             minute: "2-digit",
           });
-          const label = t(event.event_type);
+          const labelKey = EVENT_LABELS[event.event_type] ?? event.event_type;
+          const label = t(labelKey);
           const detail =
             event.event_type === "file_downloaded" && event.payload?.filename
               ? ` — ${event.payload.filename}`

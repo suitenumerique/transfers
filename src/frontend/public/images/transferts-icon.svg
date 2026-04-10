@@ -1,0 +1,9 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Arrow-up icon (transfer) -->
+  <rect x="4" y="6" width="32" height="32" rx="7" fill="#2845C1"/>
+  <path d="M20 12 L20 28 M13 20 L20 12 L27 20" stroke="#FBC63A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ALPHA badge, sitting at the bottom of the icon -->
+  <rect x="4" y="29" width="32" height="9" rx="4.5" fill="#ECF1F7"/>
+  <text x="20" y="35.5" font-family="Inter, Arial, sans-serif" font-size="6" font-weight="700" fill="#2845C1" text-anchor="middle" letter-spacing="0.5">ALPHA</text>
+</svg>
