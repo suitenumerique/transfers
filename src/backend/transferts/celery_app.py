@@ -15,8 +15,8 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {
-    "expire-transfers": {
-        "task": "core.tasks.expire_transfers_task",
+    "record-expired-transfers": {
+        "task": "core.tasks.record_expired_transfers_task",
         "schedule": 3600.0,  # Every hour
     },
     "delete-expired-transfer-files": {

@@ -26,8 +26,13 @@ def _get_s3_client():
 
 
 @shared_task
-def expire_transfers_task():
-    """Mark active transfers past their expiry date as expired.
+def record_expired_transfers_task():
+    """Record (mark + audit) transfers whose expiry date has passed.
+
+    Public access is already gated by ``Transfer.is_accessible`` (which checks
+    ``expires_at <= now``), so this task does NOT actually cause expiration.
+    It only flips ``status: ACTIVE → EXPIRED`` for filtering/listing purposes
+    and emits an audit ``TRANSFER_EXPIRED`` event.
 
     Files are NOT deleted here — they remain in S3 during the grace period
     so the transfer can be reactivated. Actual file deletion is handled by
