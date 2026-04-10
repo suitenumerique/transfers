@@ -28,6 +28,7 @@ export interface TransferDetail {
   public_token: string;
   expires_at: string;
   revoked_at: string | null;
+  files_deleted_at: string | null;
   created_at: string;
   files: TransferFile[];
 }

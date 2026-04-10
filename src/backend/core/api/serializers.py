@@ -159,6 +159,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "public_token",
             "expires_at",
             "revoked_at",
+            "files_deleted_at",
             "created_at",
             "files",
         ]

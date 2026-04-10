@@ -71,11 +71,6 @@
     }
   }
 
-  &__message {
-    white-space: pre-wrap;
-    margin-bottom: var(--c--globals--spacings--md);
-  }
-
   &__meta {
     display: flex;
     flex-wrap: wrap;
@@ -100,8 +95,7 @@
     }
   }
 
-  &__files,
-  &__recipients {
+  &__files {
     list-style: none;
     padding: 0;
     margin: 0;
@@ -201,43 +195,6 @@
     }
   }
 
-  &__recipients-input {
-    display: flex;
-    gap: var(--c--globals--spacings--xs);
-
-    input {
-      flex: 1;
-    }
-  }
-
-  &__recipients {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--c--globals--spacings--2xs);
-
-    li {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px var(--c--globals--spacings--xs);
-      background: var(--c--contextuals--background--surface--tertiary);
-      border-radius: 4px;
-      font-size: var(--c--globals--font--sizes--sm);
-
-      button {
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-size: 16px;
-        line-height: 1;
-        padding: 0;
-      }
-    }
-  }
-
   &__error {
     color: var(--c--contextuals--content--semantic--danger--primary);
     font-size: var(--c--globals--font--sizes--sm);
@@ -321,14 +278,6 @@
     margin: 0;
   }
 
-  &__message {
-    white-space: pre-wrap;
-    margin-bottom: var(--c--globals--spacings--md);
-    padding: var(--c--globals--spacings--sm);
-    background: var(--c--contextuals--background--surface--tertiary);
-    border-radius: 4px;
-  }
-
   &__files {
     margin-bottom: var(--c--globals--spacings--md);
 
@@ -365,31 +314,6 @@
   &__download-all {
     text-align: center;
     margin-top: var(--c--globals--spacings--md);
-  }
-}
-
-// Password Form
-.password-form {
-  max-width: 400px;
-  margin: 0 auto;
-
-  &__field {
-    display: flex;
-    gap: var(--c--globals--spacings--xs);
-    margin-top: var(--c--globals--spacings--sm);
-
-    input {
-      flex: 1;
-      padding: var(--c--globals--spacings--xs);
-      border: 1px solid var(--c--contextuals--border--surface--primary);
-      border-radius: 4px;
-      font: inherit;
-    }
-  }
-
-  &__error {
-    color: var(--c--contextuals--content--semantic--danger--primary);
-    margin-top: var(--c--globals--spacings--xs);
   }
 }
 
