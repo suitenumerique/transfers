@@ -286,6 +286,18 @@ class Base(Configuration):
     EMAIL_PORT = values.PositiveIntegerValue(
         1025, environ_name="DJANGO_EMAIL_PORT", environ_prefix=None
     )
+    EMAIL_HOST_USER = values.Value(
+        "", environ_name="DJANGO_EMAIL_HOST_USER", environ_prefix=None
+    )
+    EMAIL_HOST_PASSWORD = values.Value(
+        "", environ_name="DJANGO_EMAIL_HOST_PASSWORD", environ_prefix=None
+    )
+    EMAIL_USE_TLS = values.BooleanValue(
+        False, environ_name="DJANGO_EMAIL_USE_TLS", environ_prefix=None
+    )
+    EMAIL_USE_SSL = values.BooleanValue(
+        False, environ_name="DJANGO_EMAIL_USE_SSL", environ_prefix=None
+    )
     EMAIL_BRAND_NAME = values.Value(
         "La Suite territoriale",
         environ_name="DJANGO_EMAIL_BRAND_NAME",
