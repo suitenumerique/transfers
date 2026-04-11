@@ -81,7 +81,9 @@ class Base(Configuration):
     DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
     DATA_DIR = values.Value(
-        "/data", environ_name="DJANGO_DATA_DIR", environ_prefix=None
+        os.path.join(BASE_DIR, "data"),
+        environ_name="DJANGO_DATA_DIR",
+        environ_prefix=None,
     )
 
     # Static files
