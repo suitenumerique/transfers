@@ -55,10 +55,10 @@ export function LandingPage({ onLogin }: LandingPageProps) {
               width={72}
             />
           }
-          title={t("Send your files, simply and securely.")}
+          title={t("Your files, shared with confidence.")}
           banner="/images/banner.webp"
           subtitle={t(
-            "Transferts is the sovereign file sharing service for public agents of La Suite territoriale.",
+            "The sovereign file sharing service for French local government agents.",
           )}
           mainButton={<ProConnectButton onClick={onLogin} />}
         />
