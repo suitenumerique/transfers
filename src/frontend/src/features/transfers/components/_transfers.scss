@@ -214,6 +214,27 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     font-size: var(--c--globals--font--sizes--sm);
   }
+
+  // Fields revealed once a file has been selected. Starts hidden and
+  // non-interactive, fades/slides in when [data-visible="true"] is set.
+  &__reveal {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--sm);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition:
+      max-height 300ms ease,
+      opacity 250ms ease 50ms;
+
+    &[data-visible="true"] {
+      max-height: 800px;
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
 }
 
 // File Drop Zone

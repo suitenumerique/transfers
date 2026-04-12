@@ -56,46 +56,48 @@ export function TransferForm() {
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
-      <Input
-        label={t("Title")}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder={t("My transfer")}
-        fullWidth
+      <FileDropZone
+        files={file ? [file] : []}
+        onChange={handleFilesChange}
+        maxFiles={1}
       />
 
-      <div className="transfer-form__field">
-        <label className="transfer-form__field-label">{t("File")}</label>
-        <FileDropZone
-          files={file ? [file] : []}
-          onChange={handleFilesChange}
-          maxFiles={1}
+      <div
+        className="transfer-form__reveal"
+        data-visible={file ? "true" : undefined}
+        aria-hidden={!file}
+        aria-live="polite"
+      >
+        <Input
+          label={t("Title")}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={t("My transfer")}
+          disabled={!file}
+          fullWidth
         />
-        {!file && (
-          <span className="transfer-form__hint">
-            {t("At least one file required")}
-          </span>
-        )}
+
+        <Select
+          label={t("Expiration")}
+          options={expiryOptions}
+          value={String(expiresInDays)}
+          onChange={(e) => setExpiresInDays(Number(e.target.value))}
+          disabled={!file}
+          clearable={false}
+          fullWidth
+        />
+
+        <Checkbox
+          label={t("Sensitive document")}
+          checked={sensitive}
+          onChange={(e) => setSensitive(e.target.checked)}
+          disabled={!file}
+        />
+
+        <Button type="submit" disabled={createTransfer.isPending || !file}>
+          {createTransfer.isPending ? t("Sending...") : t("Create link")}
+        </Button>
       </div>
-
-      <Select
-        label={t("Expiration")}
-        options={expiryOptions}
-        value={String(expiresInDays)}
-        onChange={(e) => setExpiresInDays(Number(e.target.value))}
-        clearable={false}
-        fullWidth
-      />
-
-      <Checkbox
-        label={t("Sensitive document")}
-        checked={sensitive}
-        onChange={(e) => setSensitive(e.target.checked)}
-      />
-
-      <Button type="submit" disabled={createTransfer.isPending || !file}>
-        {createTransfer.isPending ? t("Sending...") : t("Create link")}
-      </Button>
 
       {createTransfer.isError && (
         <Alert type={VariantType.ERROR}>
