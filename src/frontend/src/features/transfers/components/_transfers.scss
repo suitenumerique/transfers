@@ -1,39 +1,10 @@
-// Home drop zone — full-width wrapper that accepts files anywhere on the page
-.home-dropzone {
-  position: relative;
-  width: 100%;
-  min-height: calc(100dvh - 52px); // viewport minus header
-  outline: none;
+// Authenticated home sections (new-transfer form + recent transfers list)
+.home-section {
+  margin-bottom: var(--c--globals--spacings--xl);
 
-  &__overlay {
-    position: fixed;
-    inset: 52px 0 0 0; // below the header
-    background: rgba(40, 69, 193, 0.08);
-    border: 3px dashed var(--c--contextuals--content--semantic--brand--tertiary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    z-index: 100;
-  }
-
-  &__overlay-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 2rem 3rem;
-    background: var(--c--contextuals--background--surface--primary);
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    color: var(--c--contextuals--content--semantic--brand--tertiary);
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  &__overlay-icon {
-    font-size: 2.5rem;
-    line-height: 1;
+  h1,
+  h2 {
+    margin: 0 0 var(--c--globals--spacings--sm);
   }
 }
 
@@ -61,29 +32,6 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
-  &__new-cta {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--c--globals--spacings--xs);
-    padding: var(--c--globals--spacings--sm) var(--c--globals--spacings--md);
-    border: 1px dashed var(--c--contextuals--border--surface--primary);
-    border-radius: 8px;
-    color: var(--c--contextuals--content--semantic--brand--tertiary);
-    font-weight: 600;
-    text-decoration: none;
-    transition: border-color 200ms ease, background-color 200ms ease;
-
-    &:hover {
-      border-color: var(--c--contextuals--border--surface--secondary);
-      background: var(--c--contextuals--background--surface--secondary);
-    }
-  }
-
-  &__new-cta-icon {
-    font-size: 1.25rem;
-    line-height: 1;
-  }
 }
 
 // Transfer Card
@@ -221,12 +169,6 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     margin-left: auto;
   }
-}
-
-// New transfer page — narrow centered column so the form and its header align
-.new-transfer-page {
-  max-width: 600px;
-  margin: 0 auto;
 }
 
 // Transfer Form

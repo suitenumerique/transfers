@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,10 +10,13 @@ import {
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import { useCreateTransfer } from "../api/useCreateTransfer";
-import { consumePendingFiles } from "../pendingFiles";
 import { FileDropZone } from "./FileDropZone";
 
 const EXPIRY_CHOICES = [7, 30, 90];
+
+function stripExtension(filename: string): string {
+  return filename.replace(/\.[^.]+$/, "");
+}
 
 export function TransferForm() {
   const { t } = useTranslation();
@@ -24,15 +27,12 @@ export function TransferForm() {
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
   const [sensitive, setSensitive] = useState(false);
 
-  useEffect(() => {
-    const pending = consumePendingFiles();
-    if (pending.length > 0) {
-      setFile(pending[0]);
-    }
-  }, []);
-
   const handleFilesChange = (files: File[]) => {
-    setFile(files.length > 0 ? files[0] : null);
+    const next = files.length > 0 ? files[0] : null;
+    setFile(next);
+    if (next && title.trim() === "") {
+      setTitle(stripExtension(next.name));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
