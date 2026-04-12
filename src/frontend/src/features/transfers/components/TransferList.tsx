@@ -1,5 +1,4 @@
 import { useTranslation } from "react-i18next";
-import Link from "next/link";
 import {
   Alert,
   Loader,
@@ -11,18 +10,6 @@ import { useTransfers } from "../api/useTransfers";
 import { TransferCard } from "./TransferCard";
 
 const PAGE_SIZE = 20;
-
-function NewTransferCta() {
-  const { t } = useTranslation();
-  return (
-    <Link href="/transfers/new" className="transfer-list__new-cta">
-      <span className="transfer-list__new-cta-icon" aria-hidden="true">
-        +
-      </span>
-      <span>{t("New transfer")}</span>
-    </Link>
-  );
-}
 
 export function TransferList() {
   const { t } = useTranslation();
@@ -45,13 +32,8 @@ export function TransferList() {
 
   if (!data || data.results.length === 0) {
     return (
-      <div className="transfer-list">
-        <div className="transfer-list__empty">
-          <p>{t("No transfers yet.")}</p>
-        </div>
-        <div className="transfer-list__items">
-          <NewTransferCta />
-        </div>
+      <div className="transfer-list__empty">
+        <p>{t("No transfers yet.")}</p>
       </div>
     );
   }
@@ -64,7 +46,6 @@ export function TransferList() {
         {data.results.map((transfer) => (
           <TransferCard key={transfer.id} transfer={transfer} />
         ))}
-        <NewTransferCta />
       </div>
       {pagesCount > 1 && (
         <div className="transfer-list__pagination">
