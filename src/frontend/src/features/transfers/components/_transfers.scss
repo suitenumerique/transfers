@@ -380,39 +380,35 @@
   }
 }
 
-// File Drop Zone
+// File Drop Zone — Option A: typography-first, no icon
 .file-dropzone {
   &__area {
-    border: 2px dashed var(--c--contextuals--border--surface--primary);
-    border-radius: 8px;
-    padding: var(--c--globals--spacings--lg);
+    border: 2px dashed var(--c--contextuals--border--semantic--brand--tertiary);
+    border-radius: 16px;
+    padding: var(--c--globals--spacings--2xl) var(--c--globals--spacings--xl);
     min-height: 120px;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
     cursor: pointer;
+    background: var(--c--contextuals--background--semantic--brand--tertiary);
     transition:
       border-color 200ms ease,
-      background 200ms ease,
-      min-height 250ms ease,
-      transform 250ms ease;
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
+      background 200ms ease;
 
     &--expanded {
-      min-height: 260px;
-      border-color: var(--c--contextuals--border--surface--secondary);
-      background: var(--c--contextuals--background--surface--tertiary);
+      border: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+      background: var(--c--contextuals--background--semantic--brand--tertiary-hover);
     }
 
     &--active {
-      border-color: var(--c--contextuals--border--surface--secondary);
-      background: var(--c--contextuals--background--surface--tertiary);
-      transform: scale(1.01);
+      border: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+      background: var(--c--contextuals--background--semantic--brand--tertiary-hover);
     }
 
     &:hover {
-      border-color: var(--c--contextuals--border--surface--secondary);
+      border-color: var(--c--contextuals--border--semantic--brand--secondary);
     }
   }
 
@@ -420,26 +416,16 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--c--globals--spacings--xs);
+    gap: var(--c--globals--spacings--md);
     pointer-events: none;
-  }
-
-  &__icon {
-    width: 72px;
-    height: 72px;
-    color: var(--c--contextuals--content--semantic--brand--tertiary, #2845c1);
-    transition: transform 250ms ease;
-
-    .file-dropzone__area--expanded & {
-      transform: scale(1.15);
-    }
   }
 
   &__headline {
     margin: 0;
-    font-size: clamp(1.25rem, 2vw, 1.75rem);
+    font-size: clamp(2rem, 4vw, 3.5rem);
     font-weight: 700;
-    color: var(--c--contextuals--content--semantic--neutral--primary);
+    line-height: 1.1;
+    color: var(--c--contextuals--content--semantic--brand--primary);
   }
 
   &__hint {
