@@ -5,7 +5,6 @@ import type { TransferDetail } from "@/features/api/types";
 interface CreateTransferInput {
   title: string;
   expires_in_days: number;
-  sensitive: boolean;
   file: File;
 }
 
@@ -17,7 +16,6 @@ export function useCreateTransfer() {
       const formData = new FormData();
       if (input.title) formData.append("title", input.title);
       formData.append("expires_in_days", String(input.expires_in_days));
-      if (input.sensitive) formData.append("sensitive", "true");
       formData.append("file", input.file);
 
       return apiFetch<TransferDetail>("/transfers/", {

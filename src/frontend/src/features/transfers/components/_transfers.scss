@@ -8,6 +8,103 @@
   }
 }
 
+// Home two-column layout (landing + upload)
+.home {
+  &__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--c--globals--spacings--xl);
+    margin-bottom: var(--c--globals--spacings--xl);
+
+    @media (min-width: 900px) {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: stretch;
+      height: calc(100vh - 160px);
+      min-height: 500px;
+    }
+  }
+
+  &__upload {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    .transfer-form {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .file-dropzone {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    // When no file is selected, let the dropzone fill the whole column.
+    .file-dropzone__area {
+      flex: 1;
+      min-height: 0;
+    }
+  }
+
+  &__recent {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  &__recent-title {
+    margin: 0 0 var(--c--globals--spacings--sm);
+    flex-shrink: 0;
+  }
+
+  &__recent > .transfer-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: var(--c--globals--spacings--xs);
+  }
+}
+
+// Landing side-panel (left column of the home grid)
+.home-landing {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--md);
+
+  &__logo {
+    height: 64px;
+    width: auto;
+    margin-bottom: var(--c--globals--spacings--sm);
+  }
+
+  &__title {
+    font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+    font-weight: 700;
+    line-height: 1.15;
+    margin: 0;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
+  &__subtitle {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--lg);
+    line-height: 1.5;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+}
+
 // Transfer List
 .transfer-list {
   &__items {
@@ -215,6 +312,52 @@
     font-size: var(--c--globals--font--sizes--sm);
   }
 
+  &__proconnect {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--c--globals--spacings--xs);
+  }
+
+  &__busy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__busy-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--c--globals--spacings--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__busy-spinner {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 4px solid var(--c--contextuals--border--surface--primary);
+    border-top-color: var(--c--contextuals--content--semantic--brand--tertiary);
+    animation: transfer-form-busy-spin 0.9s linear infinite;
+  }
+
+  @keyframes transfer-form-busy-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  &__proconnect-lead {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
   // Fields revealed once a file has been selected. Starts hidden and
   // non-interactive, fades/slides in when [data-visible="true"] is set.
   &__reveal {
@@ -243,19 +386,66 @@
     border: 2px dashed var(--c--contextuals--border--surface--primary);
     border-radius: 8px;
     padding: var(--c--globals--spacings--lg);
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     cursor: pointer;
-    transition: border-color 200ms ease, background 200ms ease;
+    transition:
+      border-color 200ms ease,
+      background 200ms ease,
+      min-height 250ms ease,
+      transform 250ms ease;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    &--expanded {
+      min-height: 260px;
+      border-color: var(--c--contextuals--border--surface--secondary);
+      background: var(--c--contextuals--background--surface--tertiary);
+    }
 
     &--active {
       border-color: var(--c--contextuals--border--surface--secondary);
       background: var(--c--contextuals--background--surface--tertiary);
+      transform: scale(1.01);
     }
 
     &:hover {
       border-color: var(--c--contextuals--border--surface--secondary);
     }
+  }
+
+  &__cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+    pointer-events: none;
+  }
+
+  &__icon {
+    width: 72px;
+    height: 72px;
+    color: var(--c--contextuals--content--semantic--brand--tertiary, #2845c1);
+    transition: transform 250ms ease;
+
+    .file-dropzone__area--expanded & {
+      transform: scale(1.15);
+    }
+  }
+
+  &__headline {
+    margin: 0;
+    font-size: clamp(1.25rem, 2vw, 1.75rem);
+    font-weight: 700;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--md);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
   &__list {
@@ -523,6 +713,11 @@
     max-width: 900px;
     width: 100%;
     margin: 0 auto;
+  }
+
+  // The home page uses a 2-column layout that spans the full viewport width.
+  &__content:has(.home) {
+    max-width: none;
   }
 
   // The landing page breaks out of the constrained content container
