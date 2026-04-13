@@ -56,6 +56,11 @@ body {
     margin-top: 0;
     margin-bottom: 1.5rem;
   }
+
+  // The home page layout spans the full viewport width.
+  &.home {
+    max-width: none;
+  }
 }
 
 

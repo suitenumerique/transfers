@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
@@ -10,8 +10,51 @@ interface FileDropZoneProps {
   maxFiles?: number;
 }
 
+// True when a drag-and-drop sequence carrying files is active anywhere on
+// the page. Used to expand the dropzone so it's obvious where to drop.
+function useWindowFileDrag(): boolean {
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    let depth = 0;
+
+    const hasFiles = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+    const onEnter = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      depth += 1;
+      setDragging(true);
+    };
+
+    const onLeave = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+
+    const onDrop = () => {
+      depth = 0;
+      setDragging(false);
+    };
+
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
+  return dragging;
+}
+
 export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
   const { t } = useTranslation();
+  const windowDragging = useWindowFileDrag();
 
   const onDrop = useCallback(
     (accepted: File[]) => {
@@ -33,25 +76,69 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
     maxFiles,
   });
 
+  const expanded = windowDragging || isDragActive;
+
   return (
     <div className="file-dropzone">
       <div
         {...getRootProps()}
-        className={`file-dropzone__area ${isDragActive ? "file-dropzone__area--active" : ""}`}
+        className={`file-dropzone__area${
+          expanded ? " file-dropzone__area--expanded" : ""
+        }${isDragActive ? " file-dropzone__area--active" : ""}`}
       >
         <input {...getInputProps()} />
-        <p>
-          {isDragActive
-            ? t("Drop files here...")
-            : t("Drag and drop files or click to select")}
-        </p>
+        <div className="file-dropzone__cta">
+          <svg
+            className="file-dropzone__icon"
+            viewBox="0 0 64 64"
+            aria-hidden="true"
+          >
+            <path
+              d="M48 40v8a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4v-8"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M22 24l10-10 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <line
+              x1="32"
+              y1="14"
+              x2="32"
+              y2="40"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          </svg>
+          <p className="file-dropzone__headline">
+            {isDragActive
+              ? t("Drop it to get started")
+              : t("Drop your file here")}
+          </p>
+          <p className="file-dropzone__hint">
+            {isDragActive
+              ? t("Release to upload")
+              : t("or click anywhere to browse")}
+          </p>
+        </div>
       </div>
       {files.length > 0 && (
         <ul className="file-dropzone__list">
           {files.map((file, i) => (
             <li key={`${file.name}-${i}`} className="file-dropzone__item">
               <span>{file.name}</span>
-              <span className="file-dropzone__size">{formatFileSize(file.size)}</span>
+              <span className="file-dropzone__size">
+                {formatFileSize(file.size)}
+              </span>
               <Button
                 type="button"
                 size="small"

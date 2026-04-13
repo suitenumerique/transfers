@@ -1,37 +1,38 @@
-import { type ReactElement } from "react";
+import { type ReactElement, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { login, useAuth } from "@/features/auth";
+import { useAuth, useRequireAuth } from "@/features/auth";
 import { MainLayout } from "@/features/layouts/components/main/MainLayout";
-import { LandingPage } from "@/features/transfers/components/LandingPage";
+import { HomeLanding } from "@/features/transfers/components/HomeLanding";
 import { TransferForm } from "@/features/transfers/components/TransferForm";
 import { TransferList } from "@/features/transfers/components/TransferList";
 import type { NextPageWithLayout } from "./_app";
 
-function AuthenticatedHome() {
+const HomePage: NextPageWithLayout = () => {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const requireAuth = useRequireAuth();
+  const [formBusy, setFormBusy] = useState(false);
 
   return (
-    <div className="app-content">
-      <section className="home-section">
-        <h1>{t("New transfer")}</h1>
-        <TransferForm />
-      </section>
-      <section className="home-section">
-        <h2>{t("Recent transfers")}</h2>
-        <TransferList />
-      </section>
+    <div className="app-content home">
+      <div className="home__grid">
+        <section className="home__upload">
+          <TransferForm
+            requireAuth={user ? undefined : requireAuth}
+            onBusyChange={setFormBusy}
+          />
+        </section>
+        {user ? (
+          <section className="home__recent">
+            <h2 className="home__recent-title">{t("Recent transfers")}</h2>
+            <TransferList />
+          </section>
+        ) : (
+          <HomeLanding />
+        )}
+      </div>
     </div>
   );
-}
-
-const HomePage: NextPageWithLayout = () => {
-  const { user } = useAuth();
-
-  if (!user) {
-    return <LandingPage onLogin={login} />;
-  }
-
-  return <AuthenticatedHome />;
 };
 
 HomePage.getLayout = (page: ReactElement) => {

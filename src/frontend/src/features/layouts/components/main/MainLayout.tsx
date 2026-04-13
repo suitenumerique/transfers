@@ -11,11 +11,6 @@ import { useAuth, logout } from "@/features/auth";
 export function MainLayout({ children }: PropsWithChildren) {
   const { user } = useAuth();
 
-  // Unauthenticated pages (landing, callbacks) render standalone.
-  if (!user) {
-    return <>{children}</>;
-  }
-
   return (
     <UIKitLayout
       hideLeftPanelOnDesktop
@@ -29,18 +24,22 @@ export function MainLayout({ children }: PropsWithChildren) {
             apiUrl={TERRITORIALE_GAUFRE.apiUrl}
             showMoreLimit={100}
           />
-          <UserMenu
-            user={{
-              full_name: user.full_name ?? undefined,
-              email: user.email ?? "",
-            }}
-            logout={logout}
-            actions={
-              <div className="user-menu__footer-action">
-                <LanguagePicker size="small" compact />
-              </div>
-            }
-          />
+          {user ? (
+            <UserMenu
+              user={{
+                full_name: user.full_name ?? undefined,
+                email: user.email ?? "",
+              }}
+              logout={logout}
+              actions={
+                <div className="user-menu__footer-action">
+                  <LanguagePicker size="small" compact />
+                </div>
+              }
+            />
+          ) : (
+            <LanguagePicker size="small" compact />
+          )}
         </>
       }
     >
