@@ -166,20 +166,71 @@ class TransferDetailSerializer(serializers.ModelSerializer):
 
 
 class TransferCreateSerializer(serializers.Serializer):
-    """Serializer for creating a transfer (handles files via multipart)."""
+    """Serializer to initiate a transfer + multipart upload.
 
-    title = serializers.CharField(max_length=255, required=False, default="")
+    The client sends only metadata. The file itself is uploaded directly to S3
+    by the browser via presigned URLs (see ``TransferViewSet.sign_part``).
+    """
+
+    title = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default=""
+    )
     expires_in_days = serializers.ChoiceField(
         choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
         required=False,
     )
     sensitive = serializers.BooleanField(required=False, default=False)
+    filename = serializers.CharField(max_length=255, required=True)
+    size = serializers.IntegerField(min_value=1, required=True)
+    mime_type = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default=""
+    )
+
+    def validate_size(self, value):
+        if value > settings.TRANSFER_MAX_FILE_SIZE:
+            max_go = settings.TRANSFER_MAX_FILE_SIZE // (1024**3)
+            raise serializers.ValidationError(
+                f"File exceeds maximum size of {max_go} Go."
+            )
+        return value
 
     def get_expires_in_days(self, validated_data):
         value = validated_data.get("expires_in_days")
         if value is not None:
             return int(value)
         return settings.TRANSFER_DEFAULT_EXPIRY_DAYS
+
+
+class _PartETagSerializer(serializers.Serializer):
+    """A single uploaded part, as reported by the browser."""
+
+    PartNumber = serializers.IntegerField(min_value=1)
+    ETag = serializers.CharField()
+
+
+class TransferSignPartSerializer(serializers.Serializer):
+    """Request a presigned URL to upload a specific part."""
+
+    transfer_file_id = serializers.UUIDField()
+    part_number = serializers.IntegerField(min_value=1, max_value=10000)
+
+
+class TransferCompleteUploadSerializer(serializers.Serializer):
+    """Complete a multipart upload after all parts have been uploaded."""
+
+    transfer_file_id = serializers.UUIDField()
+    parts = _PartETagSerializer(many=True)
+
+    def validate_parts(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one part is required.")
+        return value
+
+
+class TransferAbortUploadSerializer(serializers.Serializer):
+    """Abort an in-progress multipart upload."""
+
+    transfer_file_id = serializers.UUIDField()
 
 
 # -- Download serializers --
@@ -193,9 +244,12 @@ class DownloadTransferFileSerializer(serializers.ModelSerializer):
 
 
 class DownloadTransferSerializer(serializers.ModelSerializer):
-    """Serializer for the public download page."""
+    """Serializer for the public download page.
 
-    files = DownloadTransferFileSerializer(many=True, read_only=True)
+    Only files whose multipart upload has been completed are exposed.
+    """
+
+    files = serializers.SerializerMethodField()
     owner_name = serializers.CharField(source="owner.full_name", read_only=True)
     owner_email = serializers.CharField(source="owner.email", read_only=True)
 
@@ -210,3 +264,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "owner_email",
         ]
         read_only_fields = fields
+
+    def get_files(self, obj):
+        completed = obj.files.filter(upload_completed_at__isnull=False)
+        return DownloadTransferFileSerializer(completed, many=True).data

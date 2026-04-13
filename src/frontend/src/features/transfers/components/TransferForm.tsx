@@ -12,6 +12,13 @@ import { ProConnectButton } from "@gouvfr-lasuite/ui-kit";
 import { useCreateTransfer } from "../api/useCreateTransfer";
 import { FileDropZone } from "./FileDropZone";
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 const EXPIRY_CHOICES = [7, 30, 90];
 
 function stripExtension(filename: string): string {
@@ -35,7 +42,13 @@ export function TransferForm({
 }: TransferFormProps = {}) {
   const { t } = useTranslation();
   const router = useRouter();
-  const createTransfer = useCreateTransfer();
+  const [uploadProgress, setUploadProgress] = useState<{
+    loaded: number;
+    total: number;
+  } | null>(null);
+  const createTransfer = useCreateTransfer({
+    onProgress: (loaded, total) => setUploadProgress({ loaded, total }),
+  });
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
@@ -52,6 +65,7 @@ export function TransferForm({
 
   const submitTransfer = async () => {
     if (!file) return;
+    setUploadProgress({ loaded: 0, total: file.size });
     const created = await createTransfer.mutateAsync({
       title,
       expires_in_days: expiresInDays,
@@ -100,6 +114,7 @@ export function TransferForm({
       await submitTransfer();
     } catch {
       setAuthing(false);
+      setUploadProgress(null);
     }
   };
 
@@ -179,14 +194,66 @@ export function TransferForm({
           aria-live="polite"
         >
           <div className="transfer-form__busy-inner">
-            <div className="transfer-form__busy-spinner" aria-hidden="true" />
-            <p>
-              {authing
-                ? t("Signing in...")
-                : createTransfer.isPending
-                  ? t("Sending...")
-                  : ""}
-            </p>
+            {authing ? (
+              <>
+                <div
+                  className="transfer-form__busy-spinner"
+                  aria-hidden="true"
+                />
+                <p>{t("Signing in...")}</p>
+              </>
+            ) : uploadProgress ? (
+              <>
+                <p className="transfer-form__progress-label">
+                  {t("Uploading {{current}} / {{total}}", {
+                    current: formatBytes(uploadProgress.loaded),
+                    total: formatBytes(uploadProgress.total),
+                  })}
+                </p>
+                <div
+                  className="transfer-form__progress-bar"
+                  role="progressbar"
+                  aria-valuenow={Math.round(
+                    (uploadProgress.loaded / uploadProgress.total) * 100,
+                  )}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="transfer-form__progress-fill"
+                    style={{
+                      width: `${Math.round(
+                        (uploadProgress.loaded / uploadProgress.total) * 100,
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="transfer-form__progress-percent">
+                  {Math.round(
+                    (uploadProgress.loaded / uploadProgress.total) * 100,
+                  )}
+                  %
+                </p>
+                <Button
+                  type="button"
+                  color="neutral"
+                  size="small"
+                  onClick={() => {
+                    createTransfer.abort();
+                  }}
+                >
+                  {t("Cancel")}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div
+                  className="transfer-form__busy-spinner"
+                  aria-hidden="true"
+                />
+                <p>{t("Sending...")}</p>
+              </>
+            )}
           </div>
         </div>
       )}

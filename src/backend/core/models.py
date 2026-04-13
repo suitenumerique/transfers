@@ -254,11 +254,28 @@ class TransferFile(BaseModel):
     mime_type = models.CharField(max_length=255, blank=True, default="")
     s3_key = models.CharField(max_length=512)
 
+    upload_id = models.CharField(
+        max_length=256,
+        blank=True,
+        default="",
+        help_text="S3 multipart upload id while the upload is in progress.",
+    )
+    upload_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set once all parts have been uploaded and the multipart "
+        "upload has been completed on S3.",
+    )
+
     class Meta:
         db_table = "core_transfer_file"
 
     def __str__(self):
         return self.filename
+
+    @property
+    def is_upload_complete(self) -> bool:
+        return self.upload_completed_at is not None
 
 
 class TransferEvent(BaseModel):

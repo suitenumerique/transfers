@@ -47,7 +47,7 @@ class TestDownloadTransferView:
 
 @pytest.mark.django_db
 class TestDownloadFileView:
-    @patch("core.api.viewsets.download._get_s3_client")
+    @patch("core.api.viewsets.download.get_s3_client")
     def test_download_file(self, mock_s3, api_client, transfer_with_file):
         t = transfer_with_file
         tf = t.files.first()

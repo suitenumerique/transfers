@@ -1,6 +1,6 @@
 """API viewsets."""
 
-import rest_framework as drf
+from rest_framework.pagination import PageNumberPagination
 
 
 class SerializerPerActionMixin:
@@ -12,7 +12,7 @@ class SerializerPerActionMixin:
         return super().get_serializer_class()
 
 
-class Pagination(drf.pagination.PageNumberPagination):
+class Pagination(PageNumberPagination):
     """Pagination to display no more than 100 objects per page."""
 
     ordering = "-created_at"

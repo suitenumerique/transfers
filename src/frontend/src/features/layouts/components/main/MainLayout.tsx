@@ -1,14 +1,17 @@
 import { type PropsWithChildren } from "react";
+import { useTranslation } from "react-i18next";
 import {
   LaGaufreV2,
   MainLayout as UIKitLayout,
   UserMenu,
 } from "@gouvfr-lasuite/ui-kit";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
-import { useAuth, logout } from "@/features/auth";
+import { useAuth, login, logout } from "@/features/auth";
 
 export function MainLayout({ children }: PropsWithChildren) {
+  const { t } = useTranslation();
   const { user } = useAuth();
 
   return (
@@ -38,7 +41,12 @@ export function MainLayout({ children }: PropsWithChildren) {
               }
             />
           ) : (
-            <LanguagePicker size="small" compact />
+            <>
+              <LanguagePicker size="small" compact />
+              <Button size="small" onClick={login}>
+                {t("Sign in")}
+              </Button>
+            </>
           )}
         </>
       }

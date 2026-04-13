@@ -6,23 +6,13 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 
-import boto3
 from celery import shared_task
 
 from core.enums import ActorType, TransferEventType, TransferStatus
-from core.models import Transfer, TransferEvent
+from core.models import Transfer, TransferEvent, TransferFile
+from core.services import s3 as s3_service
 
 logger = logging.getLogger(__name__)
-
-
-def _get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-        aws_access_key_id=settings.AWS_S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_S3_SECRET_ACCESS_KEY,
-        region_name=getattr(settings, "AWS_S3_REGION_NAME", None) or "us-east-1",
-    )
 
 
 @shared_task
@@ -79,14 +69,12 @@ def delete_expired_transfer_files_task():
     if not transfers.exists():
         return
 
-    s3 = _get_s3_client()
-    bucket = settings.TRANSFERS_BUCKET_NAME
     count = 0
 
     for transfer in transfers:
         for tf in transfer.files.all():
             try:
-                s3.delete_object(Bucket=bucket, Key=tf.s3_key)
+                s3_service.delete_object(tf.s3_key)
             except Exception:
                 logger.exception(
                     "Failed to delete S3 object %s for transfer %s",
@@ -105,6 +93,43 @@ def delete_expired_transfer_files_task():
         count += 1
 
     logger.info("Deleted files for %d expired transfer(s).", count)
+
+
+@shared_task
+def cleanup_abandoned_uploads_task():
+    """Clean up transfers whose multipart upload never completed.
+
+    A transfer is "abandoned" if its only ``TransferFile`` still has an
+    ``upload_id`` set (no ``upload_completed_at``) more than 24 hours after
+    creation. This happens when the user closes their tab mid-upload or when
+    the browser crashes. We abort the S3 multipart upload to free S3-side
+    state, then delete the DB rows.
+    """
+    cutoff = timezone.now() - timedelta(hours=24)
+    orphan_files = TransferFile.objects.filter(
+        upload_completed_at__isnull=True,
+        created_at__lte=cutoff,
+    ).select_related("transfer")
+
+    count = 0
+    for tf in orphan_files:
+        if tf.upload_id:
+            try:
+                s3_service.abort_multipart_upload(tf.s3_key, tf.upload_id)
+            except Exception:
+                logger.exception(
+                    "Failed to abort multipart upload %s for %s",
+                    tf.upload_id,
+                    tf.s3_key,
+                )
+        transfer = tf.transfer
+        tf.delete()
+        if not TransferFile.objects.filter(transfer=transfer).exists():
+            transfer.delete()
+        count += 1
+
+    if count:
+        logger.info("Cleaned up %d abandoned upload(s).", count)
 
 
 @shared_task
