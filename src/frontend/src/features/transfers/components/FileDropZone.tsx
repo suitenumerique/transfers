@@ -88,37 +88,6 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
       >
         <input {...getInputProps()} />
         <div className="file-dropzone__cta">
-          <svg
-            className="file-dropzone__icon"
-            viewBox="0 0 64 64"
-            aria-hidden="true"
-          >
-            <path
-              d="M48 40v8a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4v-8"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M22 24l10-10 10 10"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <line
-              x1="32"
-              y1="14"
-              x2="32"
-              y2="40"
-              stroke="currentColor"
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          </svg>
           <p className="file-dropzone__headline">
             {isDragActive
               ? t("Drop it to get started")
