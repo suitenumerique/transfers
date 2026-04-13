@@ -36,9 +36,11 @@ class Base(Configuration):
     # Admin
     ADMIN_URL = values.Value("admin")
 
-    # Upload limits
+    # Upload limits — files never transit through Django (direct S3 multipart
+    # via presigned URLs), so we only need enough headroom for small JSON
+    # requests. Django's default (2.5 MiB) is fine.
     DATA_UPLOAD_MAX_MEMORY_SIZE = values.PositiveIntegerValue(
-        100 * 1024 * 1024,  # 100 MiB
+        int(2.5 * 1024 * 1024),  # 2.5 MiB
         environ_name="DATA_UPLOAD_MAX_MEMORY_SIZE",
         environ_prefix=None,
     )
@@ -133,6 +135,24 @@ class Base(Configuration):
     TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
         20 * 1024 * 1024 * 1024,  # 20 Go
         environ_name="TRANSFER_MAX_FILE_SIZE",
+        environ_prefix=None,
+    )
+    TRANSFER_CHUNK_SIZE = values.PositiveIntegerValue(
+        10 * 1024 * 1024,  # 10 MiB
+        environ_name="TRANSFER_CHUNK_SIZE",
+        environ_prefix=None,
+    )
+    TRANSFER_UPLOAD_PARALLELISM = values.PositiveIntegerValue(
+        4,
+        environ_name="TRANSFER_UPLOAD_PARALLELISM",
+        environ_prefix=None,
+    )
+    # Lifetime of a presigned part URL. The browser re-signs on every retry,
+    # so this only needs to cover one PUT attempt. 5 min is very comfortable
+    # even on slow 3G (a 10 MiB chunk at 256 Kbps takes ~5 min).
+    TRANSFER_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
+        300,  # 5 min
+        environ_name="TRANSFER_PRESIGNED_URL_EXPIRY",
         environ_prefix=None,
     )
 

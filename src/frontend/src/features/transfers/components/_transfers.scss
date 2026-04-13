@@ -346,6 +346,34 @@
     animation: transfer-form-busy-spin 0.9s linear infinite;
   }
 
+  &__progress-label {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__progress-bar {
+    width: 360px;
+    max-width: 80vw;
+    height: 8px;
+    background: var(--c--contextuals--background--semantic--brand--tertiary);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  &__progress-fill {
+    height: 100%;
+    background: var(--c--contextuals--background--semantic--brand--primary);
+    transition: width 150ms linear;
+  }
+
+  &__progress-percent {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--md);
+    font-weight: 600;
+    color: var(--c--contextuals--content--semantic--brand--primary);
+  }
+
   @keyframes transfer-form-busy-spin {
     to {
       transform: rotate(360deg);

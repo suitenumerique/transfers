@@ -23,4 +23,8 @@ app.conf.beat_schedule = {
         "task": "core.tasks.delete_expired_transfer_files_task",
         "schedule": 86400.0,  # Daily
     },
+    "cleanup-abandoned-uploads": {
+        "task": "core.tasks.cleanup_abandoned_uploads_task",
+        "schedule": 21600.0,  # Every 6 hours
+    },
 }

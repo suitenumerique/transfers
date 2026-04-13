@@ -40,5 +40,12 @@ def transfer(user):
 
 @pytest.fixture
 def transfer_with_file(transfer):
-    TransferFileFactory(transfer=transfer, filename="doc.pdf", size=1024)
+    from django.utils import timezone as _tz
+
+    TransferFileFactory(
+        transfer=transfer,
+        filename="doc.pdf",
+        size=1024,
+        upload_completed_at=_tz.now(),
+    )
     return transfer

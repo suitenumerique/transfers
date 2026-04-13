@@ -7,44 +7,45 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-import boto3
+import botocore
 import rest_framework as drf
-from drf_spectacular.utils import extend_schema
-from rest_framework import mixins, viewsets
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser
 
 from core import models
 from core.api.permissions import IsAuthenticated
 from core.api.serializers import (
+    TransferAbortUploadSerializer,
+    TransferCompleteUploadSerializer,
     TransferCreateSerializer,
     TransferDetailSerializer,
     TransferEventSerializer,
     TransferListSerializer,
+    TransferSignPartSerializer,
 )
 from core.api.viewsets import Pagination
 from core.enums import ActorType, TransferEventType, TransferStatus
-
-
-def _get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-        aws_access_key_id=settings.AWS_S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_S3_SECRET_ACCESS_KEY,
-        region_name=getattr(settings, "AWS_S3_REGION_NAME", None) or "us-east-1",
-    )
+from core.services import s3
 
 
 def _delete_transfer_files_from_s3(transfer):
     """Delete all S3 objects for a transfer."""
-    s3 = _get_s3_client()
-    bucket = settings.TRANSFERS_BUCKET_NAME
     for tf in transfer.files.all():
-        try:
-            s3.delete_object(Bucket=bucket, Key=tf.s3_key)
-        except Exception:  # noqa: S110
-            pass
+        if tf.s3_key:
+            s3.delete_object(tf.s3_key)
+
+
+def _log_event(transfer, event_type, request):
+    """Helper to emit a TransferEvent with the request context."""
+    models.TransferEvent.objects.create(
+        transfer_id=transfer.id,
+        event_type=event_type,
+        actor_type=ActorType.AGENT,
+        actor_id=request.user.id,
+        ip=request.META.get("REMOTE_ADDR"),
+        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    )
 
 
 class TransferViewSet(
@@ -57,7 +58,6 @@ class TransferViewSet(
 
     permission_classes = [IsAuthenticated]
     pagination_class = Pagination
-    parser_classes = [MultiPartParser, drf.parsers.JSONParser]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -66,85 +66,237 @@ class TransferViewSet(
             return TransferListSerializer
         if self.action == "events":
             return TransferEventSerializer
+        if self.action == "sign_part":
+            return TransferSignPartSerializer
+        if self.action == "complete_upload":
+            return TransferCompleteUploadSerializer
+        if self.action == "abort_upload":
+            return TransferAbortUploadSerializer
         return TransferDetailSerializer
 
     def get_queryset(self):
-        return (
+        queryset = (
             models.Transfer.objects.filter(owner=self.request.user)
             .prefetch_related("files")
             .order_by("-created_at")
         )
+        if self.action == "list":
+            # Hide transfers whose upload is not yet completed.
+            queryset = queryset.filter(
+                files__upload_completed_at__isnull=False
+            ).distinct()
+        return queryset
+
+    def _get_pending_file(self, transfer, file_id):
+        """Fetch a TransferFile belonging to ``transfer`` whose upload is in
+        progress. Raises 404/400 on mismatch."""
+        try:
+            tf = transfer.files.get(id=file_id)
+        except models.TransferFile.DoesNotExist as exc:
+            raise drf.exceptions.NotFound("Transfer file not found.") from exc
+        if tf.is_upload_complete:
+            raise drf.exceptions.ValidationError(
+                {"transfer_file_id": "Upload already completed for this file."}
+            )
+        if not tf.upload_id:
+            raise drf.exceptions.ValidationError(
+                {"transfer_file_id": "No multipart upload in progress."}
+            )
+        return tf
 
     @extend_schema(
-        request={
-            "multipart/form-data": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "expires_in_days": {
-                        "type": "integer",
-                        "enum": settings.TRANSFER_EXPIRY_CHOICES,
-                    },
-                    "sensitive": {"type": "boolean"},
-                    "file": {"type": "string", "format": "binary"},
+        request=TransferCreateSerializer,
+        responses={
+            201: inline_serializer(
+                name="TransferInitiateResponse",
+                fields={
+                    "transfer_id": serializers.UUIDField(),
+                    "transfer_file_id": serializers.UUIDField(),
+                    "upload_id": serializers.CharField(),
+                    "s3_key": serializers.CharField(),
+                    "chunk_size": serializers.IntegerField(),
+                    "public_token": serializers.CharField(),
                 },
-                "required": ["file"],
-            }
+            )
         },
-        responses={201: TransferDetailSerializer},
     )
     def create(self, request, *args, **kwargs):
-        """Create a new transfer with a single file."""
+        """Initiate a new transfer + multipart upload.
+
+        Creates the ``Transfer`` and ``TransferFile`` rows, then calls
+        ``create_multipart_upload`` on S3 and returns the ``upload_id`` for the
+        browser to use with subsequent ``sign_part`` / ``complete_upload``
+        calls.
+        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-
-        uploaded_file = request.FILES.get("file")
-        if not uploaded_file:
-            raise drf.exceptions.ValidationError({"file": "A file is required."})
-
-        if uploaded_file.size > settings.TRANSFER_MAX_FILE_SIZE:
-            raise drf.exceptions.ValidationError(
-                {
-                    "file": f"File exceeds maximum size of {settings.TRANSFER_MAX_FILE_SIZE // (1024**3)} Go."
-                }
-            )
-
         expires_in_days = serializer.get_expires_in_days(data)
 
         with transaction.atomic():
             transfer = models.Transfer.objects.create(
                 owner=request.user,
-                title=data.get("title", ""),
+                title=data.get("title") or "",
                 sensitive=data.get("sensitive", False),
                 expires_at=timezone.now() + timedelta(days=expires_in_days),
             )
 
-            # Upload file to S3
-            s3 = _get_s3_client()
-            bucket = settings.TRANSFERS_BUCKET_NAME
-            s3_key = f"transfers/{transfer.id}/{uuid.uuid4()}/{uploaded_file.name}"
-            s3.upload_fileobj(uploaded_file, bucket, s3_key)
-            models.TransferFile.objects.create(
-                transfer=transfer,
-                filename=uploaded_file.name,
-                size=uploaded_file.size,
-                mime_type=uploaded_file.content_type or "",
-                s3_key=s3_key,
+            s3_key = f"transfers/{transfer.id}/{uuid.uuid4()}/{data['filename']}"
+            upload_id = s3.create_multipart_upload(
+                key=s3_key, content_type=data.get("mime_type") or ""
             )
 
-            # Log event
-            models.TransferEvent.objects.create(
-                transfer_id=transfer.id,
-                event_type=TransferEventType.TRANSFER_CREATED,
-                actor_type=ActorType.AGENT,
-                actor_id=request.user.id,
-                ip=request.META.get("REMOTE_ADDR"),
-                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            transfer_file = models.TransferFile.objects.create(
+                transfer=transfer,
+                filename=data["filename"],
+                size=data["size"],
+                mime_type=data.get("mime_type") or "",
+                s3_key=s3_key,
+                upload_id=upload_id,
             )
+
+        return drf.response.Response(
+            {
+                "transfer_id": str(transfer.id),
+                "transfer_file_id": str(transfer_file.id),
+                "upload_id": upload_id,
+                "s3_key": s3_key,
+                "chunk_size": settings.TRANSFER_CHUNK_SIZE,
+                "public_token": transfer.public_token,
+            },
+            status=201,
+        )
+
+    @extend_schema(
+        request=TransferSignPartSerializer,
+        responses={
+            200: inline_serializer(
+                name="TransferSignPartResponse",
+                fields={
+                    "url": serializers.URLField(),
+                    "part_number": serializers.IntegerField(),
+                },
+            )
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="sign-part")
+    def sign_part(self, request, pk=None):
+        """Return a presigned URL to upload a single part of a file."""
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        transfer_file = self._get_pending_file(transfer, data["transfer_file_id"])
+        url = s3.sign_upload_part(
+            key=transfer_file.s3_key,
+            upload_id=transfer_file.upload_id,
+            part_number=data["part_number"],
+        )
+        return drf.response.Response(
+            {"url": url, "part_number": data["part_number"]}
+        )
+
+    @extend_schema(
+        request=TransferCompleteUploadSerializer,
+        responses={200: TransferDetailSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="complete-upload")
+    def complete_upload(self, request, pk=None):
+        """Complete a multipart upload and finalize the transfer.
+
+        S3 is the authority for the (PartNumber, ETag) list — DRF only
+        validates the shape of the payload, S3 validates the content. If S3
+        rejects the completion (wrong ETag, missing part, invalid order…),
+        the multipart is unrecoverable, so we best-effort abort it on S3 and
+        delete the half-baked DB rows, then return 400 to the client.
+        """
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        transfer_file = self._get_pending_file(transfer, data["transfer_file_id"])
+
+        try:
+            s3.complete_multipart_upload(
+                key=transfer_file.s3_key,
+                upload_id=transfer_file.upload_id,
+                parts=data["parts"],
+            )
+        except botocore.exceptions.ClientError as exc:
+            # S3 rejected the completion — clean up and report a 400.
+            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+            s3.abort_multipart_upload(
+                key=transfer_file.s3_key, upload_id=transfer_file.upload_id
+            )
+            with transaction.atomic():
+                transfer_file.delete()
+                has_other_files = models.TransferFile.objects.filter(
+                    transfer=transfer
+                ).exists()
+                if not has_other_files:
+                    transfer.delete()
+            raise drf.exceptions.ValidationError(
+                {
+                    "parts": (
+                        f"S3 rejected the multipart upload completion "
+                        f"({error_code}). The upload has been aborted, "
+                        f"please restart the transfer."
+                    )
+                }
+            ) from exc
+
+        with transaction.atomic():
+            transfer_file.upload_completed_at = timezone.now()
+            transfer_file.upload_id = ""
+            transfer_file.save(
+                update_fields=["upload_completed_at", "upload_id", "updated_at"]
+            )
+            _log_event(transfer, TransferEventType.TRANSFER_CREATED, request)
 
         detail_serializer = TransferDetailSerializer(transfer)
-        return drf.response.Response(detail_serializer.data, status=201)
+        return drf.response.Response(detail_serializer.data)
+
+    @extend_schema(
+        request=TransferAbortUploadSerializer,
+        responses={204: None},
+    )
+    @action(detail=True, methods=["post"], url_path="abort-upload")
+    def abort_upload(self, request, pk=None):
+        """Abort an in-progress multipart upload.
+
+        Deletes the ``TransferFile`` row and, if no other files remain, the
+        parent ``Transfer`` too. Safe to call even if the upload never really
+        started on S3.
+        """
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            transfer_file = transfer.files.get(id=data["transfer_file_id"])
+        except models.TransferFile.DoesNotExist as exc:
+            raise drf.exceptions.NotFound("Transfer file not found.") from exc
+
+        if transfer_file.upload_id:
+            s3.abort_multipart_upload(
+                key=transfer_file.s3_key, upload_id=transfer_file.upload_id
+            )
+
+        with transaction.atomic():
+            transfer_file.delete()
+            # Query the model class directly instead of `transfer.files` —
+            # the prefetch cache from get_object() would still show the
+            # just-deleted row otherwise.
+            has_other_files = models.TransferFile.objects.filter(
+                transfer=transfer
+            ).exists()
+            if not has_other_files:
+                transfer.delete()
+
+        return drf.response.Response(status=204)
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
@@ -163,14 +315,7 @@ class TransferViewSet(
         transfer.revoked_at = timezone.now()
         transfer.save(update_fields=["status", "revoked_at", "updated_at"])
 
-        models.TransferEvent.objects.create(
-            transfer_id=transfer.id,
-            event_type=TransferEventType.TRANSFER_REVOKED,
-            actor_type=ActorType.AGENT,
-            actor_id=request.user.id,
-            ip=request.META.get("REMOTE_ADDR"),
-            user_agent=request.META.get("HTTP_USER_AGENT", ""),
-        )
+        _log_event(transfer, TransferEventType.TRANSFER_REVOKED, request)
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)
@@ -203,14 +348,7 @@ class TransferViewSet(
             update_fields=["status", "expires_at", "revoked_at", "updated_at"]
         )
 
-        models.TransferEvent.objects.create(
-            transfer_id=transfer.id,
-            event_type=TransferEventType.TRANSFER_REACTIVATED,
-            actor_type=ActorType.AGENT,
-            actor_id=request.user.id,
-            ip=request.META.get("REMOTE_ADDR"),
-            user_agent=request.META.get("HTTP_USER_AGENT", ""),
-        )
+        _log_event(transfer, TransferEventType.TRANSFER_REACTIVATED, request)
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

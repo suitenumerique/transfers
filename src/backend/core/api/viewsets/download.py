@@ -9,8 +9,8 @@ from rest_framework.views import APIView
 
 from core import models
 from core.api.serializers import DownloadTransferSerializer
-from core.api.viewsets.transfer import _get_s3_client
 from core.enums import ActorType, TransferEventType, TransferStatus
+from core.services.s3 import get_s3_client
 from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
@@ -89,13 +89,15 @@ class DownloadFileView(APIView):
             return denied
 
         try:
-            transfer_file = transfer.files.get(id=file_id)
+            transfer_file = transfer.files.get(
+                id=file_id, upload_completed_at__isnull=False
+            )
         except models.TransferFile.DoesNotExist:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
-        s3 = _get_s3_client()
-        bucket = settings.TRANSFERS_BUCKET_NAME
-        s3_object = s3.get_object(Bucket=bucket, Key=transfer_file.s3_key)
+        s3_object = get_s3_client().get_object(
+            Bucket=settings.TRANSFERS_BUCKET_NAME, Key=transfer_file.s3_key
+        )
 
         _record_visitor_event(
             transfer,
