@@ -3,6 +3,7 @@ export interface TransferListItem {
   title: string;
   status: "active" | "expired" | "revoked";
   sensitive: boolean;
+  has_password: boolean;
   expires_at: string;
   revoked_at: string | null;
   created_at: string;
@@ -25,6 +26,7 @@ export interface TransferDetail {
   title: string;
   status: "active" | "expired" | "revoked";
   sensitive: boolean;
+  has_password: boolean;
   public_token: string;
   expires_at: string;
   revoked_at: string | null;

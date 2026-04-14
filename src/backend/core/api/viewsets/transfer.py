@@ -4,6 +4,7 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from django.db import transaction
 from django.utils import timezone
 
@@ -133,11 +134,15 @@ class TransferViewSet(
         data = serializer.validated_data
         expires_in_days = serializer.get_expires_in_days(data)
 
+        password = data.get("password") or ""
+        password_hash = make_password(password) if password else ""
+
         with transaction.atomic():
             transfer = models.Transfer.objects.create(
                 owner=request.user,
                 title=data.get("title") or "",
                 sensitive=data.get("sensitive", False),
+                password_hash=password_hash,
                 expires_at=timezone.now() + timedelta(days=expires_in_days),
             )
 

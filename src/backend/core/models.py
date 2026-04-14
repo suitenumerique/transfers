@@ -206,6 +206,7 @@ class Transfer(BaseModel):
         help_text="Set when the underlying S3 files have been deleted. Once set, "
         "the transfer cannot be reactivated.",
     )
+    password_hash = models.CharField(max_length=128, blank=True, default="")
 
     class Meta:
         db_table = "core_transfer"
@@ -239,6 +240,10 @@ class Transfer(BaseModel):
             and not self.is_expired
             and not self.files_deleted
         )
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password_hash)
 
 
 class TransferFile(BaseModel):

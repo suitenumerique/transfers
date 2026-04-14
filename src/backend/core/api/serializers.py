@@ -104,6 +104,7 @@ class TransferListSerializer(serializers.ModelSerializer):
     filesize = serializers.SerializerMethodField()
     consulted = serializers.SerializerMethodField()
     downloaded = serializers.SerializerMethodField()
+    has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = models.Transfer
@@ -112,6 +113,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "sensitive",
+            "has_password",
             "expires_at",
             "revoked_at",
             "created_at",
@@ -147,6 +149,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
     """Full serializer for transfer detail."""
 
     files = TransferFileSerializer(many=True, read_only=True)
+    has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = models.Transfer
@@ -155,6 +158,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "sensitive",
+            "has_password",
             "public_token",
             "expires_at",
             "revoked_at",
@@ -180,6 +184,14 @@ class TransferCreateSerializer(serializers.Serializer):
         required=False,
     )
     sensitive = serializers.BooleanField(required=False, default=False)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        min_length=8,
+        max_length=128,
+        default="",
+    )
     filename = serializers.CharField(max_length=255, required=True)
     size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
