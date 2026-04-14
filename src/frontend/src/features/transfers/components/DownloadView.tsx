@@ -1,16 +1,20 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import type { DownloadTransferFull } from "@/features/api/types";
-import { getFileDownloadUrl } from "../api/useDownload";
+import { downloadFileWithPassword } from "../api/useDownload";
 import { formatFileSize } from "@/features/utils/string-helper";
 
 interface DownloadViewProps {
   transfer: DownloadTransferFull;
   token: string;
+  password?: string | null;
 }
 
-export function DownloadView({ transfer, token }: DownloadViewProps) {
+export function DownloadView({ transfer, token, password }: DownloadViewProps) {
   const { t } = useTranslation();
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
     day: "numeric",
@@ -20,14 +24,34 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
 
   const file = transfer.files[0];
 
+  const handleDownload = async () => {
+    if (!file) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadFileWithPassword(token, file.id, file.filename, password);
+    } catch {
+      setDownloadError(t("Download failed."));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="download-view">
       <div className="download-view__header">
         <h1>{transfer.title || t("Transfer")}</h1>
         <p className="download-view__sender">
-          {t("From {{name}}", { name: transfer.owner_name || transfer.owner_email || t("Unknown sender") })}
+          {t("From {{name}}", {
+            name:
+              transfer.owner_name ||
+              transfer.owner_email ||
+              t("Unknown sender"),
+          })}
         </p>
-        <p className="download-view__expires">{t("Expires on {{date}}", { date: expiresAt })}</p>
+        <p className="download-view__expires">
+          {t("Expires on {{date}}", { date: expiresAt })}
+        </p>
       </div>
 
       {file && (
@@ -39,10 +63,13 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
                 {formatFileSize(file.size)}
               </span>
             </div>
-            <a href={getFileDownloadUrl(token, file.id)}>
-              <Button>{t("Download")}</Button>
-            </a>
+            <Button onClick={handleDownload} disabled={downloading}>
+              {downloading ? t("Downloading...") : t("Download")}
+            </Button>
           </div>
+          {downloadError && (
+            <p className="download-view__error">{downloadError}</p>
+          )}
         </div>
       )}
     </div>

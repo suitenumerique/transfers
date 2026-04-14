@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
+  Checkbox,
   Input,
   Select,
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
-import { ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import { Icon, ProConnectButton } from "@gouvfr-lasuite/ui-kit";
 import { useCreateTransfer } from "../api/useCreateTransfer";
+import { generatePassphrase } from "../utils/generatePassword";
+import { stashPassword } from "../utils/passwordStash";
 import { FileDropZone } from "./FileDropZone";
 
 function formatBytes(bytes: number): string {
@@ -40,7 +43,7 @@ export function TransferForm({
   requireAuth,
   onBusyChange,
 }: TransferFormProps = {}) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const router = useRouter();
   const [uploadProgress, setUploadProgress] = useState<{
     loaded: number;
@@ -52,6 +55,10 @@ export function TransferForm({
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
+  const [passwordEnabled, setPasswordEnabled] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [authing, setAuthing] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -66,11 +73,14 @@ export function TransferForm({
   const submitTransfer = async () => {
     if (!file) return;
     setUploadProgress({ loaded: 0, total: file.size });
+    const passwordToSend = passwordEnabled ? password : undefined;
     const created = await createTransfer.mutateAsync({
       title,
       expires_in_days: expiresInDays,
       file,
+      password: passwordToSend,
     });
+    if (passwordToSend) stashPassword(created.id, passwordToSend);
     await router.push(`/transfers/${created.id}`);
   };
 
@@ -88,6 +98,12 @@ export function TransferForm({
     e.preventDefault();
     if (!file) return;
     setAuthError(null);
+    setPasswordError(null);
+
+    if (passwordEnabled && password.length < 8) {
+      setPasswordError(t("Password must be at least 8 characters."));
+      return;
+    }
 
     if (requireAuth) {
       setAuthing(true);
@@ -155,6 +171,63 @@ export function TransferForm({
           clearable={false}
           fullWidth
         />
+
+        <Checkbox
+          label={t("Protect with password")}
+          checked={passwordEnabled}
+          onChange={(e) => {
+            const checked = (e.target as HTMLInputElement).checked;
+            setPasswordEnabled(checked);
+            if (!checked) {
+              setPassword("");
+              setPasswordError(null);
+            }
+          }}
+          disabled={!file}
+        />
+
+        {passwordEnabled && (
+          <Input
+            label={t("Password")}
+            type={passwordVisible ? "text" : "password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={!file}
+            state={passwordError ? "error" : "default"}
+            text={passwordError ?? undefined}
+            fullWidth
+            rightIcon={
+              <div className="transfer-form__password-actions">
+                <button
+                  type="button"
+                  className="transfer-form__password-action"
+                  onClick={() => setPasswordVisible((v) => !v)}
+                  disabled={!file}
+                  aria-label={passwordVisible ? t("Hide") : t("Show")}
+                  aria-pressed={passwordVisible}
+                >
+                  <Icon
+                    name={passwordVisible ? "visibility_off" : "visibility"}
+                  />
+                </button>
+                <button
+                  type="button"
+                  className="transfer-form__password-action"
+                  onClick={() => {
+                    setPassword(generatePassphrase(i18n.language));
+                    setPasswordError(null);
+                    setPasswordVisible(true);
+                  }}
+                  disabled={!file}
+                  aria-label={t("Generate")}
+                  title={t("Generate")}
+                >
+                  <Icon name="auto_awesome" />
+                </button>
+              </div>
+            }
+          />
+        )}
 
         {requireAuth ? (
           <div className="transfer-form__proconnect">

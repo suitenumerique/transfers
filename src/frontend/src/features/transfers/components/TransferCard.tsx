@@ -19,6 +19,11 @@ export function TransferCard({ transfer }: { transfer: TransferListItem }) {
         <span className="transfer-card__title">
           {transfer.title || t("Untitled")}
         </span>
+        {transfer.has_password && (
+          <span title={t("Password protected")} aria-label={t("Password protected")}>
+            🔒
+          </span>
+        )}
         <TransferStatusBadge status={transfer.status} />
       </div>
       <div className="transfer-card__meta">

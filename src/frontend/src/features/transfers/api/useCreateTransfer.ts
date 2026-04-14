@@ -19,6 +19,7 @@ interface CreateTransferInput {
   title: string;
   expires_in_days: number;
   file: File;
+  password?: string;
 }
 
 interface InitiateResponse {
@@ -60,6 +61,7 @@ export function useCreateTransfer(opts?: {
           filename: input.file.name,
           size: input.file.size,
           mime_type: input.file.type || "application/octet-stream",
+          ...(input.password ? { password: input.password } : {}),
         }),
       });
 
