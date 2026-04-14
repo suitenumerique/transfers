@@ -62,6 +62,8 @@
   "Forget password on this device": "Oublier le mot de passe sur cet appareil",
   "This transfer is protected": "Ce transfert est protégé",
   "Enter the password you received separately to access this transfer.": "Saisissez le mot de passe reçu séparément pour accéder à ce transfert.",
+  "Remember on this device": "Mémoriser sur cet appareil",
+  "Do not enable on a shared or public computer — the password would stay accessible to anyone who uses this browser.": "À ne pas activer sur un ordinateur partagé ou public — le mot de passe resterait accessible à toute personne utilisant ce navigateur.",
   "Unlock": "Déverrouiller",
   "Unlocking...": "Déverrouillage…",
   "Wrong password.": "Mot de passe incorrect.",

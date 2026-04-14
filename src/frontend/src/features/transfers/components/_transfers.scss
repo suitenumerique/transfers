@@ -275,13 +275,9 @@
 
 
 .password-prompt {
-  max-width: 480px;
-  margin: var(--c--globals--spacings--2xl) auto;
-  padding: var(--c--globals--spacings--xl);
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--md);
-  text-align: center;
 
   h1 {
     margin: 0;
@@ -603,9 +599,6 @@
 
 // Download View
 .download-view {
-  max-width: 600px;
-  margin: 0 auto;
-
   &__header {
     margin-bottom: var(--c--globals--spacings--md);
 
@@ -663,7 +656,15 @@
 // Download Page
 .download-page {
   min-height: 100vh;
+  max-width: 720px;
+  margin: 0 auto;
   padding: var(--c--globals--spacings--xl) var(--c--globals--spacings--md);
+
+  &__header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--c--globals--spacings--lg);
+  }
 }
 
 // Landing Page (unauthenticated home)
