@@ -39,6 +39,9 @@
 		@transfer_download path_regexp ^/t/[^/]+$
 		rewrite @transfer_download /t/[token].html
 
+		@transfer_detail path_regexp ^/transfers/[^/]+$
+		rewrite @transfer_detail /transfers/[id].html
+
 		# Default: SPA fallback
 		try_files {path} /index.html
 		file_server
