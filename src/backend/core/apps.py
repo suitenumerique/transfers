@@ -9,6 +9,3 @@ class CoreConfig(AppConfig):
     name = "core"
     app_label = "core"
     verbose_name = "Transferts core"
-
-    def ready(self):
-        import core.signals  # noqa: F401

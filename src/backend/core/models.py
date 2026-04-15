@@ -158,10 +158,6 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
     def __str__(self):
         return self.email or self.admin_email or str(self.id)
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
     def get_abilities(self):
         """Return abilities of the logged-in user."""
         return {
@@ -209,7 +205,11 @@ class Transfer(BaseModel):
     )
     sensitive = models.BooleanField(
         default=False,
-        help_text="Marked as sensitive document by the agent. Behaviour TBD.",
+        help_text=(
+            "Reserved — the agent can flag a transfer as sensitive, but this "
+            "flag has no runtime effect yet. Surfaced on the transfer detail "
+            "for future product use."
+        ),
     )
     files_deleted_at = models.DateTimeField(
         null=True,
@@ -237,12 +237,11 @@ class Transfer(BaseModel):
         return self.status == TransferStatus.REVOKED
 
     @property
-    def files_deleted(self) -> bool:
-        return self.files_deleted_at is not None
-
-    @property
     def can_be_reactivated(self) -> bool:
-        return self.status == TransferStatus.EXPIRED and not self.files_deleted
+        return (
+            self.status == TransferStatus.EXPIRED
+            and self.files_deleted_at is None
+        )
 
     @property
     def is_finalized(self) -> bool:
@@ -254,7 +253,7 @@ class Transfer(BaseModel):
             self.is_finalized
             and self.status == TransferStatus.ACTIVE
             and not self.is_expired
-            and not self.files_deleted
+            and self.files_deleted_at is None
         )
 
     @property

@@ -23,10 +23,8 @@ class UserViewSet(viewsets.GenericViewSet):
 
     def get_permissions(self):
         if self.action == "get_me":
-            permission_classes = [permissions.IsAuthenticated & permissions.IsSelf]
-        else:
-            return super().get_permissions()
-        return [permission() for permission in permission_classes]
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
 
     @extend_schema(
         tags=["users"],
