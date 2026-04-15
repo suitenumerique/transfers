@@ -226,6 +226,12 @@ class TransferCreateSerializer(serializers.Serializer):
                 f"A transfer cannot contain more than "
                 f"{settings.TRANSFER_MAX_FILES_PER_TRANSFER} files."
             )
+        total_size = sum(f["size"] for f in value)
+        if total_size > settings.TRANSFER_MAX_TOTAL_SIZE:
+            max_go = settings.TRANSFER_MAX_TOTAL_SIZE // (1024**3)
+            raise serializers.ValidationError(
+                f"Total transfer size exceeds maximum of {max_go} Go."
+            )
         return value
 
 

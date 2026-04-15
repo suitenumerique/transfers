@@ -132,13 +132,14 @@ class Base(Configuration):
         environ_name="TRANSFER_FILE_GRACE_PERIOD_DAYS",
         environ_prefix=None,
     )
-    # TODO: the V1 spec says "20 Go max" but was written when a transfer held
-    # a single file — ambiguous now that we support multi-file. Currently
-    # enforced per-file; we may want a per-transfer total cap instead (or in
-    # addition). Product decision pending.
     TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
-        20 * 1024 * 1024 * 1024,  # 20 Go
+        20 * 1024 * 1024 * 1024,  # 20 Go — cap on any individual file
         environ_name="TRANSFER_MAX_FILE_SIZE",
+        environ_prefix=None,
+    )
+    TRANSFER_MAX_TOTAL_SIZE = values.PositiveIntegerValue(
+        20 * 1024 * 1024 * 1024,  # 20 Go — cap on the sum of all files in a transfer
+        environ_name="TRANSFER_MAX_TOTAL_SIZE",
         environ_prefix=None,
     )
     TRANSFER_MAX_FILES_PER_TRANSFER = values.PositiveIntegerValue(

@@ -263,6 +263,23 @@ class TestTransferCreate:
         )
         assert response.status_code == 400
 
+    def test_create_total_size_too_large(
+        self, patched_s3, authenticated_client, settings
+    ):
+        # Each file is under TRANSFER_MAX_FILE_SIZE but their sum exceeds
+        # TRANSFER_MAX_TOTAL_SIZE → must be rejected at the transfer level.
+        settings.TRANSFER_MAX_FILE_SIZE = 100
+        settings.TRANSFER_MAX_TOTAL_SIZE = 150
+        response = _create_transfer(
+            authenticated_client,
+            files=[
+                {"filename": "a.bin", "size": 80},
+                {"filename": "b.bin", "size": 80},
+            ],
+        )
+        assert response.status_code == 400
+        assert "files" in response.data
+
     def test_create_missing_filename(self, patched_s3, authenticated_client):
         response = _create_transfer(authenticated_client, files=[{"size": 100}])
         assert response.status_code == 400

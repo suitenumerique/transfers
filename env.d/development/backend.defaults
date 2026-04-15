@@ -36,6 +36,10 @@ AWS_S3_DOMAIN_REPLACE=http://localhost:8906
 # Transfers storage bucket
 TRANSFERS_BUCKET_NAME=transferts
 
+# Transfer size caps (bytes)
+TRANSFER_MAX_FILE_SIZE=21474836480
+TRANSFER_MAX_TOTAL_SIZE=21474836480
+
 OIDC_CREATE_USER=True
 
 # OIDC — Set in backend.local with your OIDC provider (ProConnect, etc.)
