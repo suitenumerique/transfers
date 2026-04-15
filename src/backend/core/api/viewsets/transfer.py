@@ -6,6 +6,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.db import transaction
+from django.db.models import Count, Exists, OuterRef, Q, Sum
 from django.utils import timezone
 
 import botocore
@@ -24,17 +25,10 @@ from core.api.serializers import (
     TransferListSerializer,
     TransferSignPartSerializer,
 )
-from core.models import _generate_public_token
 from core.api.viewsets import Pagination
 from core.enums import ActorType, TransferEventType, TransferStatus
+from core.models import _generate_public_token
 from core.services import s3
-
-
-def _delete_transfer_files_from_s3(transfer):
-    """Delete all S3 objects for a transfer."""
-    for tf in transfer.files.all():
-        if tf.s3_key:
-            s3.delete_object(tf.s3_key)
 
 
 def _log_event(transfer, event_type, request):
@@ -74,15 +68,36 @@ class TransferViewSet(
         return TransferDetailSerializer
 
     def get_queryset(self):
-        queryset = (
+        if self.action == "list":
+            # List: annotate everything the serializer needs so we run a
+            # single query instead of a prefetch + N*2 existence checks +
+            # Python-side filtering.
+            completed_files = Q(files__upload_completed_at__isnull=False)
+            event_of_type = lambda ev: Exists(
+                models.TransferEvent.objects.filter(
+                    transfer_id=OuterRef("pk"), event_type=ev
+                )
+            )
+            return (
+                models.Transfer.objects.filter(
+                    owner=self.request.user,
+                    upload_completed_at__isnull=False,
+                )
+                .annotate(
+                    _file_count=Count("files", filter=completed_files),
+                    _total_size=Sum(
+                        "files__size", filter=completed_files, default=0
+                    ),
+                    _consulted=event_of_type(TransferEventType.LINK_OPENED),
+                    _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
+                )
+                .order_by("-created_at")
+            )
+        return (
             models.Transfer.objects.filter(owner=self.request.user)
             .prefetch_related("files")
             .order_by("-created_at")
         )
-        if self.action == "list":
-            # Hide transfers whose upload is not yet finalized.
-            queryset = queryset.filter(upload_completed_at__isnull=False)
-        return queryset
 
     def _get_pending_file(self, transfer, file_id):
         """Fetch a TransferFile belonging to ``transfer`` whose upload is in
@@ -244,14 +259,7 @@ class TransferViewSet(
             # unrecoverable. Abort every still-pending multipart upload on
             # S3 and delete the transfer entirely (all-or-nothing semantics).
             error_code = exc.response.get("Error", {}).get("Code", "Unknown")
-            for tf in transfer.files.all():
-                if tf.upload_id:
-                    try:
-                        s3.abort_multipart_upload(
-                            key=tf.s3_key, upload_id=tf.upload_id
-                        )
-                    except botocore.exceptions.ClientError:
-                        pass
+            transfer.abort_pending_uploads()
             transfer.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -276,15 +284,8 @@ class TransferViewSet(
         # time, refusing any sign-part that would exceed the declared total.
         actual_size = s3.head_object_size(transfer_file.s3_key)
         if actual_size != transfer_file.size:
-            for tf in transfer.files.all():
-                if tf.upload_id:
-                    try:
-                        s3.abort_multipart_upload(
-                            key=tf.s3_key, upload_id=tf.upload_id
-                        )
-                    except botocore.exceptions.ClientError:
-                        pass
-                s3.delete_object(tf.s3_key)
+            transfer.abort_pending_uploads()
+            transfer.delete_s3_objects()
             transfer.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -375,14 +376,7 @@ class TransferViewSet(
                 {"status": "Transfer is already finalized; use revoke instead."}
             )
 
-        for tf in transfer.files.all():
-            if tf.upload_id:
-                try:
-                    s3.abort_multipart_upload(
-                        key=tf.s3_key, upload_id=tf.upload_id
-                    )
-                except botocore.exceptions.ClientError:
-                    pass
+        transfer.abort_pending_uploads()
         transfer.delete()
 
         return drf.response.Response(status=204)
@@ -398,7 +392,7 @@ class TransferViewSet(
                 {"status": "Only active transfers can be revoked."}
             )
 
-        _delete_transfer_files_from_s3(transfer)
+        transfer.delete_s3_objects()
 
         transfer.status = TransferStatus.REVOKED
         transfer.revoked_at = timezone.now()
@@ -420,7 +414,7 @@ class TransferViewSet(
                 {"status": "Only expired transfers can be reactivated."}
             )
 
-        if transfer.files_deleted:
+        if transfer.files_deleted_at is not None:
             raise drf.exceptions.ValidationError(
                 {
                     "status": "Files have been permanently deleted; "

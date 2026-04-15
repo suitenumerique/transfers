@@ -44,7 +44,7 @@ if settings.DEBUG:
     urlpatterns = (
         urlpatterns
         + staticfiles_urlpatterns()
-        + static(settings.MEDIA_URL, item_root=settings.MEDIA_ROOT)
+        + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     )
 
 

@@ -1,11 +1,14 @@
 """S3 client factory and multipart upload helpers for the transferts bucket."""
 
+import logging
 from functools import cache
 
 from django.conf import settings
 
 import boto3
 import botocore
+
+logger = logging.getLogger(__name__)
 
 
 def _build_client(endpoint_url: str):
@@ -94,7 +97,9 @@ def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> No
 
 
 def abort_multipart_upload(key: str, upload_id: str) -> None:
-    """Abort a multipart upload in progress. Safe to call on an unknown upload."""
+    """Abort a multipart upload in progress. Safe to call on an unknown upload:
+    errors are logged and swallowed so callers can use this as a best-effort
+    cleanup helper."""
     client = get_s3_client()
     try:
         client.abort_multipart_upload(
@@ -103,17 +108,19 @@ def abort_multipart_upload(key: str, upload_id: str) -> None:
             UploadId=upload_id,
         )
     except botocore.exceptions.ClientError:
-        # Already completed or never existed — nothing to do.
-        pass
+        logger.exception(
+            "Failed to abort multipart upload %s for key %s", upload_id, key
+        )
 
 
 def delete_object(key: str) -> None:
-    """Delete a single object from the transfers bucket. Failures are swallowed."""
+    """Delete a single object from the transfers bucket. Errors are logged
+    and swallowed (best-effort cleanup)."""
     client = get_s3_client()
     try:
         client.delete_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
     except botocore.exceptions.ClientError:
-        pass
+        logger.exception("Failed to delete S3 object %s", key)
 
 
 def head_object_size(key: str) -> int:

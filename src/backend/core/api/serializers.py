@@ -6,7 +6,6 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from core import models
-from core.enums import TransferEventType
 
 
 class AbilitiesModelSerializer(serializers.ModelSerializer):
@@ -98,12 +97,17 @@ class TransferEventSerializer(serializers.ModelSerializer):
 
 
 class TransferListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for transfer list."""
+    """Lightweight serializer for transfer list.
 
-    file_count = serializers.SerializerMethodField()
-    total_size = serializers.SerializerMethodField()
-    consulted = serializers.SerializerMethodField()
-    downloaded = serializers.SerializerMethodField()
+    Reads annotated fields (``_file_count``, ``_total_size``, ``_consulted``,
+    ``_downloaded``) populated by ``TransferViewSet.get_queryset()`` to avoid
+    N+1 queries on the list endpoint.
+    """
+
+    file_count = serializers.IntegerField(source="_file_count", read_only=True)
+    total_size = serializers.IntegerField(source="_total_size", read_only=True)
+    consulted = serializers.BooleanField(source="_consulted", read_only=True)
+    downloaded = serializers.BooleanField(source="_downloaded", read_only=True)
     has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -123,27 +127,6 @@ class TransferListSerializer(serializers.ModelSerializer):
             "downloaded",
         ]
         read_only_fields = fields
-
-    def _completed_files(self, obj):
-        return [f for f in obj.files.all() if f.upload_completed_at]
-
-    def get_file_count(self, obj) -> int:
-        return len(self._completed_files(obj))
-
-    def get_total_size(self, obj) -> int:
-        return sum(f.size for f in self._completed_files(obj))
-
-    def get_consulted(self, obj) -> bool:
-        return models.TransferEvent.objects.filter(
-            transfer_id=obj.id,
-            event_type=TransferEventType.LINK_OPENED,
-        ).exists()
-
-    def get_downloaded(self, obj) -> bool:
-        return models.TransferEvent.objects.filter(
-            transfer_id=obj.id,
-            event_type=TransferEventType.FILE_DOWNLOADED,
-        ).exists()
 
 
 class TransferDetailSerializer(serializers.ModelSerializer):
