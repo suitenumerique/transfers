@@ -100,8 +100,8 @@ class TransferEventSerializer(serializers.ModelSerializer):
 class TransferListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for transfer list."""
 
-    filename = serializers.SerializerMethodField()
-    filesize = serializers.SerializerMethodField()
+    file_count = serializers.SerializerMethodField()
+    total_size = serializers.SerializerMethodField()
     consulted = serializers.SerializerMethodField()
     downloaded = serializers.SerializerMethodField()
     has_password = serializers.BooleanField(read_only=True)
@@ -117,20 +117,21 @@ class TransferListSerializer(serializers.ModelSerializer):
             "expires_at",
             "revoked_at",
             "created_at",
-            "filename",
-            "filesize",
+            "file_count",
+            "total_size",
             "consulted",
             "downloaded",
         ]
         read_only_fields = fields
 
-    def get_filename(self, obj) -> str:
-        first = obj.files.first()
-        return first.filename if first else ""
+    def _completed_files(self, obj):
+        return [f for f in obj.files.all() if f.upload_completed_at]
 
-    def get_filesize(self, obj) -> int:
-        first = obj.files.first()
-        return first.size if first else 0
+    def get_file_count(self, obj) -> int:
+        return len(self._completed_files(obj))
+
+    def get_total_size(self, obj) -> int:
+        return sum(f.size for f in self._completed_files(obj))
 
     def get_consulted(self, obj) -> bool:
         return models.TransferEvent.objects.filter(
@@ -160,6 +161,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "sensitive",
             "has_password",
             "public_token",
+            "upload_completed_at",
             "expires_at",
             "revoked_at",
             "files_deleted_at",
@@ -169,29 +171,9 @@ class TransferDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class TransferCreateSerializer(serializers.Serializer):
-    """Serializer to initiate a transfer + multipart upload.
+class _TransferFileCreateSerializer(serializers.Serializer):
+    """Nested serializer: a single file to attach to a new transfer."""
 
-    The client sends only metadata. The file itself is uploaded directly to S3
-    by the browser via presigned URLs (see ``TransferViewSet.sign_part``).
-    """
-
-    title = serializers.CharField(
-        max_length=255, required=False, allow_blank=True, default=""
-    )
-    expires_in_days = serializers.ChoiceField(
-        choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
-        required=False,
-    )
-    sensitive = serializers.BooleanField(required=False, default=False)
-    password = serializers.CharField(
-        write_only=True,
-        required=False,
-        allow_blank=True,
-        min_length=8,
-        max_length=128,
-        default="",
-    )
     filename = serializers.CharField(max_length=255, required=True)
     size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
@@ -206,11 +188,45 @@ class TransferCreateSerializer(serializers.Serializer):
             )
         return value
 
-    def get_expires_in_days(self, validated_data):
-        value = validated_data.get("expires_in_days")
-        if value is not None:
-            return int(value)
-        return settings.TRANSFER_DEFAULT_EXPIRY_DAYS
+
+class TransferCreateSerializer(serializers.Serializer):
+    """Serializer to create a transfer + all its files in a single call.
+
+    The client sends transfer-level metadata plus the list of files to attach.
+    The viewset creates the Transfer, creates one TransferFile per entry, and
+    initiates the S3 multipart upload for each — all in one DB transaction.
+    The response mirrors the request: the transfer descriptor plus a parallel
+    list of per-file upload descriptors the browser uses to push chunks.
+    """
+
+    title = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default=""
+    )
+    expires_in_days = serializers.ChoiceField(
+        choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
+        required=False,
+        default=settings.TRANSFER_DEFAULT_EXPIRY_DAYS,
+    )
+    sensitive = serializers.BooleanField(required=False, default=False)
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        min_length=8,
+        max_length=128,
+        default="",
+    )
+    files = _TransferFileCreateSerializer(many=True, required=True)
+
+    def validate_files(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one file is required.")
+        if len(value) > settings.TRANSFER_MAX_FILES_PER_TRANSFER:
+            raise serializers.ValidationError(
+                f"A transfer cannot contain more than "
+                f"{settings.TRANSFER_MAX_FILES_PER_TRANSFER} files."
+            )
+        return value
 
 
 class _PartETagSerializer(serializers.Serializer):
@@ -237,12 +253,6 @@ class TransferCompleteUploadSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("At least one part is required.")
         return value
-
-
-class TransferAbortUploadSerializer(serializers.Serializer):
-    """Abort an in-progress multipart upload."""
-
-    transfer_file_id = serializers.UUIDField()
 
 
 # -- Download serializers --

@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { formatFileSize } from "@/features/utils/string-helper";
 
 interface FileDropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
-  maxFiles?: number;
 }
 
 // True when a drag-and-drop sequence carrying files is active anywhere on
@@ -52,31 +49,23 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
+export function FileDropZone({ files, onChange }: FileDropZoneProps) {
   const { t } = useTranslation();
   const windowDragging = useWindowFileDrag();
 
   const onDrop = useCallback(
     (accepted: File[]) => {
-      if (maxFiles === 1) {
-        onChange(accepted.slice(0, 1));
-      } else {
-        onChange([...files, ...accepted]);
-      }
+      onChange(accepted);
     },
-    [files, onChange, maxFiles],
+    [onChange],
   );
-
-  const removeFile = (index: number) => {
-    onChange(files.filter((_, i) => i !== index));
-  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    maxFiles,
   });
 
   const expanded = windowDragging || isDragActive;
+  const hasFiles = files.length > 0;
 
   return (
     <div className="file-dropzone">
@@ -91,7 +80,9 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
           <p className="file-dropzone__headline">
             {isDragActive
               ? t("Drop it to get started")
-              : t("Drop your file here")}
+              : hasFiles
+                ? t("Drop more files here")
+                : t("Drop your files here")}
           </p>
           <p className="file-dropzone__hint">
             {isDragActive
@@ -100,27 +91,6 @@ export function FileDropZone({ files, onChange, maxFiles }: FileDropZoneProps) {
           </p>
         </div>
       </div>
-      {files.length > 0 && (
-        <ul className="file-dropzone__list">
-          {files.map((file, i) => (
-            <li key={`${file.name}-${i}`} className="file-dropzone__item">
-              <span>{file.name}</span>
-              <span className="file-dropzone__size">
-                {formatFileSize(file.size)}
-              </span>
-              <Button
-                type="button"
-                size="small"
-                color="neutral"
-                onClick={() => removeFile(i)}
-                aria-label={t("Remove")}
-              >
-                &times;
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

@@ -13,7 +13,9 @@ interface DownloadViewProps {
 
 export function DownloadView({ transfer, token, password }: DownloadViewProps) {
   const { t } = useTranslation();
-  const [downloading, setDownloading] = useState(false);
+  // Per-file download state: which file is currently downloading, and any
+  // error surfaced by the last attempt.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
@@ -22,18 +24,17 @@ export function DownloadView({ transfer, token, password }: DownloadViewProps) {
     year: "numeric",
   });
 
-  const file = transfer.files[0];
+  const totalSize = transfer.files.reduce((a, f) => a + f.size, 0);
 
-  const handleDownload = async () => {
-    if (!file) return;
-    setDownloading(true);
+  const handleDownload = async (fileId: string, filename: string) => {
+    setDownloadingId(fileId);
     setDownloadError(null);
     try {
-      await downloadFileWithPassword(token, file.id, file.filename, password);
+      await downloadFileWithPassword(token, fileId, filename, password);
     } catch {
       setDownloadError(t("Download failed."));
     } finally {
-      setDownloading(false);
+      setDownloadingId(null);
     }
   };
 
@@ -54,19 +55,37 @@ export function DownloadView({ transfer, token, password }: DownloadViewProps) {
         </p>
       </div>
 
-      {file && (
+      {transfer.files.length > 0 && (
         <div className="download-view__files">
-          <div className="download-view__file">
-            <div>
-              <span className="download-view__filename">{file.filename}</span>
-              <span className="download-view__size">
-                {formatFileSize(file.size)}
-              </span>
-            </div>
-            <Button onClick={handleDownload} disabled={downloading}>
-              {downloading ? t("Downloading...") : t("Download")}
-            </Button>
-          </div>
+          <h2 className="download-view__files-title">
+            {t("{{count}} file", { count: transfer.files.length })}{" "}
+            <span className="download-view__files-total">
+              ({formatFileSize(totalSize)})
+            </span>
+          </h2>
+          <ul className="download-view__file-list">
+            {transfer.files.map((file) => {
+              const isDownloading = downloadingId === file.id;
+              return (
+                <li key={file.id} className="download-view__file">
+                  <div className="download-view__file-meta">
+                    <span className="download-view__filename">
+                      {file.filename}
+                    </span>
+                    <span className="download-view__size">
+                      {formatFileSize(file.size)}
+                    </span>
+                  </div>
+                  <Button
+                    onClick={() => handleDownload(file.id, file.filename)}
+                    disabled={downloadingId !== null}
+                  >
+                    {isDownloading ? t("Downloading...") : t("Download")}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
           {downloadError && (
             <p className="download-view__error">{downloadError}</p>
           )}

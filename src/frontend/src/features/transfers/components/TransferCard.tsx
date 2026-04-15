@@ -27,8 +27,8 @@ export function TransferCard({ transfer }: { transfer: TransferListItem }) {
         <TransferStatusBadge status={transfer.status} />
       </div>
       <div className="transfer-card__meta">
-        <span>{transfer.filename}</span>
-        <span>{formatFileSize(transfer.filesize)}</span>
+        <span>{t("{{count}} file", { count: transfer.file_count })}</span>
+        <span>{formatFileSize(transfer.total_size)}</span>
         <span>{expiresAt}</span>
         <span>{transfer.consulted ? "✓" : "—"} {t("Consulted")}</span>
         <span>{transfer.downloaded ? "✓" : "—"} {t("Downloaded")}</span>

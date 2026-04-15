@@ -10,7 +10,10 @@ import {
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import { Icon, ProConnectButton } from "@gouvfr-lasuite/ui-kit";
-import { useCreateTransfer } from "../api/useCreateTransfer";
+import {
+  useCreateTransfer,
+  type AggregateProgress,
+} from "../api/useCreateTransfer";
 import { generatePassphrase } from "../utils/generatePassword";
 import { stashPassword } from "../utils/passwordStash";
 import { FileDropZone } from "./FileDropZone";
@@ -45,14 +48,13 @@ export function TransferForm({
 }: TransferFormProps = {}) {
   const { t, i18n } = useTranslation();
   const router = useRouter();
-  const [uploadProgress, setUploadProgress] = useState<{
-    loaded: number;
-    total: number;
-  } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<AggregateProgress | null>(
+    null,
+  );
   const createTransfer = useCreateTransfer({
-    onProgress: (loaded, total) => setUploadProgress({ loaded, total }),
+    onProgress: (progress) => setUploadProgress(progress),
   });
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
   const [passwordEnabled, setPasswordEnabled] = useState(false);
@@ -62,22 +64,43 @@ export function TransferForm({
   const [authing, setAuthing] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const handleFilesChange = (files: File[]) => {
-    const next = files.length > 0 ? files[0] : null;
-    setFile(next);
-    if (next && title.trim() === "") {
-      setTitle(stripExtension(next.name));
+  const handleFilesChange = (incoming: File[]) => {
+    setFiles((prev) => {
+      // De-duplicate on (name, size, lastModified) — same signature the browser
+      // uses when you re-pick the same file; good enough for our purposes.
+      const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+      const existing = new Set(prev.map(key));
+      const merged = [
+        ...prev,
+        ...incoming.filter((f) => !existing.has(key(f))),
+      ];
+      return merged;
+    });
+    if (incoming.length > 0 && title.trim() === "") {
+      setTitle(stripExtension(incoming[0].name));
     }
   };
 
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const submitTransfer = async () => {
-    if (!file) return;
-    setUploadProgress({ loaded: 0, total: file.size });
+    if (files.length === 0) return;
+    setUploadProgress({
+      fileIndex: 0,
+      fileCount: files.length,
+      fileName: files[0].name,
+      fileLoaded: 0,
+      fileTotal: files[0].size,
+      totalLoaded: 0,
+      totalTotal: files.reduce((a, f) => a + f.size, 0),
+    });
     const passwordToSend = passwordEnabled ? password : undefined;
     const created = await createTransfer.mutateAsync({
       title,
       expires_in_days: expiresInDays,
-      file,
+      files,
       password: passwordToSend,
     });
     if (passwordToSend) stashPassword(created.id, passwordToSend);
@@ -96,7 +119,7 @@ export function TransferForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return;
+    if (files.length === 0) return;
     setAuthError(null);
     setPasswordError(null);
 
@@ -117,7 +140,9 @@ export function TransferForm({
             ? t("Please allow popups to sign in.")
             : reason === "popup-timeout"
               ? t("Sign-in timed out.")
-              : t("Sign-in was cancelled."),
+              : reason === "popup-closed"
+                ? t("Sign-in cancelled. If the sign-in window is still open, please close it.")
+                : t("Sign-in was cancelled."),
         );
         return;
       }
@@ -139,18 +164,37 @@ export function TransferForm({
     value: String(days),
   }));
 
+  const hasFiles = files.length > 0;
+
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
-      <FileDropZone
-        files={file ? [file] : []}
-        onChange={handleFilesChange}
-        maxFiles={1}
-      />
+      <FileDropZone files={files} onChange={handleFilesChange} />
+
+      {hasFiles && (
+        <ul className="transfer-form__file-list" aria-label={t("Selected files")}>
+          {files.map((f, i) => (
+            <li key={`${f.name}-${f.size}-${f.lastModified}`} className="transfer-form__file-item">
+              <span className="transfer-form__file-name">{f.name}</span>
+              <span className="transfer-form__file-size">{formatBytes(f.size)}</span>
+              <button
+                type="button"
+                className="transfer-form__file-remove"
+                onClick={() => removeFile(i)}
+                disabled={busy}
+                aria-label={t("Remove {{name}}", { name: f.name })}
+                title={t("Remove")}
+              >
+                <Icon name="close" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div
         className="transfer-form__reveal"
-        data-visible={file ? "true" : undefined}
-        aria-hidden={!file}
+        data-visible={hasFiles ? "true" : undefined}
+        aria-hidden={!hasFiles}
         aria-live="polite"
       >
         <Input
@@ -158,7 +202,7 @@ export function TransferForm({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={t("My transfer")}
-          disabled={!file}
+          disabled={!hasFiles}
           fullWidth
         />
 
@@ -167,7 +211,7 @@ export function TransferForm({
           options={expiryOptions}
           value={String(expiresInDays)}
           onChange={(e) => setExpiresInDays(Number(e.target.value))}
-          disabled={!file}
+          disabled={!hasFiles}
           clearable={false}
           fullWidth
         />
@@ -183,7 +227,7 @@ export function TransferForm({
               setPasswordError(null);
             }
           }}
-          disabled={!file}
+          disabled={!hasFiles}
         />
 
         {passwordEnabled && (
@@ -192,7 +236,7 @@ export function TransferForm({
             type={passwordVisible ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={!file}
+            disabled={!hasFiles}
             state={passwordError ? "error" : "default"}
             text={passwordError ?? undefined}
             fullWidth
@@ -202,7 +246,7 @@ export function TransferForm({
                   type="button"
                   className="transfer-form__password-action"
                   onClick={() => setPasswordVisible((v) => !v)}
-                  disabled={!file}
+                  disabled={!hasFiles}
                   aria-label={passwordVisible ? t("Hide") : t("Show")}
                   aria-pressed={passwordVisible}
                 >
@@ -218,7 +262,7 @@ export function TransferForm({
                     setPasswordError(null);
                     setPasswordVisible(true);
                   }}
-                  disabled={!file}
+                  disabled={!hasFiles}
                   aria-label={t("Generate")}
                   title={t("Generate")}
                 >
@@ -242,7 +286,7 @@ export function TransferForm({
                   preventDefault: () => {},
                 } as React.FormEvent);
               }}
-              disabled={createTransfer.isPending || authing || !file}
+              disabled={createTransfer.isPending || authing || !hasFiles}
             />
             {(authing || createTransfer.isPending) && (
               <span className="transfer-form__hint">
@@ -253,7 +297,7 @@ export function TransferForm({
         ) : (
           <Button
             type="submit"
-            disabled={createTransfer.isPending || !file}
+            disabled={createTransfer.isPending || !hasFiles}
           >
             {createTransfer.isPending ? t("Sending...") : t("Create link")}
           </Button>
@@ -277,17 +321,27 @@ export function TransferForm({
               </>
             ) : uploadProgress ? (
               <>
+                {uploadProgress.fileCount > 1 && (
+                  <p className="transfer-form__progress-sublabel">
+                    {t("File {{current}} of {{total}}: {{name}}", {
+                      current: uploadProgress.fileIndex + 1,
+                      total: uploadProgress.fileCount,
+                      name: uploadProgress.fileName,
+                    })}
+                  </p>
+                )}
                 <p className="transfer-form__progress-label">
                   {t("Uploading {{current}} / {{total}}", {
-                    current: formatBytes(uploadProgress.loaded),
-                    total: formatBytes(uploadProgress.total),
+                    current: formatBytes(uploadProgress.totalLoaded),
+                    total: formatBytes(uploadProgress.totalTotal),
                   })}
                 </p>
                 <div
                   className="transfer-form__progress-bar"
                   role="progressbar"
                   aria-valuenow={Math.round(
-                    (uploadProgress.loaded / uploadProgress.total) * 100,
+                    (uploadProgress.totalLoaded / uploadProgress.totalTotal) *
+                      100,
                   )}
                   aria-valuemin={0}
                   aria-valuemax={100}
@@ -296,14 +350,17 @@ export function TransferForm({
                     className="transfer-form__progress-fill"
                     style={{
                       width: `${Math.round(
-                        (uploadProgress.loaded / uploadProgress.total) * 100,
+                        (uploadProgress.totalLoaded /
+                          uploadProgress.totalTotal) *
+                          100,
                       )}%`,
                     }}
                   />
                 </div>
                 <p className="transfer-form__progress-percent">
                   {Math.round(
-                    (uploadProgress.loaded / uploadProgress.total) * 100,
+                    (uploadProgress.totalLoaded / uploadProgress.totalTotal) *
+                      100,
                   )}
                   %
                 </p>

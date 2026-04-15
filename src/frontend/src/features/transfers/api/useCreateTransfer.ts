@@ -5,30 +5,41 @@ import type { TransferDetail } from "@/features/api/types";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Flow:
-//  1. POST /transfers/ — metadata only (title, filename, size, mime_type,
-//     expires_in_days). Backend creates the Transfer row, initiates the S3
-//     multipart upload, returns the upload_id + chunk_size.
-//  2. MultipartUploader slices the file, asks /transfers/{id}/sign-part/ for
-//     a presigned URL per chunk, PUTs each chunk directly to S3.
-//  3. POST /transfers/{id}/complete-upload/ with the list of {PartNumber,
-//     ETag}. Backend calls complete_multipart_upload on S3 and returns the
-//     full TransferDetail.
-//  4. If anything throws, POST /transfers/{id}/abort-upload/ to clean up.
+//  1. POST /transfers/ — sends transfer-level metadata + files array in one
+//     call. Backend creates the Transfer (no public_token yet), creates all
+//     TransferFiles, and initiates one S3 multipart upload per file, in a
+//     single transaction. Returns the transfer id + chunk size + a parallel
+//     array of per-file upload descriptors.
+//  2. For each file sequentially:
+//     2a. Instantiate a MultipartUploader that slices the file and pushes
+//         its chunks to S3 directly via presigned URLs obtained from
+//         /transfers/{id}/sign-part/
+//     2b. POST /transfers/{id}/complete-upload/ with the {PartNumber, ETag}
+//         list.
+//  3. POST /transfers/{id}/finalize/ — atomic transition that generates the
+//     public_token, sets upload_completed_at, emits TRANSFER_CREATED, and
+//     returns the finalized transfer detail.
+//  4. On any error mid-flow: POST /transfers/{id}/abort-upload/ on the
+//     transfer — backend aborts every pending multipart upload and drops
+//     the whole transfer (all-or-nothing semantics).
 
 interface CreateTransferInput {
   title: string;
   expires_in_days: number;
-  file: File;
+  files: File[];
   password?: string;
 }
 
-interface InitiateResponse {
-  transfer_id: string;
+interface CreateFileDescriptor {
   transfer_file_id: string;
   upload_id: string;
   s3_key: string;
+}
+
+interface CreateResponse {
+  transfer_id: string;
   chunk_size: number;
-  public_token: string;
+  files: CreateFileDescriptor[];
 }
 
 interface SignPartResponse {
@@ -36,12 +47,18 @@ interface SignPartResponse {
   part_number: number;
 }
 
-export interface UploadHandle {
-  abort: () => void;
+export interface AggregateProgress {
+  fileIndex: number;
+  fileCount: number;
+  fileName: string;
+  fileLoaded: number;
+  fileTotal: number;
+  totalLoaded: number;
+  totalTotal: number;
 }
 
 export function useCreateTransfer(opts?: {
-  onProgress?: (loaded: number, total: number) => void;
+  onProgress?: (progress: AggregateProgress) => void;
 }) {
   const queryClient = useQueryClient();
   const uploaderRef = useRef<MultipartUploader | null>(null);
@@ -52,77 +69,112 @@ export function useCreateTransfer(opts?: {
 
   const mutation = useMutation({
     mutationFn: async (input: CreateTransferInput): Promise<TransferDetail> => {
-      // Step 1 — initiate
-      const initiate = await apiFetch<InitiateResponse>("/transfers/", {
+      if (input.files.length === 0) {
+        throw new Error("No file selected");
+      }
+
+      // Step 1 — create the transfer and initiate multipart uploads for
+      // every file in one call.
+      const created = await apiFetch<CreateResponse>("/transfers/", {
         method: "POST",
         body: JSON.stringify({
           title: input.title,
           expires_in_days: input.expires_in_days,
-          filename: input.file.name,
-          size: input.file.size,
-          mime_type: input.file.type || "application/octet-stream",
           ...(input.password ? { password: input.password } : {}),
+          files: input.files.map((f) => ({
+            filename: f.name,
+            size: f.size,
+            mime_type: f.type || "application/octet-stream",
+          })),
         }),
       });
 
-      // Step 2 — upload parts to S3 directly
-      const uploader = new MultipartUploader({
-        file: input.file,
-        chunkSize: initiate.chunk_size,
-        parallelism: 4,
-        signPart: async (partNumber) => {
-          const response = await apiFetch<SignPartResponse>(
-            `/transfers/${initiate.transfer_id}/sign-part/`,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                transfer_file_id: initiate.transfer_file_id,
-                part_number: partNumber,
-              }),
-            },
-          );
-          return response.url;
-        },
-        onProgress: opts?.onProgress,
-      });
-      uploaderRef.current = uploader;
+      const totalTotal = input.files.reduce((acc, f) => acc + f.size, 0);
+      const priorLoadedByIndex: number[] = new Array(input.files.length).fill(0);
 
-      let parts;
-      try {
-        parts = await uploader.upload();
-      } catch (err) {
-        // Best-effort cleanup: tell the backend to abort the S3 upload and
-        // delete the partial rows. We swallow any error here because the
-        // original upload error is what we want to surface.
+      const abortTransfer = async () => {
         try {
           await apiFetch(
-            `/transfers/${initiate.transfer_id}/abort-upload/`,
+            `/transfers/${created.transfer_id}/abort-upload/`,
+            { method: "POST" },
+          );
+        } catch {
+          // best-effort
+        }
+      };
+
+      try {
+        // Step 2 — upload each file's chunks sequentially. Within a file the
+        // MultipartUploader parallelises chunks internally.
+        for (let i = 0; i < input.files.length; i++) {
+          const file = input.files[i];
+          const descriptor = created.files[i];
+
+          const uploader = new MultipartUploader({
+            file,
+            chunkSize: created.chunk_size,
+            parallelism: 4,
+            signPart: async (partNumber) => {
+              const response = await apiFetch<SignPartResponse>(
+                `/transfers/${created.transfer_id}/sign-part/`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    transfer_file_id: descriptor.transfer_file_id,
+                    part_number: partNumber,
+                  }),
+                },
+              );
+              return response.url;
+            },
+            onProgress: (loaded, total) => {
+              priorLoadedByIndex[i] = loaded;
+              const totalLoaded = priorLoadedByIndex.reduce((a, b) => a + b, 0);
+              opts?.onProgress?.({
+                fileIndex: i,
+                fileCount: input.files.length,
+                fileName: file.name,
+                fileLoaded: loaded,
+                fileTotal: total,
+                totalLoaded,
+                totalTotal,
+              });
+            },
+          });
+          uploaderRef.current = uploader;
+
+          let parts;
+          try {
+            parts = await uploader.upload();
+          } finally {
+            uploaderRef.current = null;
+          }
+
+          priorLoadedByIndex[i] = file.size;
+          await apiFetch(
+            `/transfers/${created.transfer_id}/complete-upload/`,
             {
               method: "POST",
               body: JSON.stringify({
-                transfer_file_id: initiate.transfer_file_id,
+                transfer_file_id: descriptor.transfer_file_id,
+                parts,
               }),
             },
           );
-        } catch {
-          // ignore
         }
+      } catch (err) {
+        await abortTransfer();
         throw err;
-      } finally {
-        uploaderRef.current = null;
       }
 
-      // Step 3 — complete
-      return apiFetch<TransferDetail>(
-        `/transfers/${initiate.transfer_id}/complete-upload/`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            transfer_file_id: initiate.transfer_file_id,
-            parts,
-          }),
-        },
+      // Step 3 — finalize the transfer. This generates the public token,
+      // marks the transfer as complete, and returns the full detail.
+      const finalized = await apiFetch<TransferDetail>(
+        `/transfers/${created.transfer_id}/finalize/`,
+        { method: "POST" },
       );
+
+      return finalized;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transfers"] });

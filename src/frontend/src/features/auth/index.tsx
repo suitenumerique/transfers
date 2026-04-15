@@ -65,18 +65,81 @@ export function loginPopup(): Promise<void> {
 
     let channel: BroadcastChannel | null = null;
     let timeout: number | null = null;
+    let focusGrace: number | null = null;
+    let settled = false;
 
     const cleanup = () => {
       window.removeEventListener("message", messageHandler);
+      window.removeEventListener("focus", focusHandler);
+      window.removeEventListener("blur", blurHandler);
       if (channel) channel.close();
       if (timeout !== null) window.clearTimeout(timeout);
+      if (focusGrace !== null) window.clearTimeout(focusGrace);
     };
+
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const settleReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    // Popup-close detection via parent focus.
+    //
+    // We can't poll `popup.closed` directly: the OIDC provider sets
+    // `Cross-Origin-Opener-Policy: same-origin`, which severs the popup
+    // handle and makes `popup.closed` read true for the entire time the
+    // popup sits on the provider — not just transiently. Polling therefore
+    // produces false positives on legitimate logins.
+    //
+    // The signal we use instead: while the popup is the active window, our
+    // parent window is blurred. The instant the user closes the popup (or
+    // switches tabs), focus returns to the parent. We then start a 2 s
+    // grace window — long enough for the user to Alt+Tab back to the popup
+    // if they only switched momentarily — and, at the end of it, check
+    // `popup.closed`. By that point the popup is really gone (or the user
+    // is back on the parent intentionally), so the reading is trustworthy.
+    const clearFocusGrace = () => {
+      if (focusGrace !== null) {
+        window.clearTimeout(focusGrace);
+        focusGrace = null;
+      }
+    };
+
+    const focusHandler = () => {
+      if (settled) return;
+      clearFocusGrace();
+      focusGrace = window.setTimeout(() => {
+        focusGrace = null;
+        // We can't force-close a popup sitting on a Cross-Origin-Opener-
+        // Policy: same-origin page — both `popup.close()` and
+        // `popup.location.href = ...` become no-ops from the parent once
+        // the browsing context has been severed. Every OIDC popup library
+        // (Auth0, Firebase, etc.) hits the same limitation. The best we
+        // can do here is unstick our own UI and rely on a UI hint telling
+        // the user to close the orphaned window.
+        settleReject(new Error("popup-closed"));
+      }, 800);
+    };
+
+    const blurHandler = () => {
+      clearFocusGrace();
+    };
+
+    window.addEventListener("focus", focusHandler);
+    window.addEventListener("blur", blurHandler);
 
     const messageHandler = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       if (!e.data || e.data.type !== POPUP_MESSAGE) return;
-      cleanup();
-      resolve();
+      settleResolve();
     };
     window.addEventListener("message", messageHandler);
 
@@ -84,14 +147,12 @@ export function loginPopup(): Promise<void> {
       channel = new BroadcastChannel(POPUP_NAME);
       channel.onmessage = (e) => {
         if (!e.data || e.data.type !== POPUP_MESSAGE) return;
-        cleanup();
-        resolve();
+        settleResolve();
       };
     }
 
     timeout = window.setTimeout(() => {
-      cleanup();
-      reject(new Error("popup-timeout"));
+      settleReject(new Error("popup-timeout"));
     }, AUTH_POPUP_TIMEOUT_MS);
   });
 }

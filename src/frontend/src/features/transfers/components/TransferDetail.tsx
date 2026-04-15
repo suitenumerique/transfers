@@ -34,7 +34,9 @@ export function TransferDetail({
     [transfer.id],
   );
 
-  const downloadUrl = `${window.location.origin}/t/${transfer.public_token}`;
+  const downloadUrl = transfer.public_token
+    ? `${window.location.origin}/t/${transfer.public_token}`
+    : "";
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(downloadUrl);
