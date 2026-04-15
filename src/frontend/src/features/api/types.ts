@@ -7,8 +7,8 @@ export interface TransferListItem {
   expires_at: string;
   revoked_at: string | null;
   created_at: string;
-  filename: string;
-  filesize: number;
+  file_count: number;
+  total_size: number;
   consulted: boolean;
   downloaded: boolean;
 }
@@ -27,7 +27,8 @@ export interface TransferDetail {
   status: "active" | "expired" | "revoked";
   sensitive: boolean;
   has_password: boolean;
-  public_token: string;
+  public_token: string | null;
+  upload_completed_at: string | null;
   expires_at: string;
   revoked_at: string | null;
   files_deleted_at: string | null;

@@ -114,3 +114,12 @@ def delete_object(key: str) -> None:
         client.delete_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
     except botocore.exceptions.ClientError:
         pass
+
+
+def head_object_size(key: str) -> int:
+    """Return the actual size (ContentLength) of an object in the bucket."""
+    client = get_s3_client()
+    response = client.head_object(
+        Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key
+    )
+    return int(response["ContentLength"])

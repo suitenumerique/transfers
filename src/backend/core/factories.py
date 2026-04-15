@@ -1,5 +1,6 @@
 """Core application factories."""
 
+import secrets
 import uuid
 from datetime import timedelta
 
@@ -35,6 +36,10 @@ class TransferFactory(factory.django.DjangoModelFactory):
     title = factory.Faker("sentence", nb_words=4)
     expires_at = factory.LazyFunction(lambda: timezone.now() + timedelta(days=7))
     status = TransferStatus.ACTIVE
+    # By default, factories produce finalized transfers (public_token set,
+    # upload_completed_at set). Override in tests that need a pending one.
+    public_token = factory.LazyFunction(lambda: secrets.token_urlsafe(32))
+    upload_completed_at = factory.LazyFunction(timezone.now)
 
 
 class TransferFileFactory(factory.django.DjangoModelFactory):

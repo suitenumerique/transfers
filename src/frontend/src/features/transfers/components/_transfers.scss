@@ -456,6 +456,70 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
+  &__progress-sublabel {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--xs);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--2xs);
+  }
+
+  &__file-item {
+    display: flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
+    background: var(--c--contextuals--background--surface--neutral--secondary, #f0f2f7);
+    border-radius: 4px;
+  }
+
+  &__file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__file-size {
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    font-size: var(--c--globals--font--sizes--sm);
+    flex-shrink: 0;
+  }
+
+  &__file-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    &:hover:not(:disabled) {
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+    }
+  }
+
   &__progress-bar {
     width: 360px;
     max-width: 80vw;

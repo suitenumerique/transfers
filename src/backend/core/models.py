@@ -194,7 +194,18 @@ class Transfer(BaseModel):
         max_length=64,
         unique=True,
         db_index=True,
-        default=_generate_public_token,
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Set once the transfer is finalized (all files uploaded). "
+        "Until then, the transfer has no public link.",
+    )
+    upload_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set once all TransferFile uploads have been completed and "
+        "the transfer has been finalized. Until then, the transfer is not "
+        "listed, not downloadable, and has no public token.",
     )
     sensitive = models.BooleanField(
         default=False,
@@ -213,7 +224,7 @@ class Transfer(BaseModel):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return self.title or f"Transfer {self.public_token[:8]}"
+        return self.title or f"Transfer {self.id}"
 
     @property
     def is_expired(self) -> bool:
@@ -234,9 +245,14 @@ class Transfer(BaseModel):
         return self.status == TransferStatus.EXPIRED and not self.files_deleted
 
     @property
+    def is_finalized(self) -> bool:
+        return self.upload_completed_at is not None
+
+    @property
     def is_accessible(self) -> bool:
         return (
-            self.status == TransferStatus.ACTIVE
+            self.is_finalized
+            and self.status == TransferStatus.ACTIVE
             and not self.is_expired
             and not self.files_deleted
         )
