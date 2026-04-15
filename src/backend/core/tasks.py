@@ -10,7 +10,10 @@ from celery import shared_task
 
 from core.enums import ActorType, TransferEventType, TransferStatus
 from core.models import Transfer, TransferEvent
-from core.services import s3 as s3_service
+from core.services.email import (
+    notify_owner_file_downloaded,
+    notify_owner_link_opened,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +75,7 @@ def delete_expired_transfer_files_task():
     count = 0
 
     for transfer in transfers:
-        for tf in transfer.files.all():
-            try:
-                s3_service.delete_object(tf.s3_key)
-            except Exception:
-                logger.exception(
-                    "Failed to delete S3 object %s for transfer %s",
-                    tf.s3_key,
-                    transfer.id,
-                )
+        transfer.delete_s3_objects()
 
         transfer.files_deleted_at = timezone.now()
         transfer.save(update_fields=["files_deleted_at", "updated_at"])
@@ -114,16 +109,7 @@ def cleanup_abandoned_uploads_task():
 
     count = 0
     for transfer in abandoned:
-        for tf in transfer.files.all():
-            if tf.upload_id:
-                try:
-                    s3_service.abort_multipart_upload(tf.s3_key, tf.upload_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to abort multipart upload %s for %s",
-                        tf.upload_id,
-                        tf.s3_key,
-                    )
+        transfer.abort_pending_uploads()
         transfer.delete()
         count += 1
 
@@ -142,9 +128,6 @@ def send_link_opened_notification(transfer_id):
         )
     except Transfer.DoesNotExist:
         return
-
-    from core.services.email import notify_owner_link_opened
-
     notify_owner_link_opened(transfer)
 
 
@@ -155,7 +138,4 @@ def send_file_downloaded_notification(transfer_id, filename):
         transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
     except Transfer.DoesNotExist:
         return
-
-    from core.services.email import notify_owner_file_downloaded
-
     notify_owner_file_downloaded(transfer, filename)
