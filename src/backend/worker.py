@@ -17,8 +17,7 @@ install(check_options=True)
 
 from transferts.celery_app import app  # pylint: disable=wrong-import-position
 
-ALL_QUEUES = ["default"]
-DEFAULT_QUEUES = ALL_QUEUES
+DEFAULT_QUEUES = ["default"]
 
 
 def parse_args():

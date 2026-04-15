@@ -123,9 +123,6 @@ class Base(Configuration):
     TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
         30, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
     )
-    TRANSFER_MAX_EXPIRY_DAYS = values.PositiveIntegerValue(
-        90, environ_name="TRANSFER_MAX_EXPIRY_DAYS", environ_prefix=None
-    )
     TRANSFER_EXPIRY_CHOICES = [7, 30, 90]
     TRANSFER_FILE_GRACE_PERIOD_DAYS = values.PositiveIntegerValue(
         30,
