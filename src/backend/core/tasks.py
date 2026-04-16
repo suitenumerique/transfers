@@ -13,6 +13,7 @@ from core.models import Transfer, TransferEvent
 from core.services.email import (
     notify_owner_file_downloaded,
     notify_owner_link_opened,
+    send_recipient_invitation,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,38 @@ def cleanup_abandoned_uploads_task():
 
     if count:
         logger.info("Cleaned up %d abandoned transfer(s).", count)
+
+
+@shared_task
+def send_recipient_invitations_task(transfer_id):
+    """Send invitation emails to all recipients of an email-mode transfer."""
+    try:
+        transfer = (
+            Transfer.objects.select_related("owner")
+            .get(id=transfer_id)
+        )
+    except Transfer.DoesNotExist:
+        return
+
+    for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
+        try:
+            send_recipient_invitation(transfer, recipient)
+            recipient.email_sent_at = timezone.now()
+            recipient.save(update_fields=["email_sent_at", "updated_at"])
+            TransferEvent.objects.create(
+                transfer_id=transfer.id,
+                recipient_id=recipient.id,
+                event_type=TransferEventType.EMAIL_SENT,
+                actor_type=ActorType.AGENT,
+                actor_id=transfer.owner_id,
+                payload={"email": recipient.email},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send invitation to %s for transfer %s",
+                recipient.email,
+                transfer_id,
+            )
 
 
 @shared_task

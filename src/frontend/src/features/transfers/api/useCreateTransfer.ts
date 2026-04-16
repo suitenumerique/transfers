@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
-import type { TransferDetail } from "@/features/api/types";
+import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Flow:
@@ -28,6 +28,8 @@ interface CreateTransferInput {
   expires_in_days: number;
   files: File[];
   password?: string;
+  sharing_mode?: SharingMode;
+  recipients?: string[];
 }
 
 interface CreateFileDescriptor {
@@ -80,6 +82,8 @@ export function useCreateTransfer(opts?: {
         body: JSON.stringify({
           title: input.title,
           expires_in_days: input.expires_in_days,
+          sharing_mode: input.sharing_mode ?? "link",
+          ...(input.recipients?.length ? { recipients: input.recipients } : {}),
           ...(input.password ? { password: input.password } : {}),
           files: input.files.map((f) => ({
             filename: f.name,

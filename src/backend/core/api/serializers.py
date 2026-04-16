@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from core import models
+from core.enums import SharingMode
 
 
 class AbilitiesModelSerializer(serializers.ModelSerializer):
@@ -71,6 +72,13 @@ class UserWithoutAbilitiesSerializer(UserSerializer):
 # -- Transfer serializers --
 
 
+class TransferRecipientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.TransferRecipient
+        fields = ["id", "email", "email_sent_at"]
+        read_only_fields = fields
+
+
 class TransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
@@ -116,6 +124,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "status",
+            "sharing_mode",
             "sensitive",
             "has_password",
             "expires_at",
@@ -133,6 +142,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
     """Full serializer for transfer detail."""
 
     files = TransferFileSerializer(many=True, read_only=True)
+    recipients = TransferRecipientSerializer(many=True, read_only=True)
     has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -141,6 +151,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "status",
+            "sharing_mode",
             "sensitive",
             "has_password",
             "public_token",
@@ -150,6 +161,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "files_deleted_at",
             "created_at",
             "files",
+            "recipients",
         ]
         read_only_fields = fields
 
@@ -199,7 +211,31 @@ class TransferCreateSerializer(serializers.Serializer):
         max_length=128,
         default="",
     )
+    sharing_mode = serializers.ChoiceField(
+        choices=SharingMode.choices,
+        required=False,
+        default=SharingMode.LINK,
+    )
+    recipients = serializers.ListField(
+        child=serializers.EmailField(),
+        required=False,
+        default=list,
+        max_length=50,
+    )
     files = _TransferFileCreateSerializer(many=True, required=True)
+
+    def validate(self, attrs):
+        mode = attrs.get("sharing_mode", SharingMode.LINK)
+        recipients = attrs.get("recipients", [])
+        if mode == SharingMode.EMAIL and not recipients:
+            raise serializers.ValidationError(
+                {"recipients": "At least one recipient is required in email mode."}
+            )
+        if mode == SharingMode.LINK and recipients:
+            raise serializers.ValidationError(
+                {"recipients": "Recipients are not allowed in link mode."}
+            )
+        return attrs
 
     def validate_files(self, value):
         if not value:

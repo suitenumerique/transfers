@@ -10,6 +10,7 @@ import {
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import { Icon, ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import type { SharingMode } from "@/features/api/types";
 import {
   useCreateTransfer,
   type AggregateProgress,
@@ -17,6 +18,7 @@ import {
 import { generatePassphrase } from "../utils/generatePassword";
 import { stashPassword } from "../utils/passwordStash";
 import { FileDropZone } from "./FileDropZone";
+import { RecipientInput } from "./RecipientInput";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -57,6 +59,8 @@ export function TransferForm({
   const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
+  const [sharingMode, setSharingMode] = useState<SharingMode>("link");
+  const [recipients, setRecipients] = useState<string[]>([]);
   const [passwordEnabled, setPasswordEnabled] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -102,6 +106,8 @@ export function TransferForm({
       expires_in_days: expiresInDays,
       files,
       password: passwordToSend,
+      sharing_mode: sharingMode,
+      recipients: sharingMode === "email" ? recipients : undefined,
     });
     if (passwordToSend) stashPassword(created.id, passwordToSend);
     await router.push(`/transfers/${created.id}`);
@@ -122,6 +128,10 @@ export function TransferForm({
     if (files.length === 0) return;
     setAuthError(null);
     setPasswordError(null);
+
+    if (sharingMode === "email" && recipients.length === 0) {
+      return;
+    }
 
     if (passwordEnabled && password.length < 8) {
       setPasswordError(t("Password must be at least 8 characters."));
@@ -205,6 +215,39 @@ export function TransferForm({
           disabled={!hasFiles}
           fullWidth
         />
+
+        <fieldset className="transfer-form__sharing-toggle" disabled={!hasFiles}>
+          <legend className="transfer-form__sharing-legend">
+            {t("Sharing mode")}
+          </legend>
+          <div className="transfer-form__sharing-buttons">
+            <button
+              type="button"
+              className={`transfer-form__sharing-btn${sharingMode === "link" ? " transfer-form__sharing-btn--active" : ""}`}
+              onClick={() => {
+                setSharingMode("link");
+                setRecipients([]);
+              }}
+            >
+              {t("Link")}
+            </button>
+            <button
+              type="button"
+              className={`transfer-form__sharing-btn${sharingMode === "email" ? " transfer-form__sharing-btn--active" : ""}`}
+              onClick={() => setSharingMode("email")}
+            >
+              {t("Email")}
+            </button>
+          </div>
+        </fieldset>
+
+        {sharingMode === "email" && (
+          <RecipientInput
+            recipients={recipients}
+            onChange={setRecipients}
+            disabled={!hasFiles || busy}
+          />
+        )}
 
         <Select
           label={t("Expiration")}
@@ -297,9 +340,13 @@ export function TransferForm({
         ) : (
           <Button
             type="submit"
-            disabled={createTransfer.isPending || !hasFiles}
+            disabled={createTransfer.isPending || !hasFiles || (sharingMode === "email" && recipients.length === 0)}
           >
-            {createTransfer.isPending ? t("Sending...") : t("Create link")}
+            {createTransfer.isPending
+              ? t("Sending...")
+              : sharingMode === "email"
+                ? t("Send")
+                : t("Create link")}
           </Button>
         )}
       </div>

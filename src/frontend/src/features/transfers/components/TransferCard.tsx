@@ -19,6 +19,11 @@ export function TransferCard({ transfer }: { transfer: TransferListItem }) {
         <span className="transfer-card__title">
           {transfer.title || t("Untitled")}
         </span>
+        {transfer.sharing_mode === "email" && (
+          <span title={t("Sent by email")} aria-label={t("Sent by email")}>
+            ✉
+          </span>
+        )}
         {transfer.has_password && (
           <span title={t("Password protected")} aria-label={t("Password protected")}>
             🔒

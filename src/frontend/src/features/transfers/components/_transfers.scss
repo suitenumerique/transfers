@@ -326,6 +326,166 @@
   }
 }
 
+// Transfer Detail: recipients section
+.transfer-detail__recipients {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.transfer-detail__recipient {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--c--globals--spacings--2xs) 0;
+  border-bottom: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.transfer-detail__recipient-status {
+  color: var(--c--contextuals--content--semantic--success--primary, #18753c);
+  font-size: var(--c--globals--font--sizes--lg);
+  font-weight: 700;
+
+  &--pending {
+    animation: recipient-pulse 1.2s ease-in-out infinite;
+    color: var(--c--contextuals--content--semantic--brand--primary);
+  }
+}
+
+@keyframes recipient-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+// Sharing mode toggle
+.transfer-form__sharing-toggle {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.transfer-form__sharing-legend {
+  font-weight: 600;
+  font-size: var(--c--globals--font--sizes--sm);
+  margin-bottom: var(--c--globals--spacings--2xs);
+}
+
+.transfer-form__sharing-buttons {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.transfer-form__sharing-btn {
+  padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--md);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--c--globals--font--sizes--sm);
+  font-weight: 500;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  transition: background 150ms ease, color 150ms ease;
+
+  &:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  &--active {
+    background: var(--c--contextuals--background--semantic--brand--primary);
+    color: #fff;
+
+    &:hover:not(:disabled) {
+      background: var(--c--contextuals--background--semantic--brand--primary);
+    }
+  }
+}
+
+// Recipient Input (chip-based email input)
+.recipient-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--2xs);
+
+  &__label {
+    font-weight: 600;
+    font-size: var(--c--globals--font--sizes--sm);
+  }
+
+  &__box {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
+    border: 1px solid var(--c--contextuals--border--surface--primary);
+    border-radius: 4px;
+    min-height: 40px;
+    cursor: text;
+    align-items: center;
+
+    &:focus-within {
+      border-color: var(--c--contextuals--border--semantic--brand--primary);
+      outline: 2px solid var(--c--contextuals--border--semantic--brand--tertiary);
+      outline-offset: -1px;
+    }
+  }
+
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: var(--c--contextuals--background--surface--neutral--secondary, #f0f2f7);
+    border-radius: 4px;
+    font-size: var(--c--globals--font--sizes--sm);
+    max-width: 100%;
+  }
+
+  &__chip-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    flex-shrink: 0;
+
+    &:hover:not(:disabled) {
+      background: rgba(0, 0, 0, 0.1);
+    }
+  }
+
+  &__input {
+    flex: 1;
+    min-width: 150px;
+    border: 0;
+    outline: 0;
+    font: inherit;
+    font-size: var(--c--globals--font--sizes--sm);
+    padding: 4px 0;
+    background: transparent;
+  }
+
+  &__error {
+    margin: 0;
+    color: var(--c--contextuals--content--semantic--danger--primary);
+    font-size: var(--c--globals--font--sizes--sm);
+  }
+}
+
 // Transfer Timeline
 .transfer-timeline {
   h2 {

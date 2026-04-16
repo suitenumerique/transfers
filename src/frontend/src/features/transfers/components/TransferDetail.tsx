@@ -150,6 +150,22 @@ export function TransferDetail({
         )}
       </div>
 
+      {transfer.sharing_mode === "email" && transfer.recipients.length > 0 && (
+        <section className="transfer-detail__section">
+          <h2>{t("Recipients ({{count}})", { count: transfer.recipients.length })}</h2>
+          <ul className="transfer-detail__recipients">
+            {transfer.recipients.map((r) => (
+              <li key={r.id} className="transfer-detail__recipient">
+                <span>{r.email}</span>
+                <span className={`transfer-detail__recipient-status${r.email_sent_at ? "" : " transfer-detail__recipient-status--pending"}`}>
+                  {r.email_sent_at ? "✓" : "●"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="transfer-detail__section">
         <h2>{t("Files ({{count}})", { count: transfer.files.length })}</h2>
         <ul className="transfer-detail__files">

@@ -1,7 +1,16 @@
+export type SharingMode = "email" | "link";
+
+export interface TransferRecipient {
+  id: string;
+  email: string;
+  email_sent_at: string | null;
+}
+
 export interface TransferListItem {
   id: string;
   title: string;
   status: "active" | "expired" | "revoked";
+  sharing_mode: SharingMode;
   sensitive: boolean;
   has_password: boolean;
   expires_at: string;
@@ -25,6 +34,7 @@ export interface TransferDetail {
   id: string;
   title: string;
   status: "active" | "expired" | "revoked";
+  sharing_mode: SharingMode;
   sensitive: boolean;
   has_password: boolean;
   public_token: string | null;
@@ -34,6 +44,7 @@ export interface TransferDetail {
   files_deleted_at: string | null;
   created_at: string;
   files: TransferFile[];
+  recipients: TransferRecipient[];
 }
 
 export interface TransferEvent {
