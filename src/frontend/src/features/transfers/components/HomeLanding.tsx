@@ -1,4 +1,6 @@
 import { useTranslation } from "react-i18next";
+import { ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import { login } from "@/features/auth";
 
 export function HomeLanding() {
   const { t } = useTranslation();
@@ -18,6 +20,7 @@ export function HomeLanding() {
           "The sovereign file sharing service for French local government agents.",
         )}
       </p>
+      <ProConnectButton onClick={login} />
     </aside>
   );
 }

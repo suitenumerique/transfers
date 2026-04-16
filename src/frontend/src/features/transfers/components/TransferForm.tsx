@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,7 +9,7 @@ import {
   Select,
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
-import { Icon, ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import { Icon } from "@gouvfr-lasuite/ui-kit";
 import type { SharingMode } from "@/features/api/types";
 import {
   useCreateTransfer,
@@ -33,21 +33,7 @@ function stripExtension(filename: string): string {
   return filename.replace(/\.[^.]+$/, "");
 }
 
-interface TransferFormProps {
-  // When present, called before submitting if the user is not yet
-  // authenticated. Must resolve once auth has been refreshed.
-  requireAuth?: () => Promise<void>;
-  // Notifies the parent page when the form enters/leaves the busy state
-  // (auth in progress or transfer being created). Lets the page hide
-  // sections that would flash in between the popup closing and the
-  // route change.
-  onBusyChange?: (busy: boolean) => void;
-}
-
-export function TransferForm({
-  requireAuth,
-  onBusyChange,
-}: TransferFormProps = {}) {
+export function TransferForm() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
   const [uploadProgress, setUploadProgress] = useState<AggregateProgress | null>(
@@ -61,17 +47,14 @@ export function TransferForm({
   const [expiresInDays, setExpiresInDays] = useState<number>(30);
   const [sharingMode, setSharingMode] = useState<SharingMode>("link");
   const [recipients, setRecipients] = useState<string[]>([]);
+  const [hasValidPending, setHasValidPending] = useState(false);
   const [passwordEnabled, setPasswordEnabled] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [authing, setAuthing] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
 
   const handleFilesChange = (incoming: File[]) => {
     setFiles((prev) => {
-      // De-duplicate on (name, size, lastModified) — same signature the browser
-      // uses when you re-pick the same file; good enough for our purposes.
       const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
       const existing = new Set(prev.map(key));
       const merged = [
@@ -89,47 +72,14 @@ export function TransferForm({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const submitTransfer = async () => {
-    if (files.length === 0) return;
-    setUploadProgress({
-      fileIndex: 0,
-      fileCount: files.length,
-      fileName: files[0].name,
-      fileLoaded: 0,
-      fileTotal: files[0].size,
-      totalLoaded: 0,
-      totalTotal: files.reduce((a, f) => a + f.size, 0),
-    });
-    const passwordToSend = passwordEnabled ? password : undefined;
-    const created = await createTransfer.mutateAsync({
-      title,
-      expires_in_days: expiresInDays,
-      files,
-      password: passwordToSend,
-      sharing_mode: sharingMode,
-      recipients: sharingMode === "email" ? recipients : undefined,
-    });
-    if (passwordToSend) stashPassword(created.id, passwordToSend);
-    await router.push(`/transfers/${created.id}`);
-  };
-
-  // `busy` stays true from the moment the user clicks submit until we have
-  // navigated away to /transfers/{id}. It drives a full-viewport overlay that
-  // hides the transitional state of the home (authenticated list appearing
-  // under the form) between the popup closing and the route change.
-  const busy = authing || createTransfer.isPending;
-
-  useEffect(() => {
-    onBusyChange?.(busy);
-  }, [busy, onBusyChange]);
+  const busy = createTransfer.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (files.length === 0) return;
-    setAuthError(null);
     setPasswordError(null);
 
-    if (sharingMode === "email" && recipients.length === 0) {
+    if (sharingMode === "email" && recipients.length === 0 && !hasValidPending) {
       return;
     }
 
@@ -138,33 +88,28 @@ export function TransferForm({
       return;
     }
 
-    if (requireAuth) {
-      setAuthing(true);
-      try {
-        await requireAuth();
-      } catch (err) {
-        setAuthing(false);
-        const reason = (err as Error).message;
-        setAuthError(
-          reason === "popup-blocked"
-            ? t("Please allow popups to sign in.")
-            : reason === "popup-timeout"
-              ? t("Sign-in timed out.")
-              : reason === "popup-closed"
-                ? t("Sign-in cancelled. If the sign-in window is still open, please close it.")
-                : t("Sign-in was cancelled."),
-        );
-        return;
-      }
-      // Keep authing=true through submit so the overlay stays visible until
-      // the route change takes effect — otherwise the home re-renders the
-      // authed state for a flash before navigation.
-    }
-
     try {
-      await submitTransfer();
+      setUploadProgress({
+        fileIndex: 0,
+        fileCount: files.length,
+        fileName: files[0].name,
+        fileLoaded: 0,
+        fileTotal: files[0].size,
+        totalLoaded: 0,
+        totalTotal: files.reduce((a, f) => a + f.size, 0),
+      });
+      const passwordToSend = passwordEnabled ? password : undefined;
+      const created = await createTransfer.mutateAsync({
+        title,
+        expires_in_days: expiresInDays,
+        files,
+        password: passwordToSend,
+        sharing_mode: sharingMode,
+        recipients: sharingMode === "email" ? recipients : undefined,
+      });
+      if (passwordToSend) stashPassword(created.id, passwordToSend);
+      await router.push(`/transfers/${created.id}`);
     } catch {
-      setAuthing(false);
       setUploadProgress(null);
     }
   };
@@ -245,6 +190,7 @@ export function TransferForm({
           <RecipientInput
             recipients={recipients}
             onChange={setRecipients}
+            onPendingChange={setHasValidPending}
             disabled={!hasFiles || busy}
           />
         )}
@@ -316,39 +262,16 @@ export function TransferForm({
           />
         )}
 
-        {requireAuth ? (
-          <div className="transfer-form__proconnect">
-            <p className="transfer-form__proconnect-lead">
-              {t(
-                "Sign in to create your transfer. The link will be generated right after.",
-              )}
-            </p>
-            <ProConnectButton
-              onClick={() => {
-                void handleSubmit({
-                  preventDefault: () => {},
-                } as React.FormEvent);
-              }}
-              disabled={createTransfer.isPending || authing || !hasFiles}
-            />
-            {(authing || createTransfer.isPending) && (
-              <span className="transfer-form__hint">
-                {authing ? t("Signing in...") : t("Sending...")}
-              </span>
-            )}
-          </div>
-        ) : (
-          <Button
-            type="submit"
-            disabled={createTransfer.isPending || !hasFiles || (sharingMode === "email" && recipients.length === 0)}
-          >
-            {createTransfer.isPending
-              ? t("Sending...")
-              : sharingMode === "email"
-                ? t("Send")
-                : t("Create link")}
-          </Button>
-        )}
+        <Button
+          type="submit"
+          disabled={busy || !hasFiles || (sharingMode === "email" && recipients.length === 0 && !hasValidPending)}
+        >
+          {busy
+            ? t("Sending...")
+            : sharingMode === "email"
+              ? t("Send")
+              : t("Create link")}
+        </Button>
       </div>
 
       {busy && (
@@ -358,15 +281,7 @@ export function TransferForm({
           aria-live="polite"
         >
           <div className="transfer-form__busy-inner">
-            {authing ? (
-              <>
-                <div
-                  className="transfer-form__busy-spinner"
-                  aria-hidden="true"
-                />
-                <p>{t("Signing in...")}</p>
-              </>
-            ) : uploadProgress ? (
+            {uploadProgress ? (
               <>
                 {uploadProgress.fileCount > 1 && (
                   <p className="transfer-form__progress-sublabel">
@@ -435,7 +350,6 @@ export function TransferForm({
         </div>
       )}
 
-      {authError && <Alert type={VariantType.ERROR}>{authError}</Alert>}
       {createTransfer.isError && (
         <Alert type={VariantType.ERROR}>
           {t("Error creating transfer.")}
