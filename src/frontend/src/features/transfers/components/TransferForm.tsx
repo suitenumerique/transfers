@@ -11,6 +11,7 @@ import {
 } from "@gouvfr-lasuite/cunningham-react";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
 import type { SharingMode } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
 import {
   useCreateTransfer,
   type AggregateProgress,
@@ -27,6 +28,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function UsageBar({ currentSize, maxSize }: { currentSize: number; maxSize: number }) {
+  const pct = Math.min((currentSize / maxSize) * 100, 100);
+  const level = pct >= 90 ? "danger" : pct >= 70 ? "warning" : "ok";
+
+  return (
+    <div className="transfer-form__usage">
+      <div className="transfer-form__usage-bar">
+        <div
+          className={`transfer-form__usage-fill transfer-form__usage-fill--${level}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="transfer-form__usage-label">
+        {formatBytes(currentSize)} / {formatBytes(maxSize)}
+      </span>
+    </div>
+  );
+}
+
 const EXPIRY_CHOICES = [7, 30, 90];
 
 function stripExtension(filename: string): string {
@@ -36,6 +56,7 @@ function stripExtension(filename: string): string {
 export function TransferForm() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const config = useConfig();
   const [uploadProgress, setUploadProgress] = useState<AggregateProgress | null>(
     null,
   );
@@ -52,15 +73,53 @@ export function TransferForm() {
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const handleFilesChange = (incoming: File[]) => {
+    setFileError(null);
+
+    // Reject individual files that exceed the per-file limit
+    const oversized = incoming.filter(
+      (f) => f.size > config.TRANSFER_MAX_FILE_SIZE,
+    );
+    if (oversized.length > 0) {
+      setFileError(
+        t("File too large: {{name}} ({{size}}). Maximum: {{max}}.", {
+          name: oversized[0].name,
+          size: formatBytes(oversized[0].size),
+          max: formatBytes(config.TRANSFER_MAX_FILE_SIZE),
+        }),
+      );
+      return;
+    }
+
     setFiles((prev) => {
       const key = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
       const existing = new Set(prev.map(key));
-      const merged = [
-        ...prev,
-        ...incoming.filter((f) => !existing.has(key(f))),
-      ];
+      const newFiles = incoming.filter((f) => !existing.has(key(f)));
+      const merged = [...prev, ...newFiles];
+
+      // Check file count limit
+      if (merged.length > config.TRANSFER_MAX_FILES_PER_TRANSFER) {
+        setFileError(
+          t("Too many files. Maximum: {{max}}.", {
+            max: config.TRANSFER_MAX_FILES_PER_TRANSFER,
+          }),
+        );
+        return prev;
+      }
+
+      // Check total size limit
+      const totalSize = merged.reduce((sum, f) => sum + f.size, 0);
+      if (totalSize > config.TRANSFER_MAX_TOTAL_SIZE) {
+        setFileError(
+          t("Total size exceeds the limit of {{max}}.", {
+            max: formatBytes(config.TRANSFER_MAX_TOTAL_SIZE),
+          }),
+        );
+        return prev;
+      }
+
       return merged;
     });
     if (incoming.length > 0 && title.trim() === "") {
@@ -69,6 +128,7 @@ export function TransferForm() {
   };
 
   const removeFile = (index: number) => {
+    setFileError(null);
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
@@ -126,24 +186,34 @@ export function TransferForm() {
       <FileDropZone files={files} onChange={handleFilesChange} />
 
       {hasFiles && (
-        <ul className="transfer-form__file-list" aria-label={t("Selected files")}>
-          {files.map((f, i) => (
-            <li key={`${f.name}-${f.size}-${f.lastModified}`} className="transfer-form__file-item">
-              <span className="transfer-form__file-name">{f.name}</span>
-              <span className="transfer-form__file-size">{formatBytes(f.size)}</span>
-              <button
-                type="button"
-                className="transfer-form__file-remove"
-                onClick={() => removeFile(i)}
-                disabled={busy}
-                aria-label={t("Remove {{name}}", { name: f.name })}
-                title={t("Remove")}
-              >
-                <Icon name="close" />
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="transfer-form__file-list" aria-label={t("Selected files")}>
+            {files.map((f, i) => (
+              <li key={`${f.name}-${f.size}-${f.lastModified}`} className="transfer-form__file-item">
+                <span className="transfer-form__file-name">{f.name}</span>
+                <span className="transfer-form__file-size">{formatBytes(f.size)}</span>
+                <button
+                  type="button"
+                  className="transfer-form__file-remove"
+                  onClick={() => removeFile(i)}
+                  disabled={busy}
+                  aria-label={t("Remove {{name}}", { name: f.name })}
+                  title={t("Remove")}
+                >
+                  <Icon name="close" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <UsageBar
+            currentSize={files.reduce((sum, f) => sum + f.size, 0)}
+            maxSize={config.TRANSFER_MAX_TOTAL_SIZE}
+          />
+        </>
+      )}
+
+      {fileError && (
+        <Alert type={VariantType.ERROR}>{fileError}</Alert>
       )}
 
       <div

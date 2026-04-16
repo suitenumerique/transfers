@@ -28,5 +28,8 @@ class ConfigView(drf.views.APIView):
                 "ENVIRONMENT": getattr(settings, "ENVIRONMENT", ""),
                 "LANGUAGES": getattr(settings, "LANGUAGES", []),
                 "LANGUAGE_CODE": getattr(settings, "LANGUAGE_CODE", "fr"),
+                "TRANSFER_MAX_FILE_SIZE": settings.TRANSFER_MAX_FILE_SIZE,
+                "TRANSFER_MAX_TOTAL_SIZE": settings.TRANSFER_MAX_TOTAL_SIZE,
+                "TRANSFER_MAX_FILES_PER_TRANSFER": settings.TRANSFER_MAX_FILES_PER_TRANSFER,
             }
         )

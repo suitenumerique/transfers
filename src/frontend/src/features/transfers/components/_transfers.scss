@@ -48,7 +48,7 @@
     // When no file is selected, let the dropzone fill the whole column.
     .file-dropzone__area {
       flex: 1;
-      min-height: 0;
+      min-height: 120px;
     }
   }
 
@@ -638,6 +638,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--c--globals--spacings--2xs);
+    max-height: 200px;
+    overflow-y: auto;
   }
 
   &__file-item {
@@ -683,6 +685,45 @@
       cursor: not-allowed;
       opacity: 0.4;
     }
+  }
+
+  &__usage {
+    display: flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+  }
+
+  &__usage-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--c--contextuals--background--surface--neutral--secondary, #e5e7eb);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  &__usage-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 200ms ease;
+
+    &--ok {
+      background: var(--c--contextuals--background--semantic--success--primary, #18753c);
+    }
+
+    &--warning {
+      background: var(--c--contextuals--background--semantic--warning--primary, #d97706);
+    }
+
+    &--danger {
+      background: var(--c--contextuals--background--semantic--danger--primary, #dc2626);
+    }
+  }
+
+  &__usage-label {
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   &__progress-bar {

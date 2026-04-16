@@ -1,31 +1,51 @@
-import { PropsWithChildren, createContext, useContext } from "react";
+import {
+  PropsWithChildren,
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { apiFetch } from "@/features/api/client";
 
-interface AppConfig {
-    ENVIRONMENT: string;
-    LANGUAGES: string[];
-    LANGUAGE_CODE: string;
+export interface AppConfig {
+  ENVIRONMENT: string;
+  LANGUAGES: string[];
+  LANGUAGE_CODE: string;
+  TRANSFER_MAX_FILE_SIZE: number;
+  TRANSFER_MAX_TOTAL_SIZE: number;
+  TRANSFER_MAX_FILES_PER_TRANSFER: number;
 }
 
-const DEFAULT_CONFIG: AppConfig = {
-    ENVIRONMENT: "",
-    LANGUAGES: [],
-    LANGUAGE_CODE: "fr",
-};
-
-const ConfigContext = createContext<AppConfig>(DEFAULT_CONFIG);
+const ConfigContext = createContext<AppConfig | null>(null);
 
 export const ConfigProvider = ({ children }: PropsWithChildren) => {
+  const [config, setConfig] = useState<AppConfig | null>(null);
+
+  useEffect(() => {
+    apiFetch<AppConfig>("/config/")
+      .then((data) => setConfig(data))
+      .catch(() => {
+        // TODO: handle error state
+      });
+  }, []);
+
+  if (!config) {
     return (
-        <ConfigContext.Provider value={DEFAULT_CONFIG}>
-            {children}
-        </ConfigContext.Provider>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <p>Chargement…</p>
+      </div>
     );
+  }
+
+  return (
+    <ConfigContext.Provider value={config}>{children}</ConfigContext.Provider>
+  );
 };
 
-export const useConfig = () => {
-    const config = useContext(ConfigContext);
-    if (!config) {
-        throw new Error("`useConfig` must be used within a `ConfigProvider`.");
-    }
-    return config;
+export const useConfig = (): AppConfig => {
+  const config = useContext(ConfigContext);
+  if (!config) {
+    throw new Error("`useConfig` must be used within a `ConfigProvider`.");
+  }
+  return config;
 };

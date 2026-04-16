@@ -143,5 +143,8 @@
   "{{count}} minutes ago": "il y a {{count}} minutes",
   "{{count}} months ago": "il y a {{count}} mois",
   "{{count}} weeks ago": "il y a {{count}} semaines",
-  "{{count}} years ago": "il y a {{count}} ans"
+  "{{count}} years ago": "il y a {{count}} ans",
+  "File too large: {{name}} ({{size}}). Maximum: {{max}}.": "Fichier trop volumineux : {{name}} ({{size}}). Maximum : {{max}}.",
+  "Too many files. Maximum: {{max}}.": "Trop de fichiers. Maximum : {{max}}.",
+  "Total size exceeds the limit of {{max}}.": "La taille totale dépasse la limite de {{max}}."
 }
