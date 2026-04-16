@@ -134,5 +134,8 @@
   "{{count}} minutes ago": "{{count}} minutes ago",
   "{{count}} months ago": "{{count}} months ago",
   "{{count}} weeks ago": "{{count}} weeks ago",
-  "{{count}} years ago": "{{count}} years ago"
+  "{{count}} years ago": "{{count}} years ago",
+  "File too large: {{name}} ({{size}}). Maximum: {{max}}.": "File too large: {{name}} ({{size}}). Maximum: {{max}}.",
+  "Too many files. Maximum: {{max}}.": "Too many files. Maximum: {{max}}.",
+  "Total size exceeds the limit of {{max}}.": "Total size exceeds the limit of {{max}}."
 }
