@@ -7,12 +7,14 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface RecipientInputProps {
   recipients: string[];
   onChange: (recipients: string[]) => void;
+  onPendingChange?: (hasValidPending: boolean) => void;
   disabled?: boolean;
 }
 
 export function RecipientInput({
   recipients,
   onChange,
+  onPendingChange,
   disabled,
 }: RecipientInputProps) {
   const { t } = useTranslation();
@@ -38,6 +40,7 @@ export function RecipientInput({
     setError(null);
     onChange([...recipients, email]);
     setInputValue("");
+    onPendingChange?.(false);
   };
 
   const removeRecipient = (email: string) => {
@@ -45,9 +48,11 @@ export function RecipientInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      addRecipient(inputValue);
+    if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+      if (inputValue.trim()) {
+        e.preventDefault();
+        addRecipient(inputValue);
+      }
     }
     if (e.key === "Backspace" && inputValue === "" && recipients.length > 0) {
       removeRecipient(recipients[recipients.length - 1]);
@@ -101,8 +106,10 @@ export function RecipientInput({
           className="recipient-input__input"
           value={inputValue}
           onChange={(e) => {
-            setInputValue(e.target.value);
+            const val = e.target.value;
+            setInputValue(val);
             setError(null);
+            onPendingChange?.(EMAIL_RE.test(val.trim()));
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
