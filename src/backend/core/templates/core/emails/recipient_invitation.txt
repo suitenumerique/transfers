@@ -1,0 +1,12 @@
+Bonjour,
+
+{{ sender_name }} vous a envoyé des fichiers via Transferts.
+
+Titre : {{ transfer.title|default:"Sans titre" }}
+
+Accédez aux fichiers : {{ download_url }}
+
+Ce lien expire le {{ transfer.expires_at|date:"d/m/Y" }}.
+
+Cordialement,
+L'équipe Transferts

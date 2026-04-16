@@ -30,6 +30,13 @@ class TransferEventType(models.TextChoices):
     FILES_DELETED = "files_deleted"
 
 
+class SharingMode(models.TextChoices):
+    """How the transfer link is shared."""
+
+    EMAIL = "email", "Email"
+    LINK = "link", "Link"
+
+
 class ActorType(models.TextChoices):
     """Who performed the action."""
 

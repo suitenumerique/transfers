@@ -14,6 +14,7 @@ from timezone_field import TimeZoneField
 
 from core.enums import (
     ActorType,
+    SharingMode,
     TransferEventType,
     TransferStatus,
     UserAbilities,
@@ -203,6 +204,11 @@ class Transfer(BaseModel):
         "the transfer has been finalized. Until then, the transfer is not "
         "listed, not downloadable, and has no public token.",
     )
+    sharing_mode = models.CharField(
+        max_length=5,
+        choices=SharingMode.choices,
+        default=SharingMode.LINK,
+    )
     sensitive = models.BooleanField(
         default=False,
         help_text=(
@@ -286,6 +292,25 @@ class Transfer(BaseModel):
         for tf in self.files.all():
             if tf.s3_key:
                 s3.delete_object(tf.s3_key)
+
+
+class TransferRecipient(BaseModel):
+    """A recipient of a transfer (email mode only)."""
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="recipients",
+    )
+    email = models.EmailField()
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "core_transfer_recipient"
+        unique_together = [("transfer", "email")]
+
+    def __str__(self):
+        return self.email
 
 
 class TransferFile(BaseModel):

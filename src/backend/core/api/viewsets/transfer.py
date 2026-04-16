@@ -26,7 +26,7 @@ from core.api.serializers import (
     TransferSignPartSerializer,
 )
 from core.api.viewsets import Pagination
-from core.enums import ActorType, TransferEventType, TransferStatus
+from core.enums import ActorType, SharingMode, TransferEventType, TransferStatus
 from core.models import _generate_public_token
 from core.services import s3
 
@@ -95,7 +95,7 @@ class TransferViewSet(
             )
         return (
             models.Transfer.objects.filter(owner=self.request.user)
-            .prefetch_related("files")
+            .prefetch_related("files", "recipients")
             .order_by("-created_at")
         )
 
@@ -148,18 +148,29 @@ class TransferViewSet(
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        password = data.get("password") or ""
+        password = data["password"]
         password_hash = make_password(password) if password else ""
+
+        sharing_mode = data["sharing_mode"]
+        recipients = data["recipients"]
 
         with transaction.atomic():
             transfer = models.Transfer.objects.create(
                 owner=request.user,
-                title=data.get("title") or "",
-                sensitive=data.get("sensitive", False),
+                title=data["title"],
+                sensitive=data["sensitive"],
+                sharing_mode=sharing_mode,
                 password_hash=password_hash,
                 expires_at=timezone.now()
                 + timedelta(days=int(data["expires_in_days"])),
             )
+
+            if sharing_mode == SharingMode.EMAIL:
+                for email in recipients:
+                    models.TransferRecipient.objects.create(
+                        transfer=transfer,
+                        email=email,
+                    )
 
             file_descriptors = []
             for file_data in data["files"]:
@@ -167,13 +178,13 @@ class TransferViewSet(
                     f"transfers/{transfer.id}/{uuid.uuid4()}/{file_data['filename']}"
                 )
                 upload_id = s3.create_multipart_upload(
-                    key=s3_key, content_type=file_data.get("mime_type") or ""
+                    key=s3_key, content_type=file_data["mime_type"]
                 )
                 transfer_file = models.TransferFile.objects.create(
                     transfer=transfer,
                     filename=file_data["filename"],
                     size=file_data["size"],
-                    mime_type=file_data.get("mime_type") or "",
+                    mime_type=file_data["mime_type"],
                     s3_key=s3_key,
                     upload_id=upload_id,
                 )
@@ -354,6 +365,13 @@ class TransferViewSet(
                 ]
             )
             _log_event(transfer, TransferEventType.TRANSFER_CREATED, request)
+
+            if transfer.sharing_mode == SharingMode.EMAIL:
+                from core.tasks import send_recipient_invitations_task
+
+                transaction.on_commit(
+                    lambda: send_recipient_invitations_task.delay(str(transfer.id))
+                )
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)
