@@ -37,17 +37,15 @@ class TransferAdmin(admin.ModelAdmin):
         "owner",
         "status",
         "expires_at",
-        "files_deleted_at",
         "created_at",
     )
-    list_filter = ("status", "sensitive", "files_deleted_at")
+    list_filter = ("status", "sensitive")
     search_fields = ("id", "title", "public_token", "owner__email")
     readonly_fields = (
         "id",
         "public_token",
         "created_at",
         "updated_at",
-        "files_deleted_at",
     )
     date_hierarchy = "created_at"
     inlines = [TransferFileInline]

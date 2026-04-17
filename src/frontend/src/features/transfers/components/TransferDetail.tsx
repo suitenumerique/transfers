@@ -11,7 +11,6 @@ import {
 import { Icon } from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { useRevokeTransfer } from "../api/useRevokeTransfer";
-import { useReactivateTransfer } from "../api/useReactivateTransfer";
 import { consumePassword } from "../utils/passwordStash";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 import { formatFileSize } from "@/features/utils/string-helper";
@@ -23,7 +22,6 @@ export function TransferDetail({
 }) {
   const { t } = useTranslation();
   const revokeTransfer = useRevokeTransfer();
-  const reactivateTransfer = useReactivateTransfer();
   const [copied, setCopied] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
   const revokeModal = useModal();
@@ -49,10 +47,6 @@ export function TransferDetail({
     if (decision === "delete") {
       revokeTransfer.mutate(transfer.id);
     }
-  };
-
-  const handleReactivate = () => {
-    reactivateTransfer.mutate(transfer.id);
   };
 
   const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
@@ -142,11 +136,6 @@ export function TransferDetail({
               {t("Revoke")}
             </Button>
           </>
-        )}
-        {transfer.status === "expired" && !transfer.files_deleted_at && (
-          <Button size="small" onClick={handleReactivate}>
-            {t("Reactivate")}
-          </Button>
         )}
       </div>
 

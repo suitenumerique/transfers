@@ -1,4 +1,5 @@
 import { type PropsWithChildren } from "react";
+import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import {
   LaGaufreV2,
@@ -18,7 +19,9 @@ export function MainLayout({ children }: PropsWithChildren) {
     <UIKitLayout
       hideLeftPanelOnDesktop
       icon={
-        <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
+        <Link href="/" aria-label={t("Home")}>
+          <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
+        </Link>
       }
       rightHeaderContent={
         <>

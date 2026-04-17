@@ -3,7 +3,6 @@
 import logging
 from datetime import timedelta
 
-from django.conf import settings
 from django.utils import timezone
 
 from celery import shared_task
@@ -20,26 +19,24 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task
-def record_expired_transfers_task():
-    """Record (mark + audit) transfers whose expiry date has passed.
+def expire_transfers_task():
+    """Expire transfers whose expiry date has passed.
 
-    Public access is already gated by ``Transfer.is_accessible`` (which checks
-    ``expires_at <= now``), so this task does NOT actually cause expiration.
-    It only flips ``status: ACTIVE → EXPIRED`` for filtering/listing purposes
-    and emits an audit ``TRANSFER_EXPIRED`` event.
-
-    Files are NOT deleted here — they remain in S3 during the grace period
-    so the transfer can be reactivated. Actual file deletion is handled by
-    ``delete_expired_transfer_files_task``.
+    Flips ``status: ACTIVE → EXPIRED``, deletes the underlying S3 files, and
+    emits both ``TRANSFER_EXPIRED`` and ``FILES_DELETED`` audit events.
+    Public access is already gated by ``Transfer.is_accessible`` so the
+    deletion closes the loop atomically.
     """
     now = timezone.now()
     transfers_to_expire = Transfer.objects.filter(
         status=TransferStatus.ACTIVE,
         expires_at__lte=now,
-    )
+    ).prefetch_related("files")
 
     count = 0
     for transfer in transfers_to_expire:
+        transfer.delete_s3_objects()
+
         transfer.status = TransferStatus.EXPIRED
         transfer.save(update_fields=["status", "updated_at"])
 
@@ -48,39 +45,6 @@ def record_expired_transfers_task():
             event_type=TransferEventType.TRANSFER_EXPIRED,
             actor_type=ActorType.AGENT,
         )
-        count += 1
-
-    if count:
-        logger.info("Expired %d transfer(s).", count)
-
-
-@shared_task
-def delete_expired_transfer_files_task():
-    """Delete S3 files for transfers that expired more than the grace period ago.
-
-    Once files are deleted, ``files_deleted_at`` is set and the transfer
-    can no longer be reactivated.
-    """
-    grace_days = settings.TRANSFER_FILE_GRACE_PERIOD_DAYS
-    cutoff = timezone.now() - timedelta(days=grace_days)
-
-    transfers = Transfer.objects.filter(
-        status=TransferStatus.EXPIRED,
-        files_deleted_at__isnull=True,
-        expires_at__lte=cutoff,
-    ).prefetch_related("files")
-
-    if not transfers.exists():
-        return
-
-    count = 0
-
-    for transfer in transfers:
-        transfer.delete_s3_objects()
-
-        transfer.files_deleted_at = timezone.now()
-        transfer.save(update_fields=["files_deleted_at", "updated_at"])
-
         TransferEvent.objects.create(
             transfer_id=transfer.id,
             event_type=TransferEventType.FILES_DELETED,
@@ -88,7 +52,8 @@ def delete_expired_transfer_files_task():
         )
         count += 1
 
-    logger.info("Deleted files for %d expired transfer(s).", count)
+    if count:
+        logger.info("Expired %d transfer(s).", count)
 
 
 @shared_task

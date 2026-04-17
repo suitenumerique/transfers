@@ -123,11 +123,13 @@ class Base(Configuration):
     TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
         30, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
     )
-    TRANSFER_EXPIRY_CHOICES = [7, 30, 90]
-    TRANSFER_FILE_GRACE_PERIOD_DAYS = values.PositiveIntegerValue(
-        30,
-        environ_name="TRANSFER_FILE_GRACE_PERIOD_DAYS",
+    # Comma-separated list of days (e.g. "7,30,90") offered as expiry options
+    # in the UI. Must include TRANSFER_DEFAULT_EXPIRY_DAYS.
+    TRANSFER_EXPIRY_CHOICES = values.ListValue(
+        [7, 30, 90],
+        environ_name="TRANSFER_EXPIRY_CHOICES",
         environ_prefix=None,
+        converter=int,
     )
     TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
         20 * 1024 * 1024 * 1024,  # 20 Go — cap on any individual file
@@ -500,6 +502,12 @@ class Base(Configuration):
             raise ValueError(
                 "Both OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION and "
                 "OIDC_ALLOW_DUPLICATE_EMAILS cannot be set to True simultaneously."
+            )
+
+        if cls.TRANSFER_DEFAULT_EXPIRY_DAYS not in cls.TRANSFER_EXPIRY_CHOICES:
+            raise ValueError(
+                f"TRANSFER_DEFAULT_EXPIRY_DAYS ({cls.TRANSFER_DEFAULT_EXPIRY_DAYS}) "
+                f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
 
 

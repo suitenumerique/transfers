@@ -46,7 +46,7 @@ def _denied_access_response(transfer: models.Transfer, request) -> Response | No
             {"detail": "This transfer has been revoked.", "reason": "revoked"},
             status=403,
         )
-    if transfer.is_expired or transfer.files_deleted_at:
+    if transfer.is_expired:
         return Response(
             {"detail": "This transfer has expired.", "reason": "expired"},
             status=410,

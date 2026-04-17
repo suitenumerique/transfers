@@ -217,12 +217,6 @@ class Transfer(BaseModel):
             "for future product use."
         ),
     )
-    files_deleted_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Set when the underlying S3 files have been deleted. Once set, "
-        "the transfer cannot be reactivated.",
-    )
     password_hash = models.CharField(max_length=128, blank=True, default="")
 
     class Meta:
@@ -243,13 +237,6 @@ class Transfer(BaseModel):
         return self.status == TransferStatus.REVOKED
 
     @property
-    def can_be_reactivated(self) -> bool:
-        return (
-            self.status == TransferStatus.EXPIRED
-            and self.files_deleted_at is None
-        )
-
-    @property
     def is_finalized(self) -> bool:
         return self.upload_completed_at is not None
 
@@ -259,7 +246,6 @@ class Transfer(BaseModel):
             self.is_finalized
             and self.status == TransferStatus.ACTIVE
             and not self.is_expired
-            and self.files_deleted_at is None
         )
 
     @property
