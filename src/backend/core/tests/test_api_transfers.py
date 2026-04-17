@@ -852,60 +852,6 @@ class TestTransferRevoke:
 
 
 @pytest.mark.django_db
-class TestTransferReactivate:
-    def test_unauthenticated(self, api_client, transfer):
-        response = api_client.post(f"{API_URL}{transfer.id}/reactivate/")
-        assert response.status_code == 401
-
-    def test_reactivate_expired(self, authenticated_client, transfer):
-        transfer.status = TransferStatus.EXPIRED
-        transfer.expires_at = timezone.now() - timedelta(hours=1)
-        transfer.save(update_fields=["status", "expires_at"])
-        old_token = transfer.public_token
-
-        response = authenticated_client.post(
-            f"{API_URL}{transfer.id}/reactivate/"
-        )
-
-        assert response.status_code == 200
-        assert response.data["status"] == "active"
-        assert response.data["public_token"] == old_token
-
-    def test_reactivate_active_fails(self, authenticated_client, transfer):
-        response = authenticated_client.post(
-            f"{API_URL}{transfer.id}/reactivate/"
-        )
-        assert response.status_code == 400
-
-    def test_reactivate_after_files_deleted_fails(
-        self, authenticated_client, transfer
-    ):
-        # Expired AND files have been purged past the grace period.
-        transfer.status = TransferStatus.EXPIRED
-        transfer.expires_at = timezone.now() - timedelta(days=10)
-        transfer.files_deleted_at = timezone.now() - timedelta(days=3)
-        transfer.save(
-            update_fields=["status", "expires_at", "files_deleted_at"]
-        )
-
-        response = authenticated_client.post(
-            f"{API_URL}{transfer.id}/reactivate/"
-        )
-        assert response.status_code == 400
-        # Nothing should have been touched.
-        transfer.refresh_from_db()
-        assert transfer.status == TransferStatus.EXPIRED
-        assert transfer.files_deleted_at is not None
-
-    def test_reactivate_rejects_other_user(self, authenticated_client):
-        other_transfer = TransferFactory(status=TransferStatus.EXPIRED)
-        response = authenticated_client.post(
-            f"{API_URL}{other_transfer.id}/reactivate/"
-        )
-        assert response.status_code == 404
-
-
-@pytest.mark.django_db
 class TestTransferEvents:
     def test_unauthenticated(self, api_client, transfer):
         response = api_client.get(f"{API_URL}{transfer.id}/events/")

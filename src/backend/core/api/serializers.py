@@ -158,7 +158,6 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "upload_completed_at",
             "expires_at",
             "revoked_at",
-            "files_deleted_at",
             "created_at",
             "files",
             "recipients",

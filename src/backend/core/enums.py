@@ -24,7 +24,6 @@ class TransferEventType(models.TextChoices):
     EMAIL_SENT = "email_sent"
     LINK_OPENED = "link_opened"
     FILE_DOWNLOADED = "file_downloaded"
-    TRANSFER_REACTIVATED = "transfer_reactivated"
     TRANSFER_REVOKED = "transfer_revoked"
     TRANSFER_EXPIRED = "transfer_expired"
     FILES_DELETED = "files_deleted"

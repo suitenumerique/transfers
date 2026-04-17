@@ -7,7 +7,6 @@ const EVENT_LABELS: Record<string, string> = {
   email_sent: "Notification email sent",
   link_opened: "Link opened",
   file_downloaded: "File downloaded",
-  transfer_reactivated: "Transfer reactivated",
   transfer_revoked: "Transfer revoked",
   transfer_expired: "Transfer expired",
   files_deleted: "Files deleted",

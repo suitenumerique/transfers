@@ -421,39 +421,6 @@ class TransferViewSet(
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)
 
-    @extend_schema(responses={200: TransferDetailSerializer})
-    @action(detail=True, methods=["post"])
-    def reactivate(self, request, pk=None):
-        """Reactivate an expired transfer — same public_token, new expiry."""
-        transfer = self.get_object()
-
-        if transfer.status != TransferStatus.EXPIRED:
-            raise drf.exceptions.ValidationError(
-                {"status": "Only expired transfers can be reactivated."}
-            )
-
-        if transfer.files_deleted_at is not None:
-            raise drf.exceptions.ValidationError(
-                {
-                    "status": "Files have been permanently deleted; "
-                    "this transfer cannot be reactivated."
-                }
-            )
-
-        transfer.status = TransferStatus.ACTIVE
-        transfer.expires_at = timezone.now() + timedelta(
-            days=settings.TRANSFER_DEFAULT_EXPIRY_DAYS
-        )
-        transfer.revoked_at = None
-        transfer.save(
-            update_fields=["status", "expires_at", "revoked_at", "updated_at"]
-        )
-
-        _log_event(transfer, TransferEventType.TRANSFER_REACTIVATED, request)
-
-        serializer = TransferDetailSerializer(transfer)
-        return drf.response.Response(serializer.data)
-
     @extend_schema(responses={200: TransferEventSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def events(self, request, pk=None):

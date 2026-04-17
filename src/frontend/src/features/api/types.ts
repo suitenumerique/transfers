@@ -41,7 +41,6 @@ export interface TransferDetail {
   upload_completed_at: string | null;
   expires_at: string;
   revoked_at: string | null;
-  files_deleted_at: string | null;
   created_at: string;
   files: TransferFile[];
   recipients: TransferRecipient[];
