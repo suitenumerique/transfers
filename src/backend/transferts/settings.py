@@ -267,9 +267,7 @@ class Base(Configuration):
         "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {
-            "password": "30/min",
-        },
+        "DEFAULT_THROTTLE_RATES": {},
     }
 
     SPECTACULAR_SETTINGS = {

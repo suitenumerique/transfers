@@ -27,7 +27,6 @@ interface CreateTransferInput {
   title: string;
   expires_in_days: number;
   files: File[];
-  password?: string;
   sharing_mode?: SharingMode;
   recipients?: string[];
 }
@@ -84,7 +83,6 @@ export function useCreateTransfer(opts?: {
           expires_in_days: input.expires_in_days,
           sharing_mode: input.sharing_mode ?? "link",
           ...(input.recipients?.length ? { recipients: input.recipients } : {}),
-          ...(input.password ? { password: input.password } : {}),
           files: input.files.map((f) => ({
             filename: f.name,
             size: f.size,

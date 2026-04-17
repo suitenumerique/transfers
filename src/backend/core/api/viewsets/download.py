@@ -1,12 +1,10 @@
 """API views for the download page (no authentication required)."""
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password
 from django.http import StreamingHttpResponse
 
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 from core import models
@@ -16,12 +14,6 @@ from core.services.s3 import get_s3_client
 from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
-
-def _extract_password(request) -> str:
-    auth = request.META.get("HTTP_AUTHORIZATION", "")
-    if auth.startswith("Bearer "):
-        return auth[len("Bearer ") :].strip()
-    return ""
 
 
 def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
@@ -33,13 +25,9 @@ def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
         return None
 
 
-def _denied_access_response(transfer: models.Transfer, request) -> Response | None:
+def _denied_access_response(transfer: models.Transfer) -> Response | None:
     """Return an error Response if the public visitor cannot access the transfer,
     or None if access is allowed.
-
-    Order matters: revoked > expired > password. A protected transfer that is
-    also expired must report "expired" to avoid leaking the password
-    requirement on a dead link.
     """
     if transfer.status == TransferStatus.REVOKED:
         return Response(
@@ -51,18 +39,6 @@ def _denied_access_response(transfer: models.Transfer, request) -> Response | No
             {"detail": "This transfer has expired.", "reason": "expired"},
             status=410,
         )
-    if transfer.has_password:
-        password = _extract_password(request)
-        if not password:
-            return Response(
-                {"detail": "Password required.", "reason": "password_required"},
-                status=401,
-            )
-        if not check_password(password, transfer.password_hash):
-            return Response(
-                {"detail": "Wrong password.", "reason": "wrong_password"},
-                status=401,
-            )
     return None
 
 
@@ -77,26 +53,18 @@ def _record_visitor_event(transfer, event_type, request, payload=None):
     )
 
 
-class PasswordThrottle(AnonRateThrottle):
-    """Rate-limit password attempts by anon IP. Applied on the metadata
-    endpoint, which is where wrong passwords get checked."""
-
-    scope = "password"
-
-
 class DownloadTransferView(APIView):
     """Get transfer info for the download page."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
-    throttle_classes = [PasswordThrottle]
 
     def get(self, request, public_token):
         transfer = _fetch_transfer_by_token(public_token)
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
-        denied = _denied_access_response(transfer, request)
+        denied = _denied_access_response(transfer)
         if denied is not None:
             return denied
 
@@ -117,7 +85,7 @@ class DownloadFileView(APIView):
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
-        denied = _denied_access_response(transfer, request)
+        denied = _denied_access_response(transfer)
         if denied is not None:
             return denied
 

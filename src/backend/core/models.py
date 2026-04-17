@@ -217,7 +217,6 @@ class Transfer(BaseModel):
             "for future product use."
         ),
     )
-    password_hash = models.CharField(max_length=128, blank=True, default="")
 
     class Meta:
         db_table = "core_transfer"
@@ -247,10 +246,6 @@ class Transfer(BaseModel):
             and self.status == TransferStatus.ACTIVE
             and not self.is_expired
         )
-
-    @property
-    def has_password(self) -> bool:
-        return bool(self.password_hash)
 
     def abort_pending_uploads(self) -> None:
         """Abort every in-progress S3 multipart upload attached to this transfer.

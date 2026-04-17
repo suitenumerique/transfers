@@ -1,17 +1,12 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Alert,
   Button,
   DeleteConfirmationModal,
-  Input,
-  VariantType,
   useModal,
 } from "@gouvfr-lasuite/cunningham-react";
-import { Icon } from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { useRevokeTransfer } from "../api/useRevokeTransfer";
-import { consumePassword } from "../utils/passwordStash";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 import { formatFileSize } from "@/features/utils/string-helper";
 
@@ -23,14 +18,7 @@ export function TransferDetail({
   const { t } = useTranslation();
   const revokeTransfer = useRevokeTransfer();
   const [copied, setCopied] = useState(false);
-  const [passwordCopied, setPasswordCopied] = useState(false);
   const revokeModal = useModal();
-  // Consumed once on mount: cleartext password is only available right
-  // after creation, never again.
-  const oneShotPassword = useMemo(
-    () => consumePassword(transfer.id),
-    [transfer.id],
-  );
 
   const downloadUrl = transfer.public_token
     ? `${window.location.origin}/t/${transfer.public_token}`
@@ -63,63 +51,17 @@ export function TransferDetail({
     year: "numeric",
   });
 
-  const copyPassword = async () => {
-    if (!oneShotPassword) return;
-    await navigator.clipboard.writeText(oneShotPassword);
-    setPasswordCopied(true);
-    setTimeout(() => setPasswordCopied(false), 2000);
-  };
-
   return (
     <div className="transfer-detail">
       <div className="transfer-detail__header">
         <h1>{transfer.title || t("Untitled")}</h1>
         <TransferStatusBadge status={transfer.status} />
-        {transfer.has_password && (
-          <span
-            className="transfer-detail__password-badge"
-            title={t("Password protected")}
-          >
-            🔒 {t("Password protected")}
-          </span>
-        )}
       </div>
 
       <div className="transfer-detail__meta">
         <span>{t("Created on {{date}}", { date: createdAt })}</span>
         <span>{t("Expires on {{date}}", { date: expiresAt })}</span>
       </div>
-
-      {oneShotPassword && (
-        <Alert type={VariantType.WARNING} className="transfer-detail__one-shot">
-          <div className="transfer-detail__one-shot-body">
-            <strong>{t("Password to share")}</strong>
-            <Input
-              label={t("Password to share")}
-              hideLabel
-              value={oneShotPassword}
-              readOnly
-              fullWidth
-              rightIcon={
-                <button
-                  type="button"
-                  className="transfer-form__password-action"
-                  onClick={copyPassword}
-                  aria-label={t("Copy password")}
-                  title={t("Copy password")}
-                >
-                  <Icon name={passwordCopied ? "check" : "content_copy"} />
-                </button>
-              }
-            />
-            <p className="transfer-detail__one-shot-warning">
-              {t(
-                "This password will never be shown again. Share it with the recipient separately from the link.",
-              )}
-            </p>
-          </div>
-        </Alert>
-      )}
 
       <div className="transfer-detail__actions">
         {transfer.status === "active" && (
