@@ -116,7 +116,6 @@ class TransferListSerializer(serializers.ModelSerializer):
     total_size = serializers.IntegerField(source="_total_size", read_only=True)
     consulted = serializers.BooleanField(source="_consulted", read_only=True)
     downloaded = serializers.BooleanField(source="_downloaded", read_only=True)
-    has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = models.Transfer
@@ -126,7 +125,6 @@ class TransferListSerializer(serializers.ModelSerializer):
             "status",
             "sharing_mode",
             "sensitive",
-            "has_password",
             "expires_at",
             "revoked_at",
             "created_at",
@@ -143,7 +141,6 @@ class TransferDetailSerializer(serializers.ModelSerializer):
 
     files = TransferFileSerializer(many=True, read_only=True)
     recipients = TransferRecipientSerializer(many=True, read_only=True)
-    has_password = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = models.Transfer
@@ -153,7 +150,6 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "status",
             "sharing_mode",
             "sensitive",
-            "has_password",
             "public_token",
             "upload_completed_at",
             "expires_at",
@@ -202,14 +198,6 @@ class TransferCreateSerializer(serializers.Serializer):
         default=settings.TRANSFER_DEFAULT_EXPIRY_DAYS,
     )
     sensitive = serializers.BooleanField(required=False, default=False)
-    password = serializers.CharField(
-        write_only=True,
-        required=False,
-        allow_blank=True,
-        min_length=8,
-        max_length=128,
-        default="",
-    )
     sharing_mode = serializers.ChoiceField(
         choices=SharingMode.choices,
         required=False,

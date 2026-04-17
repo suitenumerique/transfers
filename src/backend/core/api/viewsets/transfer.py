@@ -4,7 +4,6 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
 from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Q, Sum
 from django.utils import timezone
@@ -148,9 +147,6 @@ class TransferViewSet(
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        password = data["password"]
-        password_hash = make_password(password) if password else ""
-
         sharing_mode = data["sharing_mode"]
         recipients = data["recipients"]
 
@@ -160,7 +156,6 @@ class TransferViewSet(
                 title=data["title"],
                 sensitive=data["sensitive"],
                 sharing_mode=sharing_mode,
-                password_hash=password_hash,
                 expires_at=timezone.now()
                 + timedelta(days=int(data["expires_in_days"])),
             )

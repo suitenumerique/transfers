@@ -24,11 +24,6 @@ export function TransferCard({ transfer }: { transfer: TransferListItem }) {
             ✉
           </span>
         )}
-        {transfer.has_password && (
-          <span title={t("Password protected")} aria-label={t("Password protected")}>
-            🔒
-          </span>
-        )}
         <TransferStatusBadge status={transfer.status} />
       </div>
       <div className="transfer-card__meta">

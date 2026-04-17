@@ -2,16 +2,15 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import type { DownloadTransferFull } from "@/features/api/types";
-import { downloadFileWithPassword } from "../api/useDownload";
+import { downloadFile } from "../api/useDownload";
 import { formatFileSize } from "@/features/utils/string-helper";
 
 interface DownloadViewProps {
   transfer: DownloadTransferFull;
   token: string;
-  password?: string | null;
 }
 
-export function DownloadView({ transfer, token, password }: DownloadViewProps) {
+export function DownloadView({ transfer, token }: DownloadViewProps) {
   const { t } = useTranslation();
   // Per-file download state: which file is currently downloading, and any
   // error surfaced by the last attempt.
@@ -30,7 +29,7 @@ export function DownloadView({ transfer, token, password }: DownloadViewProps) {
     setDownloadingId(fileId);
     setDownloadError(null);
     try {
-      await downloadFileWithPassword(token, fileId, filename, password);
+      await downloadFile(token, fileId, filename);
     } catch {
       setDownloadError(t("Download failed."));
     } finally {

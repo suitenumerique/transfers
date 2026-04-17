@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
-  Checkbox,
   Input,
   Select,
   VariantType,
@@ -16,8 +15,6 @@ import {
   useCreateTransfer,
   type AggregateProgress,
 } from "../api/useCreateTransfer";
-import { generatePassphrase } from "../utils/generatePassword";
-import { stashPassword } from "../utils/passwordStash";
 import { FileDropZone } from "./FileDropZone";
 import { RecipientInput } from "./RecipientInput";
 
@@ -54,7 +51,7 @@ function stripExtension(filename: string): string {
 }
 
 export function TransferForm() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const router = useRouter();
   const config = useConfig();
   const [uploadProgress, setUploadProgress] = useState<AggregateProgress | null>(
@@ -69,10 +66,6 @@ export function TransferForm() {
   const [sharingMode, setSharingMode] = useState<SharingMode>("link");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
-  const [passwordEnabled, setPasswordEnabled] = useState(false);
-  const [password, setPassword] = useState("");
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
   const handleFilesChange = (incoming: File[]) => {
@@ -137,14 +130,8 @@ export function TransferForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (files.length === 0) return;
-    setPasswordError(null);
 
     if (sharingMode === "email" && recipients.length === 0 && !hasValidPending) {
-      return;
-    }
-
-    if (passwordEnabled && password.length < 8) {
-      setPasswordError(t("Password must be at least 8 characters."));
       return;
     }
 
@@ -158,16 +145,13 @@ export function TransferForm() {
         totalLoaded: 0,
         totalTotal: files.reduce((a, f) => a + f.size, 0),
       });
-      const passwordToSend = passwordEnabled ? password : undefined;
       const created = await createTransfer.mutateAsync({
         title,
         expires_in_days: expiresInDays,
         files,
-        password: passwordToSend,
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : undefined,
       });
-      if (passwordToSend) stashPassword(created.id, passwordToSend);
       await router.push(`/transfers/${created.id}`);
     } catch {
       setUploadProgress(null);
@@ -274,63 +258,6 @@ export function TransferForm() {
           clearable={false}
           fullWidth
         />
-
-        <Checkbox
-          label={t("Protect with password")}
-          checked={passwordEnabled}
-          onChange={(e) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            setPasswordEnabled(checked);
-            if (!checked) {
-              setPassword("");
-              setPasswordError(null);
-            }
-          }}
-          disabled={!hasFiles}
-        />
-
-        {passwordEnabled && (
-          <Input
-            label={t("Password")}
-            type={passwordVisible ? "text" : "password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={!hasFiles}
-            state={passwordError ? "error" : "default"}
-            text={passwordError ?? undefined}
-            fullWidth
-            rightIcon={
-              <div className="transfer-form__password-actions">
-                <button
-                  type="button"
-                  className="transfer-form__password-action"
-                  onClick={() => setPasswordVisible((v) => !v)}
-                  disabled={!hasFiles}
-                  aria-label={passwordVisible ? t("Hide") : t("Show")}
-                  aria-pressed={passwordVisible}
-                >
-                  <Icon
-                    name={passwordVisible ? "visibility_off" : "visibility"}
-                  />
-                </button>
-                <button
-                  type="button"
-                  className="transfer-form__password-action"
-                  onClick={() => {
-                    setPassword(generatePassphrase(i18n.language));
-                    setPasswordError(null);
-                    setPasswordVisible(true);
-                  }}
-                  disabled={!hasFiles}
-                  aria-label={t("Generate")}
-                  title={t("Generate")}
-                >
-                  <Icon name="auto_awesome" />
-                </button>
-              </div>
-            }
-          />
-        )}
 
         <Button
           type="submit"

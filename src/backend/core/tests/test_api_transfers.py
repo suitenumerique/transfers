@@ -5,7 +5,6 @@ complete-upload, abort-upload. S3 is mocked via unittest.mock — we don't hit
 the real object storage.
 """
 
-from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.utils import timezone

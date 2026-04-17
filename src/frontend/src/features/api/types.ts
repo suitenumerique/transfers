@@ -12,7 +12,6 @@ export interface TransferListItem {
   status: "active" | "expired" | "revoked";
   sharing_mode: SharingMode;
   sensitive: boolean;
-  has_password: boolean;
   expires_at: string;
   revoked_at: string | null;
   created_at: string;
@@ -36,7 +35,6 @@ export interface TransferDetail {
   status: "active" | "expired" | "revoked";
   sharing_mode: SharingMode;
   sensitive: boolean;
-  has_password: boolean;
   public_token: string | null;
   upload_completed_at: string | null;
   expires_at: string;
