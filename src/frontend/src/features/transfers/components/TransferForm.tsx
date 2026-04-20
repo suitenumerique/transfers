@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
   Input,
+  LabelledBox,
   Select,
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
@@ -68,6 +69,11 @@ export function TransferForm() {
   const [hasValidPending, setHasValidPending] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
+  // Hidden input used by the "Add an item" button to re-open the file picker
+  // after the first selection — without it, we'd have to click the dropzone
+  // again, which isn't obvious once it's collapsed behind the file list.
+  const addMoreInputRef = useRef<HTMLInputElement | null>(null);
+
   const handleFilesChange = (incoming: File[]) => {
     setFileError(null);
 
@@ -126,6 +132,45 @@ export function TransferForm() {
   };
 
   const busy = createTransfer.isPending;
+  const hasFiles = files.length > 0;
+  const currentSize = files.reduce((sum, f) => sum + f.size, 0);
+
+  // Secondary drop target active once the initial FileDropZone is hidden: the
+  // whole left column stays drag-droppable so users can pile on more files
+  // without hunting for the "Add an item" button. We track drag depth
+  // manually so the outline reliably clears on dragleave/drop — react-dropzone's
+  // `isDragActive` occasionally sticks when the drop happens on a child.
+  const [isDraggingOverList, setIsDraggingOverList] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  const hasFilesInEvent = (event: React.DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+  const handleFilesColDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles || busy || !hasFilesInEvent(e)) return;
+    dragDepthRef.current += 1;
+    setIsDraggingOverList(true);
+  };
+
+  const handleFilesColDragLeave = (e: React.DragEvent) => {
+    if (!hasFiles || busy || !hasFilesInEvent(e)) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDraggingOverList(false);
+  };
+
+  const handleFilesColDragOver = (e: React.DragEvent) => {
+    if (!hasFiles || busy) return;
+    e.preventDefault();
+  };
+
+  const handleFilesColDrop = (e: React.DragEvent) => {
+    if (!hasFiles || busy) return;
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingOverList(false);
+    const picked = Array.from(e.dataTransfer.files);
+    if (picked.length > 0) handleFilesChange(picked);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,112 +208,175 @@ export function TransferForm() {
     value: String(days),
   }));
 
-  const hasFiles = files.length > 0;
+  const disabled = !hasFiles || busy;
+  const submitDisabled =
+    disabled ||
+    (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
-      <FileDropZone files={files} onChange={handleFilesChange} />
+      <div className="transfer-form__grid">
+        <section
+          className={`transfer-form__files-col${
+            hasFiles && isDraggingOverList
+              ? " transfer-form__files-col--drag-active"
+              : ""
+          }`}
+          aria-label={t("Your items")}
+          onDragEnter={handleFilesColDragEnter}
+          onDragLeave={handleFilesColDragLeave}
+          onDragOver={handleFilesColDragOver}
+          onDrop={handleFilesColDrop}
+        >
+          <header className="transfer-form__files-header">
+            <h2 className="transfer-form__files-title">
+              {hasFiles
+                ? t("{{count}} item", { count: files.length })
+                : t("Your items")}
+            </h2>
+            {hasFiles && (
+              <UsageBar
+                currentSize={currentSize}
+                maxSize={config.TRANSFER_MAX_TOTAL_SIZE}
+              />
+            )}
+          </header>
 
-      {hasFiles && (
-        <>
-          <ul className="transfer-form__file-list" aria-label={t("Selected files")}>
-            {files.map((f, i) => (
-              <li key={`${f.name}-${f.size}-${f.lastModified}`} className="transfer-form__file-item">
-                <span className="transfer-form__file-name">{f.name}</span>
-                <span className="transfer-form__file-size">{formatBytes(f.size)}</span>
-                <button
-                  type="button"
-                  className="transfer-form__file-remove"
-                  onClick={() => removeFile(i)}
-                  disabled={busy}
-                  aria-label={t("Remove {{name}}", { name: f.name })}
-                  title={t("Remove")}
+          {hasFiles ? (
+            <ul className="transfer-form__file-list" aria-label={t("Selected files")}>
+              {files.map((f, i) => (
+                <li
+                  key={`${f.name}-${f.size}-${f.lastModified}`}
+                  className="transfer-form__file-item"
                 >
-                  <Icon name="close" />
-                </button>
-              </li>
-            ))}
-          </ul>
-          <UsageBar
-            currentSize={files.reduce((sum, f) => sum + f.size, 0)}
-            maxSize={config.TRANSFER_MAX_TOTAL_SIZE}
-          />
-        </>
-      )}
+                  <span className="transfer-form__file-icon" aria-hidden="true">
+                    <Icon name="description" />
+                  </span>
+                  <div className="transfer-form__file-info">
+                    <span className="transfer-form__file-name">{f.name}</span>
+                    <span className="transfer-form__file-meta">
+                      {formatBytes(f.size)} · {t("document")}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="transfer-form__file-remove"
+                    onClick={() => removeFile(i)}
+                    disabled={busy}
+                    aria-label={t("Remove {{name}}", { name: f.name })}
+                    title={t("Remove")}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <FileDropZone files={files} onChange={handleFilesChange} />
+          )}
 
-      {fileError && (
-        <Alert type={VariantType.ERROR}>{fileError}</Alert>
-      )}
+          {hasFiles && (
+            <>
+              <button
+                type="button"
+                className="transfer-form__add-item"
+                onClick={() => addMoreInputRef.current?.click()}
+                disabled={busy}
+              >
+                <Icon name="add" />
+                <span>{t("Add an item")}</span>
+              </button>
+              <input
+                ref={addMoreInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  if (picked.length > 0) handleFilesChange(picked);
+                  // Reset so picking the same file twice still triggers onChange
+                  e.target.value = "";
+                }}
+              />
+            </>
+          )}
 
-      <div
-        className="transfer-form__reveal"
-        data-visible={hasFiles ? "true" : undefined}
-        aria-hidden={!hasFiles}
-        aria-live="polite"
-      >
-        <Input
-          label={t("Title")}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder={t("My transfer")}
-          disabled={!hasFiles}
-          fullWidth
-        />
+          {fileError && <Alert type={VariantType.ERROR}>{fileError}</Alert>}
+        </section>
 
-        <fieldset className="transfer-form__sharing-toggle" disabled={!hasFiles}>
-          <legend className="transfer-form__sharing-legend">
-            {t("Sharing mode")}
-          </legend>
-          <div className="transfer-form__sharing-buttons">
+        <section className="transfer-form__options-col">
+          <div
+            className="transfer-form__tabs"
+            role="tablist"
+            aria-label={t("Sharing mode")}
+          >
             <button
               type="button"
-              className={`transfer-form__sharing-btn${sharingMode === "link" ? " transfer-form__sharing-btn--active" : ""}`}
+              role="tab"
+              aria-selected={sharingMode === "email"}
+              className={`transfer-form__tab${sharingMode === "email" ? " transfer-form__tab--active" : ""}`}
+              onClick={() => setSharingMode("email")}
+              disabled={busy}
+            >
+              <Icon name="mail" />
+              <span>{t("Email")}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sharingMode === "link"}
+              className={`transfer-form__tab${sharingMode === "link" ? " transfer-form__tab--active" : ""}`}
               onClick={() => {
                 setSharingMode("link");
                 setRecipients([]);
               }}
+              disabled={busy}
             >
-              {t("Link")}
-            </button>
-            <button
-              type="button"
-              className={`transfer-form__sharing-btn${sharingMode === "email" ? " transfer-form__sharing-btn--active" : ""}`}
-              onClick={() => setSharingMode("email")}
-            >
-              {t("Email")}
+              <Icon name="link" />
+              <span>{t("Link")}</span>
             </button>
           </div>
-        </fieldset>
 
-        {sharingMode === "email" && (
-          <RecipientInput
-            recipients={recipients}
-            onChange={setRecipients}
-            onPendingChange={setHasValidPending}
-            disabled={!hasFiles || busy}
+          {sharingMode === "email" && (
+            <LabelledBox label={t("Send to")} variant="classic">
+              <RecipientInput
+                recipients={recipients}
+                onChange={setRecipients}
+                onPendingChange={setHasValidPending}
+                disabled={busy}
+              />
+            </LabelledBox>
+          )}
+
+          <Input
+            label={t("Title")}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={t("Enter a title")}
+            disabled={busy}
+            variant="classic"
+            fullWidth
           />
-        )}
 
-        <Select
-          label={t("Expiration")}
-          options={expiryOptions}
-          value={String(expiresInDays)}
-          onChange={(e) => setExpiresInDays(Number(e.target.value))}
-          disabled={!hasFiles}
-          clearable={false}
-          fullWidth
-        />
+          <Select
+            label={t("Expiration")}
+            options={expiryOptions}
+            value={String(expiresInDays)}
+            onChange={(e) => setExpiresInDays(Number(e.target.value))}
+            disabled={busy}
+            variant="classic"
+            clearable={false}
+            fullWidth
+          />
 
-        <Button
-          type="submit"
-          disabled={busy || !hasFiles || (sharingMode === "email" && recipients.length === 0 && !hasValidPending)}
-        >
-          {busy
-            ? t("Sending...")
-            : sharingMode === "email"
-              ? t("Send")
-              : t("Create link")}
-        </Button>
+          <Button type="submit" disabled={submitDisabled}>
+            {busy
+              ? t("Sending...")
+              : sharingMode === "email"
+                ? t("Send")
+                : t("Create link")}
+          </Button>
+        </section>
       </div>
 
       {busy && (

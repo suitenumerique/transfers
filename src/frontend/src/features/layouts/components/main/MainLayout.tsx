@@ -1,5 +1,6 @@
 import { type PropsWithChildren } from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
   LaGaufreV2,
@@ -14,6 +15,8 @@ import { useAuth, login, logout } from "@/features/auth";
 export function MainLayout({ children }: PropsWithChildren) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const router = useRouter();
+  const onTransfersPage = router.pathname.startsWith("/transfers");
 
   return (
     <UIKitLayout
@@ -25,6 +28,16 @@ export function MainLayout({ children }: PropsWithChildren) {
       }
       rightHeaderContent={
         <>
+          {user && (
+            <Link
+              href="/transfers"
+              className={`main-layout__nav-link${
+                onTransfersPage ? " main-layout__nav-link--active" : ""
+              }`}
+            >
+              {t("My transfers")}
+            </Link>
+          )}
           <LaGaufreV2
             widgetPath={TERRITORIALE_GAUFRE.widgetPath}
             apiUrl={TERRITORIALE_GAUFRE.apiUrl}

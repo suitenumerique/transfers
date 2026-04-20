@@ -8,28 +8,28 @@
   }
 }
 
-// Home two-column layout (landing + upload)
+// Authenticated home layout: upload form on top, recent transfers below.
 .home {
   &__grid {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
     gap: var(--c--globals--spacings--xl);
     margin-bottom: var(--c--globals--spacings--xl);
-
-    @media (min-width: 900px) {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      align-items: stretch;
-      height: calc(100vh - 160px);
-      min-height: 500px;
-    }
   }
 
   &__upload {
     min-width: 0;
-    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+
+    // Bounded height (desktop only) so the file list scrolls internally when
+    // it overflows. On stacked / narrow layouts we let the form grow to its
+    // content to avoid squeezing the options section below the files one.
+    @media (min-width: 720px) {
+      height: min(60vh, 640px);
+      min-height: 420px;
+    }
 
     .transfer-form {
       flex: 1;
@@ -39,37 +39,27 @@
     }
 
     .file-dropzone {
-      flex: 1;
-      min-height: 0;
       display: flex;
       flex-direction: column;
     }
 
-    // When no file is selected, let the dropzone fill the whole column.
+    // Cap the dropzone height so it stays compact even when the files
+    // column has taken over the full vertical space.
     .file-dropzone__area {
-      flex: 1;
-      min-height: 120px;
+      min-height: 160px;
+      max-height: 280px;
     }
   }
 
   &__recent {
     min-width: 0;
-    min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
   }
 
   &__recent-title {
     margin: 0 0 var(--c--globals--spacings--sm);
     flex-shrink: 0;
-  }
-
-  &__recent > .transfer-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding-right: var(--c--globals--spacings--xs);
   }
 }
 
@@ -108,6 +98,23 @@
     line-height: 1.5;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
+}
+
+// Transfers page header (title + "New transfer" CTA)
+.transfers-page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--md);
+  margin-bottom: var(--c--globals--spacings--md);
+
+  h1 {
+    margin: 0;
+  }
+}
+
+.transfers-page__new-link {
+  text-decoration: none;
 }
 
 // Transfer List
@@ -261,89 +268,101 @@
   50% { opacity: 1; }
 }
 
-// Sharing mode toggle
-.transfer-form__sharing-toggle {
-  border: 0;
-  padding: 0;
-  margin: 0;
+// Sharing mode tabs (Email / Link)
+.transfer-form__tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--c--globals--spacings--2xs);
 }
 
-.transfer-form__sharing-legend {
-  font-weight: 600;
-  font-size: var(--c--globals--font--sizes--sm);
-  margin-bottom: var(--c--globals--spacings--2xs);
-}
-
-.transfer-form__sharing-buttons {
-  display: flex;
-  gap: 0;
+.transfer-form__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--2xs);
+  padding: var(--c--globals--spacings--xs) var(--c--globals--spacings--sm);
   border: 1px solid var(--c--contextuals--border--surface--primary);
-  border-radius: 6px;
-  overflow: hidden;
-  width: fit-content;
-}
-
-.transfer-form__sharing-btn {
-  padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--md);
+  border-radius: var(--c--components--button--border-radius);
   background: transparent;
-  border: 0;
-  cursor: pointer;
   font: inherit;
   font-size: var(--c--globals--font--sizes--sm);
   font-weight: 500;
-  color: var(--c--contextuals--content--semantic--neutral--secondary);
-  transition: background 150ms ease, color 150ms ease;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  cursor: pointer;
+  transition:
+    background var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+    color var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+    border-color var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+    border-radius var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out);
 
-  &:hover:not(:disabled) {
+  &:hover:not(:disabled):not(&--active) {
     background: rgba(0, 0, 0, 0.04);
+    border-radius: var(--c--components--button--border-radius--focus);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   &--active {
     background: var(--c--contextuals--background--semantic--brand--primary);
+    border-color: var(--c--contextuals--background--semantic--brand--primary);
     color: #fff;
-
-    &:hover:not(:disabled) {
-      background: var(--c--contextuals--background--semantic--brand--primary);
-    }
   }
 }
 
-// Recipient Input (chip-based email input)
+// Recipient Input (chip-based email input) — mirrors Cunningham's
+// `c__input__wrapper--classic` border/radius/color tokens so the box reads
+// visually identical to sibling Input/Select fields.
 .recipient-input {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--2xs);
-
-  &__label {
-    font-weight: 600;
-    font-size: var(--c--globals--font--sizes--sm);
-  }
+  width: 100%;
 
   &__box {
+    width: 100%;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
-    border: 1px solid var(--c--contextuals--border--surface--primary);
-    border-radius: 4px;
-    min-height: 40px;
+    padding: var(--c--globals--spacings--2xs) 1rem;
+    min-height: 2.75rem;
     cursor: text;
     align-items: center;
+    box-sizing: border-box;
+
+    border-radius: var(--c--components--forms-input--border-radius);
+    border-width: var(--c--components--forms-input--border-width);
+    border-color: var(--c--components--forms-input--border-color);
+    border-style: var(--c--components--forms-input--border-style);
+    background-color: var(--c--components--forms-input--background-color);
+    transition:
+      border var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+      border-radius var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+      box-shadow var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out);
+
+    &:hover {
+      border-radius: var(--c--components--forms-input--border-radius--hover);
+      border-color: var(--c--components--forms-input--border-color--hover);
+      box-shadow: 0 0 0 var(--c--components--forms-input--border-width--hover)
+        var(--c--components--forms-input--border-color--hover);
+    }
 
     &:focus-within {
-      border-color: var(--c--contextuals--border--semantic--brand--primary);
-      outline: 2px solid var(--c--contextuals--border--semantic--brand--tertiary);
-      outline-offset: -1px;
+      border-radius: var(--c--components--forms-input--border-radius--focus);
+      border-color: var(--c--components--forms-input--border-color--focus);
+      box-shadow: 0 0 0 var(--c--components--forms-input--border-width--focus)
+        var(--c--components--forms-input--border-color--focus);
     }
   }
 
   &__chip {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 2px 6px;
+    gap: var(--c--globals--spacings--2xs);
+    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
     background: var(--c--contextuals--background--surface--neutral--secondary, #f0f2f7);
-    border-radius: 4px;
+    border-radius: var(--c--components--button--border-radius);
     font-size: var(--c--globals--font--sizes--sm);
     max-width: 100%;
   }
@@ -363,7 +382,7 @@
     padding: 0;
     background: transparent;
     border: 0;
-    border-radius: 2px;
+    border-radius: var(--c--components--button--border-radius);
     cursor: pointer;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     flex-shrink: 0;
@@ -378,10 +397,14 @@
     min-width: 150px;
     border: 0;
     outline: 0;
-    font: inherit;
-    font-size: var(--c--globals--font--sizes--sm);
     padding: 4px 0;
     background: transparent;
+    // Align typography with Cunningham's <input> so the placeholder and
+    // entered text render at the exact same size/weight as sibling fields.
+    font-family: var(--c--globals--font--families--base);
+    font-size: var(--c--components--forms-input--font-size);
+    font-weight: var(--c--components--forms-input--font-weight);
+    color: var(--c--components--forms-input--value-color);
   }
 
   &__error {
@@ -442,6 +465,111 @@
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--sm);
+  position: relative;
+
+  // Two-column layout: files on the left, options on the right.
+  // Stacks on narrow viewports. On desktop it fills the form's remaining
+  // height so the inner file list can own the scrolling.
+  &__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--c--globals--spacings--md);
+
+    @media (min-width: 720px) {
+      grid-template-columns: 1fr 1fr;
+      // Clamp the row to the available height — without this the row sizes
+      // to its content and defeats the inner list's `overflow-y: auto`.
+      grid-template-rows: minmax(0, 1fr);
+      column-gap: var(--c--globals--spacings--2xl);
+      row-gap: 0;
+      align-items: stretch;
+      flex: 1;
+      min-height: 0;
+    }
+  }
+
+  &__files-col,
+  &__options-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--sm);
+    min-width: 0;
+    // Grid items default to `min-height: auto`, which lets them grow past
+    // the row height. Override so the inner scrollable list can take over.
+    min-height: 0;
+  }
+
+  // Extra breathing room between the "Vos éléments" header and the dropzone
+  // / file list (the options column is denser so keeps the tighter gap).
+  &__files-col {
+    gap: var(--c--globals--spacings--md);
+  }
+
+  // LabelledBox (Cunningham) has no `fullWidth` prop — force the wrapper to
+  // stretch so the recipients field aligns with Title/Expiration which do
+  // pass `fullWidth`.
+  &__options-col > .c__field {
+    width: 100%;
+  }
+
+  &__files-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--2xs);
+  }
+
+  &__files-title {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--xl);
+    font-weight: 600;
+  }
+
+  &__add-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    align-self: flex-start;
+    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 500;
+    color: var(--c--contextuals--content--semantic--brand--primary);
+    border-radius: var(--c--components--button--border-radius);
+    transition:
+      background var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+      border-radius var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out);
+
+    &:hover:not(:disabled) {
+      background: rgba(0, 0, 0, 0.04);
+      border-radius: var(--c--components--button--border-radius--focus);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  // Subtle highlight when dragging files over the left column after the
+  // initial dropzone has been replaced by the file list. The outline sits
+  // INSIDE the column to avoid being clipped by the parent's `overflow: hidden`.
+  &__files-col--drag-active {
+    position: relative;
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 2px dashed
+        var(--c--contextuals--border--semantic--brand--primary);
+      border-radius: var(--c--components--button--border-radius);
+      pointer-events: none;
+    }
+  }
+
 
   &__field {
     display: flex;
@@ -538,24 +666,52 @@
     display: flex;
     flex-direction: column;
     gap: var(--c--globals--spacings--2xs);
-    max-height: 200px;
+    // Let the list fill the available vertical space inside `files-col`
+    // instead of capping at ~4 items; it scrolls internally only when the
+    // column itself can't grow further.
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
   }
 
   &__file-item {
     display: flex;
     align-items: center;
-    gap: var(--c--globals--spacings--xs);
-    padding: var(--c--globals--spacings--2xs) var(--c--globals--spacings--xs);
+    gap: var(--c--globals--spacings--sm);
+    padding: var(--c--globals--spacings--xs) var(--c--globals--spacings--sm);
     background: var(--c--contextuals--background--surface--neutral--secondary, #f0f2f7);
-    border-radius: 4px;
+    border-radius: 6px;
+  }
+
+  &__file-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   &__file-name {
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 500;
+  }
+
+  &__file-meta {
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    font-size: var(--c--globals--font--sizes--xs);
   }
 
   &__file-size {
@@ -573,7 +729,7 @@
     padding: 0;
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--c--components--button--border-radius);
     cursor: pointer;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
 
@@ -660,26 +816,6 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
-  // Fields revealed once a file has been selected. Starts hidden and
-  // non-interactive, fades/slides in when [data-visible="true"] is set.
-  &__reveal {
-    display: flex;
-    flex-direction: column;
-    gap: var(--c--globals--spacings--sm);
-    max-height: 0;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-    transition:
-      max-height 300ms ease,
-      opacity 250ms ease 50ms;
-
-    &[data-visible="true"] {
-      max-height: 800px;
-      opacity: 1;
-      pointer-events: auto;
-    }
-  }
 }
 
 // File Drop Zone — Option A: typography-first, no icon
@@ -718,21 +854,27 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--c--globals--spacings--md);
+    gap: var(--c--globals--spacings--xs);
     pointer-events: none;
+  }
+
+  &__icon {
+    font-size: 32px;
+    color: var(--c--contextuals--content--semantic--brand--primary);
   }
 
   &__headline {
     margin: 0;
-    font-size: clamp(2rem, 4vw, 3.5rem);
-    font-weight: 700;
-    line-height: 1.1;
-    color: var(--c--contextuals--content--semantic--brand--primary);
+    font-size: var(--c--globals--font--sizes--md);
+    font-weight: 500;
+    line-height: 1.3;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+    text-align: center;
   }
 
   &__hint {
     margin: 0;
-    font-size: var(--c--globals--font--sizes--md);
+    font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
@@ -989,6 +1131,33 @@
     color: inherit;
   }
 
+  &__nav-link {
+    display: inline-flex;
+    align-items: center;
+    font-weight: 600;
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+    text-decoration: none;
+    padding: var(--c--globals--spacings--xs) var(--c--globals--spacings--sm);
+    border: 1px solid transparent;
+    border-radius: var(--c--components--button--border-radius);
+    transition:
+      background var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+      border-color var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out),
+      color var(--c--globals--transitions--duration) var(--c--globals--transitions--ease-out);
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.04);
+      border-color: var(--c--contextuals--border--surface--primary);
+    }
+
+    &--active {
+      background: var(--c--contextuals--background--semantic--brand--tertiary);
+      color: var(--c--contextuals--content--semantic--brand--primary);
+      border-color: var(--c--contextuals--border--semantic--brand--tertiary);
+    }
+  }
+
   &__nav {
     display: flex;
     align-items: center;
@@ -1008,7 +1177,7 @@
     margin: 0 auto;
   }
 
-  // The home page uses a 2-column layout that spans the full viewport width.
+  // Home max-width is now managed in globals.scss on `.app-content.home`.
   &__content:has(.home) {
     max-width: none;
   }

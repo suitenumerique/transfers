@@ -57,9 +57,10 @@ body {
     margin-bottom: 1.5rem;
   }
 
-  // The home page layout spans the full viewport width.
+  // Cap the authenticated home narrower than the default app-content so the
+  // two-column form stays readable at a glance on wide viewports.
   &.home {
-    max-width: none;
+    max-width: 1200px;
   }
 }
 
