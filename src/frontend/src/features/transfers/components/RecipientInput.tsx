@@ -78,7 +78,6 @@ export function RecipientInput({
 
   return (
     <div className="recipient-input">
-      <label className="recipient-input__label">{t("Recipients")}</label>
       <div
         className="recipient-input__box"
         onClick={() => inputRef.current?.focus()}

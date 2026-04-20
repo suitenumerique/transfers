@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
+import { Icon } from "@gouvfr-lasuite/ui-kit";
+import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
+}
+
+function formatMaxSize(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${Math.round(gb)} Go`;
+  const mb = bytes / (1024 * 1024);
+  return `${Math.round(mb)} Mo`;
 }
 
 // True when a drag-and-drop sequence carrying files is active anywhere on
@@ -51,6 +60,7 @@ function useWindowFileDrag(): boolean {
 
 export function FileDropZone({ files, onChange }: FileDropZoneProps) {
   const { t } = useTranslation();
+  const config = useConfig();
   const windowDragging = useWindowFileDrag();
 
   const onDrop = useCallback(
@@ -65,7 +75,6 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
   });
 
   const expanded = windowDragging || isDragActive;
-  const hasFiles = files.length > 0;
 
   return (
     <div className="file-dropzone">
@@ -77,17 +86,16 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
       >
         <input {...getInputProps()} />
         <div className="file-dropzone__cta">
+          <Icon name="cloud_upload" className="file-dropzone__icon" />
           <p className="file-dropzone__headline">
             {isDragActive
-              ? t("Drop it to get started")
-              : hasFiles
-                ? t("Drop more files here")
-                : t("Drop your files here")}
+              ? t("Release to upload")
+              : t("Click to upload or drag and drop")}
           </p>
           <p className="file-dropzone__hint">
-            {isDragActive
-              ? t("Release to upload")
-              : t("or click anywhere to browse")}
+            {t("Max {{size}}", {
+              size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+            })}
           </p>
         </div>
       </div>
