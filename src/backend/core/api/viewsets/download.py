@@ -1,7 +1,6 @@
 """API views for the download page (no authentication required)."""
 
-from django.conf import settings
-from django.http import StreamingHttpResponse
+from django.http import HttpResponseRedirect
 
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -10,7 +9,7 @@ from rest_framework.views import APIView
 from core import models
 from core.api.serializers import DownloadTransferSerializer
 from core.enums import ActorType, TransferEventType, TransferStatus
-from core.services.s3 import get_s3_client
+from core.services.s3 import sign_download_url
 from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
@@ -96,8 +95,10 @@ class DownloadFileView(APIView):
         except models.TransferFile.DoesNotExist:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
-        s3_object = get_s3_client().get_object(
-            Bucket=settings.TRANSFERS_BUCKET_NAME, Key=transfer_file.s3_key
+        url = sign_download_url(
+            transfer_file.s3_key,
+            transfer_file.filename,
+            transfer_file.mime_type,
         )
 
         _record_visitor_event(
@@ -113,12 +114,8 @@ class DownloadFileView(APIView):
             str(transfer.id), transfer_file.filename
         )
 
-        response = StreamingHttpResponse(
-            s3_object["Body"].iter_chunks(),
-            content_type=transfer_file.mime_type or "application/octet-stream",
-        )
-        response["Content-Disposition"] = (
-            f'attachment; filename="{transfer_file.filename}"'
-        )
-        response["Content-Length"] = transfer_file.size
-        return response
+        # Redirect the browser straight to S3 so the download bytes never
+        # transit through a Django worker. The presigned URL's short expiry
+        # limits the shelf life of the URL if it leaks (browser history,
+        # logs, copy-paste).
+        return HttpResponseRedirect(url)

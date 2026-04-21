@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.utils import timezone
 
@@ -47,22 +47,18 @@ class TestDownloadTransferView:
 
 @pytest.mark.django_db
 class TestDownloadFileView:
-    @patch("core.api.viewsets.download.get_s3_client")
-    def test_download_file(self, mock_s3, api_client, transfer_with_file):
+    @patch("core.api.viewsets.download.sign_download_url")
+    def test_download_file_redirects(self, mock_sign, api_client, transfer_with_file):
         t = transfer_with_file
         tf = t.files.first()
-
-        mock_body = MagicMock()
-        mock_body.iter_chunks.return_value = [b"file-content"]
-        mock_s3.return_value.get_object.return_value = {"Body": mock_body}
+        mock_sign.return_value = "https://s3.example.com/signed-get-url"
 
         response = api_client.get(
             f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/"
         )
-        assert response.status_code == 200
-        assert (
-            response["Content-Disposition"] == f'attachment; filename="{tf.filename}"'
-        )
+        assert response.status_code == 302
+        assert response["Location"] == "https://s3.example.com/signed-get-url"
+        mock_sign.assert_called_once_with(tf.s3_key, tf.filename, tf.mime_type)
 
         assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED)
 
