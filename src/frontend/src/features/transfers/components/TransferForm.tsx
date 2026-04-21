@@ -16,6 +16,7 @@ import {
   useCreateTransfer,
   type AggregateProgress,
 } from "../api/useCreateTransfer";
+import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
 import { RecipientInput } from "./RecipientInput";
 
@@ -272,20 +273,43 @@ export function TransferForm() {
               ))}
             </ul>
           ) : (
-            <FileDropZone files={files} onChange={handleFilesChange} />
+            <FileDropZone
+              files={files}
+              onChange={handleFilesChange}
+              extraCta={
+                config.DRIVE ? (
+                  <DriveAttachButton
+                    onPick={handleFilesChange}
+                    onError={setFileError}
+                    disabled={busy}
+                    maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
+                  />
+                ) : undefined
+              }
+            />
           )}
 
           {hasFiles && (
             <>
-              <button
-                type="button"
-                className="transfer-form__add-item"
-                onClick={() => addMoreInputRef.current?.click()}
-                disabled={busy}
-              >
-                <Icon name="add" />
-                <span>{t("Add an item")}</span>
-              </button>
+              <div className="transfer-form__add-actions">
+                <button
+                  type="button"
+                  className="transfer-form__add-item"
+                  onClick={() => addMoreInputRef.current?.click()}
+                  disabled={busy}
+                >
+                  <Icon name="add" />
+                  <span>{t("Add an item")}</span>
+                </button>
+                {config.DRIVE && (
+                  <DriveAttachButton
+                    onPick={handleFilesChange}
+                    onError={setFileError}
+                    disabled={busy}
+                    maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
+                  />
+                )}
+              </div>
               <input
                 ref={addMoreInputRef}
                 type="file"

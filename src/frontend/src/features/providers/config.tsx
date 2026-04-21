@@ -7,6 +7,13 @@ import {
 } from "react";
 import { apiFetch } from "@/features/api/client";
 
+export interface DriveConfig {
+  base_url: string;
+  sdk_url: string;
+  api_url: string;
+  app_name: string;
+}
+
 export interface AppConfig {
   ENVIRONMENT: string;
   LANGUAGES: string[];
@@ -14,6 +21,8 @@ export interface AppConfig {
   TRANSFER_MAX_FILE_SIZE: number;
   TRANSFER_MAX_TOTAL_SIZE: number;
   TRANSFER_MAX_FILES_PER_TRANSFER: number;
+  // Absent when the operator hasn't wired Drive up (DRIVE_BASE_URL empty).
+  DRIVE?: DriveConfig;
 }
 
 const ConfigContext = createContext<AppConfig | null>(null);

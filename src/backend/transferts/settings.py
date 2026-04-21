@@ -165,6 +165,20 @@ class Base(Configuration):
         environ_prefix=None,
     )
 
+    # Drive integration: when DRIVE_BASE_URL is set, the frontend renders an
+    # "Attach from Drive" picker. Picked files are downloaded client-side
+    # (with the agent's Drive session cookie) and uploaded through our
+    # regular multipart flow — hard copy in our S3, no reference stored.
+    # Using os.environ directly: django-configurations' values.Value() isn't
+    # resolved when embedded in a dict literal (it only scans top-level
+    # class attributes).
+    DRIVE_CONFIG = {
+        "base_url": os.environ.get("DRIVE_BASE_URL", ""),
+        "sdk_url": os.environ.get("DRIVE_SDK_URL", "/sdk"),
+        "api_url": os.environ.get("DRIVE_API_URL", "/api/v1.0"),
+        "app_name": os.environ.get("DRIVE_APP_NAME", "Drive"),
+    }
+
     STORAGES = {
         "default": {
             "BACKEND": "storages.backends.s3.S3Storage",

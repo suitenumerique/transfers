@@ -524,6 +524,13 @@
     font-weight: 600;
   }
 
+  &__add-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+    flex-wrap: wrap;
+  }
+
   &__add-item {
     display: inline-flex;
     align-items: center;
@@ -876,6 +883,24 @@
     margin: 0;
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__extra {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    margin-top: var(--c--globals--spacings--sm);
+    // Parent `.file-dropzone__cta` is pointer-events:none so the whole
+    // dropzone area stays clickable; re-enable interaction locally so the
+    // embedded button (e.g. Drive picker trigger) can receive clicks.
+    pointer-events: auto;
+  }
+
+  &__separator {
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    text-transform: lowercase;
   }
 
   &__list {
