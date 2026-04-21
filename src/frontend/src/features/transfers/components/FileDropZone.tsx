@@ -5,8 +5,8 @@ import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {
-  files: File[];
   onChange: (files: File[]) => void;
+  compact?: boolean;
 }
 
 function formatMaxSize(bytes: number): string {
@@ -58,7 +58,7 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({ files, onChange }: FileDropZoneProps) {
+export function FileDropZone({ onChange, compact = false }: FileDropZoneProps) {
   const { t } = useTranslation();
   const config = useConfig();
   const windowDragging = useWindowFileDrag();
@@ -77,27 +77,56 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
   const expanded = windowDragging || isDragActive;
 
   return (
-    <div className="file-dropzone">
+    <div className={`file-dropzone${compact ? " file-dropzone--compact" : ""}`}>
       <div
         {...getRootProps()}
         className={`file-dropzone__area${
-          expanded ? " file-dropzone__area--expanded" : ""
-        }${isDragActive ? " file-dropzone__area--active" : ""}`}
+          compact ? " file-dropzone__area--compact" : ""
+        }${expanded ? " file-dropzone__area--expanded" : ""}${
+          isDragActive ? " file-dropzone__area--active" : ""
+        }`}
       >
         <input {...getInputProps()} />
-        <div className="file-dropzone__cta">
-          <Icon name="cloud_upload" className="file-dropzone__icon" />
-          <p className="file-dropzone__headline">
-            {isDragActive
-              ? t("Release to upload")
-              : t("Click to upload or drag and drop")}
-          </p>
-          <p className="file-dropzone__hint">
-            {t("Max {{size}}", {
-              size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
-            })}
-          </p>
-        </div>
+        {compact ? (
+          <>
+            <span
+              className="file-dropzone__icon-tile"
+              aria-hidden="true"
+            >
+              <Icon name="add" />
+            </span>
+            <div className="file-dropzone__compact-text">
+              <p className="file-dropzone__headline">
+                <span className="file-dropzone__cta-link">
+                  {t("Add an item")}
+                </span>
+                <span className="file-dropzone__cta-muted">
+                  {" "}
+                  {t("or drag and drop")}
+                </span>
+              </p>
+              <p className="file-dropzone__hint">
+                {t("Max {{size}}", {
+                  size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+                })}
+              </p>
+            </div>
+          </>
+        ) : (
+          <div className="file-dropzone__cta">
+            <Icon name="cloud_upload" className="file-dropzone__icon" />
+            <p className="file-dropzone__headline">
+              {isDragActive
+                ? t("Release to upload")
+                : t("Click to upload or drag and drop")}
+            </p>
+            <p className="file-dropzone__hint">
+              {t("Max {{size}}", {
+                size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+              })}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

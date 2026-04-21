@@ -1,23 +1,26 @@
 import { type PropsWithChildren } from "react";
 import Link from "next/link";
-import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
   LaGaufreV2,
   MainLayout as UIKitLayout,
-  UserMenu,
 } from "@gouvfr-lasuite/ui-kit";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
+import { ShellLayout } from "@/features/layouts/components/shell";
 import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
-import { useAuth, login, logout } from "@/features/auth";
+import { useAuth, login } from "@/features/auth";
 
 export function MainLayout({ children }: PropsWithChildren) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const router = useRouter();
-  const onTransfersPage = router.pathname.startsWith("/transfers");
 
+  // Authenticated users get the app shell (sidebar + minimal top bar).
+  if (user) {
+    return <ShellLayout>{children}</ShellLayout>;
+  }
+
+  // Unauthenticated: keep the UI Kit header-only layout for the landing page.
   return (
     <UIKitLayout
       hideLeftPanelOnDesktop
@@ -28,42 +31,15 @@ export function MainLayout({ children }: PropsWithChildren) {
       }
       rightHeaderContent={
         <>
-          {user && (
-            <Link
-              href="/transfers"
-              className={`main-layout__nav-link${
-                onTransfersPage ? " main-layout__nav-link--active" : ""
-              }`}
-            >
-              {t("My transfers")}
-            </Link>
-          )}
           <LaGaufreV2
             widgetPath={TERRITORIALE_GAUFRE.widgetPath}
             apiUrl={TERRITORIALE_GAUFRE.apiUrl}
             showMoreLimit={100}
           />
-          {user ? (
-            <UserMenu
-              user={{
-                full_name: user.full_name ?? undefined,
-                email: user.email ?? "",
-              }}
-              logout={logout}
-              actions={
-                <div className="user-menu__footer-action">
-                  <LanguagePicker size="small" compact />
-                </div>
-              }
-            />
-          ) : (
-            <>
-              <LanguagePicker size="small" compact />
-              <Button size="small" onClick={login}>
-                {t("Sign in")}
-              </Button>
-            </>
-          )}
+          <LanguagePicker size="small" compact />
+          <Button size="small" onClick={login}>
+            {t("Sign in")}
+          </Button>
         </>
       }
     >
