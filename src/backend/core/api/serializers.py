@@ -161,9 +161,23 @@ class TransferDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class _TransferFileCreateSerializer(serializers.Serializer):
-    """Nested serializer: a single file to attach to a new transfer."""
+class TransferAddFileSerializer(serializers.Serializer):
+    """POST /transfers/add-file/ — attach a file to a draft transfer,
+    creating the draft on the fly if ``transfer_id`` is omitted.
 
+    There is no separate "create transfer" endpoint: a draft is born as a
+    side-effect of the first ``add-file`` call, and every subsequent drop
+    targets the same endpoint with ``transfer_id`` echoed back from that
+    first response. Metadata (title, sharing_mode, recipients,
+    expires_in_days, sensitive) never flows through this path — it is
+    frozen at finalize time (see ``TransferFinalizeSerializer``).
+
+    Per-file size is checked here; cumulative limits (file count, total
+    transfer size) live in the viewset because they depend on what the
+    target draft already holds.
+    """
+
+    transfer_id = serializers.UUIDField(required=False, allow_null=True)
     filename = serializers.CharField(max_length=255, required=True)
     size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
@@ -179,14 +193,22 @@ class _TransferFileCreateSerializer(serializers.Serializer):
         return value
 
 
-class TransferCreateSerializer(serializers.Serializer):
-    """Serializer to create a transfer + all its files in a single call.
+class TransferRemoveFileSerializer(serializers.Serializer):
+    """POST /transfers/{id}/remove-file/ body — identifies the single file
+    to detach. Matches the ``transfer_file_id`` pattern used by ``sign-part``
+    and ``complete-upload`` so every file-scoped action on a transfer keeps
+    the same shape."""
 
-    The client sends transfer-level metadata plus the list of files to attach.
-    The viewset creates the Transfer, creates one TransferFile per entry, and
-    initiates the S3 multipart upload for each — all in one DB transaction.
-    The response mirrors the request: the transfer descriptor plus a parallel
-    list of per-file upload descriptors the browser uses to push chunks.
+    transfer_file_id = serializers.UUIDField()
+
+
+class TransferFinalizeSerializer(serializers.Serializer):
+    """POST /transfers/{id}/finalize/ body.
+
+    All transfer-level metadata (title, expires, sharing mode, recipients,
+    sensitive) is frozen here — a draft only holds files, never partial
+    metadata, so finalize is the single write that publishes the transfer
+    alongside its identity.
     """
 
     title = serializers.CharField(
@@ -209,7 +231,6 @@ class TransferCreateSerializer(serializers.Serializer):
         default=list,
         max_length=50,
     )
-    files = _TransferFileCreateSerializer(many=True, required=True)
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -223,22 +244,6 @@ class TransferCreateSerializer(serializers.Serializer):
                 {"recipients": "Recipients are not allowed in link mode."}
             )
         return attrs
-
-    def validate_files(self, value):
-        if not value:
-            raise serializers.ValidationError("At least one file is required.")
-        if len(value) > settings.TRANSFER_MAX_FILES_PER_TRANSFER:
-            raise serializers.ValidationError(
-                f"A transfer cannot contain more than "
-                f"{settings.TRANSFER_MAX_FILES_PER_TRANSFER} files."
-            )
-        total_size = sum(f["size"] for f in value)
-        if total_size > settings.TRANSFER_MAX_TOTAL_SIZE:
-            max_go = settings.TRANSFER_MAX_TOTAL_SIZE // (1024**3)
-            raise serializers.ValidationError(
-                f"Total transfer size exceeds maximum of {max_go} Go."
-            )
-        return value
 
 
 class _PartETagSerializer(serializers.Serializer):
