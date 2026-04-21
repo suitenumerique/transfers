@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { Button, Loader } from "@gouvfr-lasuite/cunningham-react";
 import { openPicker, type Item } from "@gouvfr-lasuite/drive-sdk";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
@@ -71,23 +71,40 @@ export function DriveAttachButton({
       }
 
       // Sequential download: cap resident memory at ~1 blob + 1 File so
-      // users picking several large files don't OOM the tab. Also means
-      // the session cookie / CORS headers are exercised per-request.
+      // users picking several large files don't OOM the tab.
       //
       // `credentials: "include"` is REQUIRED: Drive's `item.url` points
       // to the authenticated media route, not an S3 pre-signed URL.
+      //
+      // Per-item error handling: accumulate successes and deliver them
+      // even if some items fail, so partial picks aren't lost.
       const files: File[] = [];
+      const failed: string[] = [];
       for (const item of result.items as Item[]) {
-        const res = await fetch(item.url, { credentials: "include" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        files.push(
-          new File([blob], item.title, {
-            type: blob.type || "application/octet-stream",
-          }),
+        try {
+          const res = await fetch(item.url, { credentials: "include" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          files.push(
+            new File([blob], item.title, {
+              type: blob.type || "application/octet-stream",
+            }),
+          );
+        } catch {
+          failed.push(item.title);
+        }
+      }
+
+      if (files.length > 0) onPick(files);
+
+      if (failed.length > 0) {
+        onError?.(
+          t(
+            "Could not download from {{app}}. Check that the file is accessible and try again.",
+            { app: drive.app_name },
+          ),
         );
       }
-      onPick(files);
     } catch {
       onError?.(
         t(
@@ -107,7 +124,13 @@ export function DriveAttachButton({
       size="small"
       onClick={handleClick}
       disabled={disabled || busy}
-      icon={<Icon name={busy ? "hourglass_empty" : "folder_open"} />}
+      icon={
+        busy ? (
+          <Loader size="small" />
+        ) : (
+          <Icon name="folder_open" />
+        )
+      }
     >
       {busy
         ? t("Downloading from {{app}}...", { app: drive.app_name })
