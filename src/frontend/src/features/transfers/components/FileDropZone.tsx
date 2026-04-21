@@ -5,12 +5,15 @@ import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {
-  files: File[];
   onChange: (files: File[]) => void;
-  // Extra CTA rendered inside the dropzone frame, below the size hint
-  // (e.g. the Drive attach button). The slot stopPropagation's clicks so
-  // interactive children don't also trigger the file picker, and hides
-  // itself during an active drag to keep the "drop it" state clean.
+  // Compact variant used inline with an existing file list (e.g. "+ Add an
+  // item" tile). Swaps the large headline for a tight single row.
+  compact?: boolean;
+  // Extra CTA rendered inside the standard dropzone frame, below the size
+  // hint (e.g. the Drive attach button). The slot stopPropagation's clicks
+  // so interactive children don't also trigger the file picker, and hides
+  // itself during an active drag to keep the "drop it" state clean. Ignored
+  // in compact mode — the tight row has no room for it.
   extraCta?: ReactNode;
 }
 
@@ -64,8 +67,8 @@ function useWindowFileDrag(): boolean {
 }
 
 export function FileDropZone({
-  files,
   onChange,
+  compact = false,
   extraCta,
 }: FileDropZoneProps) {
   const { t } = useTranslation();
@@ -86,36 +89,65 @@ export function FileDropZone({
   const expanded = windowDragging || isDragActive;
 
   return (
-    <div className="file-dropzone">
+    <div className={`file-dropzone${compact ? " file-dropzone--compact" : ""}`}>
       <div
         {...getRootProps()}
         className={`file-dropzone__area${
-          expanded ? " file-dropzone__area--expanded" : ""
-        }${isDragActive ? " file-dropzone__area--active" : ""}`}
+          compact ? " file-dropzone__area--compact" : ""
+        }${expanded ? " file-dropzone__area--expanded" : ""}${
+          isDragActive ? " file-dropzone__area--active" : ""
+        }`}
       >
         <input {...getInputProps()} />
-        <div className="file-dropzone__cta">
-          <Icon name="cloud_upload" className="file-dropzone__icon" />
-          <p className="file-dropzone__headline">
-            {isDragActive
-              ? t("Release to upload")
-              : t("Click to upload or drag and drop")}
-          </p>
-          <p className="file-dropzone__hint">
-            {t("Max {{size}}", {
-              size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
-            })}
-          </p>
-          {extraCta && !isDragActive && (
-            <div
-              className="file-dropzone__extra"
-              onClick={(e) => e.stopPropagation()}
+        {compact ? (
+          <>
+            <span
+              className="file-dropzone__icon-tile"
+              aria-hidden="true"
             >
-              <span className="file-dropzone__separator">{t("or")}</span>
-              {extraCta}
+              <Icon name="add" />
+            </span>
+            <div className="file-dropzone__compact-text">
+              <p className="file-dropzone__headline">
+                <span className="file-dropzone__cta-link">
+                  {t("Add an item")}
+                </span>
+                <span className="file-dropzone__cta-muted">
+                  {" "}
+                  {t("or drag and drop")}
+                </span>
+              </p>
+              <p className="file-dropzone__hint">
+                {t("Max {{size}}", {
+                  size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+                })}
+              </p>
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div className="file-dropzone__cta">
+            <Icon name="cloud_upload" className="file-dropzone__icon" />
+            <p className="file-dropzone__headline">
+              {isDragActive
+                ? t("Release to upload")
+                : t("Click to upload or drag and drop")}
+            </p>
+            <p className="file-dropzone__hint">
+              {t("Max {{size}}", {
+                size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+              })}
+            </p>
+            {extraCta && !isDragActive && (
+              <div
+                className="file-dropzone__extra"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="file-dropzone__separator">{t("or")}</span>
+                {extraCta}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
