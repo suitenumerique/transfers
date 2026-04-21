@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
@@ -7,6 +7,11 @@ import { useConfig } from "@/features/providers/config";
 interface FileDropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
+  // Extra CTA rendered inside the dropzone frame, below the size hint
+  // (e.g. the Drive attach button). The slot stopPropagation's clicks so
+  // interactive children don't also trigger the file picker, and hides
+  // itself during an active drag to keep the "drop it" state clean.
+  extraCta?: ReactNode;
 }
 
 function formatMaxSize(bytes: number): string {
@@ -58,7 +63,11 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({ files, onChange }: FileDropZoneProps) {
+export function FileDropZone({
+  files,
+  onChange,
+  extraCta,
+}: FileDropZoneProps) {
   const { t } = useTranslation();
   const config = useConfig();
   const windowDragging = useWindowFileDrag();
@@ -97,6 +106,15 @@ export function FileDropZone({ files, onChange }: FileDropZoneProps) {
               size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
             })}
           </p>
+          {extraCta && !isDragActive && (
+            <div
+              className="file-dropzone__extra"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="file-dropzone__separator">{t("or")}</span>
+              {extraCta}
+            </div>
+          )}
         </div>
       </div>
     </div>
