@@ -151,7 +151,6 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "sharing_mode",
             "sensitive",
             "public_token",
-            "upload_completed_at",
             "expires_at",
             "revoked_at",
             "created_at",
@@ -161,23 +160,23 @@ class TransferDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class TransferAddFileSerializer(serializers.Serializer):
-    """POST /transfers/add-file/ — attach a file to a draft transfer,
-    creating the draft on the fly if ``transfer_id`` is omitted.
+class DraftAddFileSerializer(serializers.Serializer):
+    """POST /drafts/add-file/ — attach a file to a draft, creating the draft
+    on the fly if ``draft_id`` is omitted.
 
-    There is no separate "create transfer" endpoint: a draft is born as a
-    side-effect of the first ``add-file`` call, and every subsequent drop
-    targets the same endpoint with ``transfer_id`` echoed back from that
-    first response. Metadata (title, sharing_mode, recipients,
-    expires_in_days, sensitive) never flows through this path — it is
-    frozen at finalize time (see ``TransferFinalizeSerializer``).
+    Drafts hold files-in-transit; they carry no metadata of their own. A
+    draft is born as a side-effect of the first ``add-file`` call, and
+    every subsequent drop passes back ``draft_id`` to bind to the same
+    draft. Transfer-level metadata (title, sharing_mode, recipients,
+    expires_in_days, sensitive) is set only at finalize time, and populates
+    the freshly-created ``Transfer`` there — see ``TransferFinalizeSerializer``.
 
     Per-file size is checked here; cumulative limits (file count, total
-    transfer size) live in the viewset because they depend on what the
-    target draft already holds.
+    draft size) live in the viewset because they depend on what the target
+    draft already holds.
     """
 
-    transfer_id = serializers.UUIDField(required=False, allow_null=True)
+    draft_id = serializers.UUIDField(required=False, allow_null=True)
     filename = serializers.CharField(max_length=255, required=True)
     size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
@@ -193,22 +192,22 @@ class TransferAddFileSerializer(serializers.Serializer):
         return value
 
 
-class TransferRemoveFileSerializer(serializers.Serializer):
-    """POST /transfers/{id}/remove-file/ body — identifies the single file
-    to detach. Matches the ``transfer_file_id`` pattern used by ``sign-part``
-    and ``complete-upload`` so every file-scoped action on a transfer keeps
+class DraftRemoveFileSerializer(serializers.Serializer):
+    """POST /drafts/{id}/remove-file/ body — identifies the single file to
+    detach. Matches the ``transfer_file_id`` pattern used by ``sign-part``
+    and ``complete-upload`` so every file-scoped action on a draft keeps
     the same shape."""
 
     transfer_file_id = serializers.UUIDField()
 
 
-class TransferFinalizeSerializer(serializers.Serializer):
-    """POST /transfers/{id}/finalize/ body.
+class DraftFinalizeSerializer(serializers.Serializer):
+    """POST /drafts/{id}/finalize/ body.
 
-    All transfer-level metadata (title, expires, sharing mode, recipients,
-    sensitive) is frozen here — a draft only holds files, never partial
-    metadata, so finalize is the single write that publishes the transfer
-    alongside its identity.
+    Carries all transfer-level metadata (title, expires, sharing mode,
+    recipients, sensitive) — a draft holds files only, never metadata.
+    Finalize is the single write that creates the Transfer row with its
+    real values and reparents the draft's files to it.
     """
 
     title = serializers.CharField(
@@ -253,15 +252,16 @@ class _PartETagSerializer(serializers.Serializer):
     ETag = serializers.CharField()
 
 
-class TransferSignPartSerializer(serializers.Serializer):
-    """Request a presigned URL to upload a specific part."""
+class DraftSignPartSerializer(serializers.Serializer):
+    """POST /drafts/{id}/sign-part/ — request a presigned URL for one part."""
 
     transfer_file_id = serializers.UUIDField()
     part_number = serializers.IntegerField(min_value=1, max_value=10000)
 
 
-class TransferCompleteUploadSerializer(serializers.Serializer):
-    """Complete a multipart upload after all parts have been uploaded."""
+class DraftCompleteUploadSerializer(serializers.Serializer):
+    """POST /drafts/{id}/complete-upload/ — finalise the S3 multipart once
+    every part has been uploaded."""
 
     transfer_file_id = serializers.UUIDField()
     parts = _PartETagSerializer(many=True)
@@ -305,5 +305,8 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_files(self, obj):
+        # Every TransferFile attached to a Transfer is complete by
+        # construction (finalize refuses to run otherwise), but we keep the
+        # filter as a belt-and-suspenders defense against any stray row.
         completed = obj.files.filter(upload_completed_at__isnull=False)
         return DownloadTransferFileSerializer(completed, many=True).data

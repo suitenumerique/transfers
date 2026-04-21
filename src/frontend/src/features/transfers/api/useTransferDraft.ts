@@ -6,19 +6,19 @@ import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Eager-upload draft handle.
 //
-// Every file drop hits the same endpoint: `POST /transfers/add-file/`. The
-// first call of a session omits ``transfer_id`` — the backend opens a draft
-// as a side-effect and echoes the id back. Subsequent drops pass that id so
-// their file lands on the same draft. Drop-removals hit
-// `/transfers/{id}/remove-file/`. Bytes are pushed to S3 via presigned
+// Every file drop hits the same endpoint: `POST /drafts/add-file/`. The
+// first call of a session omits ``draft_id`` — the backend opens a draft
+// as a side-effect and echoes the id back. Subsequent drops pass that id
+// so their file lands on the same draft. Drop-removals hit
+// `/drafts/{id}/remove-file/`. Bytes are pushed to S3 via presigned
 // multipart PUTs as soon as the backend descriptor is known — the form is
 // free to remain unfilled. `submit()` waits for the upload queue to drain,
-// then calls /finalize with the full metadata payload in one shot
-// (metadata never flows through the draft phase).
+// then calls `/drafts/{id}/finalize/` which creates the Transfer and
+// reparents the files to it in one atomic step (metadata never flows
+// through the draft phase).
 //
-// When the last file is removed from the draft, the whole draft is aborted
-// server-side (``abort-upload``) and the local state is reset — opening the
-// next drop to a fresh draft.
+// When the last file is removed from the draft, the backend cascades the
+// draft deletion automatically, so the local reset is purely bookkeeping.
 
 export type DraftFileState =
   | "registering" // POST /transfers or /add-file in flight
@@ -60,7 +60,7 @@ export interface TransferDraftHandle {
 }
 
 interface AddFileResponse {
-  transfer_id: string;
+  draft_id: string;
   transfer_file_id: string;
   upload_id: string;
   s3_key: string;
@@ -89,8 +89,9 @@ export function useTransferDraft(): TransferDraftHandle {
   // waiting for the next render.
   const draftIdRef = useRef<string | null>(null);
   const filesRef = useRef<DraftFile[]>([]);
-  // Promise that resolves with the draft id once the initial POST /transfers/
-  // succeeds. Second+ drops wait on it before firing add-file.
+  // Promise that resolves with the draft id once the initial POST
+  // /drafts/add-file/ succeeds. Second+ drops wait on it before firing
+  // add-file, so they don't race multiple "create-draft" requests.
   const draftInitPromiseRef = useRef<Promise<string> | null>(null);
   // The uploader currently pushing chunks, if any.
   const currentUploaderRef = useRef<MultipartUploader | null>(null);
@@ -127,7 +128,7 @@ export function useTransferDraft(): TransferDraftHandle {
     resetLocal();
     if (id) {
       try {
-        await apiFetch(`/transfers/${id}/abort-upload/`, { method: "POST" });
+        await apiFetch(`/drafts/${id}/abort/`, { method: "POST" });
       } catch {
         // best-effort; the server cleanup task sweeps stale drafts anyway
       }
@@ -154,7 +155,7 @@ export function useTransferDraft(): TransferDraftHandle {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
         const resp = await apiFetch<SignPartResponse>(
-          `/transfers/${id}/sign-part/`,
+          `/drafts/${id}/sign-part/`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -177,7 +178,7 @@ export function useTransferDraft(): TransferDraftHandle {
       .then(async (parts) => {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
-        await apiFetch(`/transfers/${id}/complete-upload/`, {
+        await apiFetch(`/drafts/${id}/complete-upload/`, {
           method: "POST",
           body: JSON.stringify({
             transfer_file_id: backendId,
@@ -204,15 +205,15 @@ export function useTransferDraft(): TransferDraftHandle {
   const registerFile = useCallback(
     async (
       draftFile: DraftFile,
-      transferId: string | null,
+      knownDraftId: string | null,
     ): Promise<string | null> => {
       try {
         const resp = await apiFetch<AddFileResponse>(
-          "/transfers/add-file/",
+          "/drafts/add-file/",
           {
             method: "POST",
             body: JSON.stringify({
-              ...(transferId ? { transfer_id: transferId } : {}),
+              ...(knownDraftId ? { draft_id: knownDraftId } : {}),
               filename: draftFile.file.name,
               size: draftFile.file.size,
               mime_type:
@@ -224,8 +225,8 @@ export function useTransferDraft(): TransferDraftHandle {
         // Capture the draft id the FIRST time we see it (or echo back the
         // same one on subsequent calls — the backend always includes it).
         if (draftIdRef.current === null) {
-          draftIdRef.current = resp.transfer_id;
-          setDraftId(resp.transfer_id);
+          draftIdRef.current = resp.draft_id;
+          setDraftId(resp.draft_id);
         }
 
         // Reconcile: the user may have removed this file while the POST
@@ -236,9 +237,9 @@ export function useTransferDraft(): TransferDraftHandle {
             // Special-case: no draft id was known before this call — the
             // file we just created IS the draft's only row, so aborting
             // the whole thing is the right cleanup.
-            if (transferId === null) {
+            if (knownDraftId === null) {
               await apiFetch(
-                `/transfers/${resp.transfer_id}/abort-upload/`,
+                `/drafts/${resp.draft_id}/abort/`,
                 { method: "POST" },
               );
               draftIdRef.current = null;
@@ -246,7 +247,7 @@ export function useTransferDraft(): TransferDraftHandle {
               setDraftId(null);
             } else {
               await apiFetch(
-                `/transfers/${resp.transfer_id}/remove-file/`,
+                `/drafts/${resp.draft_id}/remove-file/`,
                 {
                   method: "POST",
                   body: JSON.stringify({
@@ -268,14 +269,14 @@ export function useTransferDraft(): TransferDraftHandle {
           chunkSize: resp.chunk_size,
           state: "registered",
         });
-        return resp.transfer_id;
+        return resp.draft_id;
       } catch (err) {
         updateFile(draftFile.key, {
           state: "error",
           error: String(err),
         });
         setError(String(err));
-        if (transferId === null) {
+        if (knownDraftId === null) {
           // The init attempt failed; clear the lock so the next drop can
           // try again rather than waiting forever on a rejected promise.
           draftInitPromiseRef.current = null;
@@ -369,7 +370,7 @@ export function useTransferDraft(): TransferDraftHandle {
 
       try {
         await apiFetch(
-          `/transfers/${draftIdRef.current}/remove-file/`,
+          `/drafts/${draftIdRef.current}/remove-file/`,
           {
             method: "POST",
             body: JSON.stringify({ transfer_file_id: target.backendId }),
@@ -379,9 +380,9 @@ export function useTransferDraft(): TransferDraftHandle {
         // best-effort; a 404 means the server already cleaned it up
       }
 
-      // The backend destroys the Transfer when its last file is removed,
+      // The backend destroys the draft when its last file is removed,
       // so once the local list is empty we just need to drop our handle
-      // to it — no explicit abort-upload round-trip.
+      // to it — no explicit abort round-trip.
       if (remaining.length === 0) {
         resetLocal();
       }
@@ -422,10 +423,12 @@ export function useTransferDraft(): TransferDraftHandle {
         });
 
         // Metadata is frozen here — the draft held nothing but files, and
-        // finalize is the one write that publishes title / sharing mode /
-        // recipients / expiry / sensitive in a single atomic step.
+        // finalize is the one write that creates the Transfer with its
+        // title / sharing mode / recipients / expiry / sensitive in a
+        // single atomic step. The returned Transfer has a *different* id
+        // from the draft.
         const finalized = await apiFetch<TransferDetail>(
-          `/transfers/${id}/finalize/`,
+          `/drafts/${id}/finalize/`,
           {
             method: "POST",
             body: JSON.stringify(metadata),
