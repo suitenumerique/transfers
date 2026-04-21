@@ -8,7 +8,8 @@ from django.utils import timezone
 from celery import shared_task
 
 from core.enums import ActorType, TransferEventType, TransferStatus
-from core.models import Transfer, TransferEvent
+from core.models import Transfer, TransferDraft, TransferEvent
+from core.services import s3
 from core.services.email import (
     notify_owner_file_downloaded,
     notify_owner_link_opened,
@@ -57,30 +58,32 @@ def expire_transfers_task():
 
 
 @shared_task
-def cleanup_abandoned_uploads_task():
-    """Clean up transfers whose upload was never finalized.
+def cleanup_abandoned_drafts_task():
+    """Clean up drafts whose user never pressed "Create link".
 
-    A transfer is "abandoned" if its ``upload_completed_at`` is still null
-    more than 24 hours after creation. This happens when the user closes
-    their tab mid-upload, the browser crashes, or they never call
-    ``finalize``. All-or-nothing semantics: even if some of the files were
-    individually completed, the whole transfer is nuked (S3 multipart
-    uploads aborted, DB rows deleted).
+    A draft is "abandoned" if it's still in ``TransferDraft`` more than 24
+    hours after its creation — finalized transfers are never in this table.
+    We best-effort abort every in-progress S3 multipart upload, delete every
+    object already landed, then cascade-delete the draft (which takes its
+    files with it).
     """
     cutoff = timezone.now() - timedelta(hours=24)
-    abandoned = Transfer.objects.filter(
-        upload_completed_at__isnull=True,
+    abandoned = TransferDraft.objects.filter(
         created_at__lte=cutoff,
     ).prefetch_related("files")
 
     count = 0
-    for transfer in abandoned:
-        transfer.abort_pending_uploads()
-        transfer.delete()
+    for draft in abandoned:
+        for tf in draft.files.all():
+            if tf.upload_id:
+                s3.abort_multipart_upload(tf.s3_key, tf.upload_id)
+            if tf.s3_key:
+                s3.delete_object(tf.s3_key)
+        draft.delete()
         count += 1
 
     if count:
-        logger.info("Cleaned up %d abandoned transfer(s).", count)
+        logger.info("Cleaned up %d abandoned draft(s).", count)
 
 
 @shared_task

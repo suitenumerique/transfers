@@ -8,6 +8,7 @@ from django.contrib.auth import models as auth_models
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.core import validators
 from django.db import models
+from django.db.models import CheckConstraint, Q
 from django.utils import timezone
 
 from timezone_field import TimeZoneField
@@ -191,18 +192,9 @@ class Transfer(BaseModel):
         max_length=64,
         unique=True,
         db_index=True,
-        null=True,
-        blank=True,
-        default=None,
-        help_text="Set once the transfer is finalized (all files uploaded). "
-        "Until then, the transfer has no public link.",
-    )
-    upload_completed_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Set once all TransferFile uploads have been completed and "
-        "the transfer has been finalized. Until then, the transfer is not "
-        "listed, not downloadable, and has no public token.",
+        default=_generate_public_token,
+        help_text="Opaque token used in public download URLs. Populated at "
+        "finalize time (= when the Transfer row is created).",
     )
     sharing_mode = models.CharField(
         max_length=5,
@@ -236,16 +228,11 @@ class Transfer(BaseModel):
         return self.status == TransferStatus.REVOKED
 
     @property
-    def is_finalized(self) -> bool:
-        return self.upload_completed_at is not None
-
-    @property
     def is_accessible(self) -> bool:
-        return (
-            self.is_finalized
-            and self.status == TransferStatus.ACTIVE
-            and not self.is_expired
-        )
+        # A Transfer row exists iff it was finalized — drafts live in
+        # ``TransferDraft`` and never promote to Transfer until finalize.
+        # So accessibility only depends on status + expiry.
+        return self.status == TransferStatus.ACTIVE and not self.is_expired
 
     def abort_pending_uploads(self) -> None:
         """Abort every in-progress S3 multipart upload attached to this transfer.
@@ -294,13 +281,54 @@ class TransferRecipient(BaseModel):
         return self.email
 
 
+class TransferDraft(BaseModel):
+    """Ephemeral container for files being uploaded, before a Transfer exists.
+
+    A draft is born on the first ``add-file`` call, accumulates files, and
+    dies either at ``abort`` or at ``finalize`` — in the latter case a fresh
+    ``Transfer`` is created and the draft's ``TransferFile`` rows are
+    reparented to it (see ``TransferDraftViewSet.finalize``). Drafts are
+    never surfaced publicly and hold no transfer-level metadata: title,
+    sharing_mode, recipients, expiry and sensitive all come from the
+    finalize request body.
+    """
+
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="drafts",
+    )
+
+    class Meta:
+        db_table = "core_transfer_draft"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Draft {self.id}"
+
+
 class TransferFile(BaseModel):
-    """A file attached to a transfer."""
+    """A file attached to a transfer or, during upload, to a draft.
+
+    Exactly one of ``transfer`` / ``draft`` is set at any point in time —
+    enforced by ``transferfile_exactly_one_parent`` at the DB level. At
+    finalize the rows get reparented from the draft to the newly-created
+    transfer in a single ``UPDATE``.
+    """
 
     transfer = models.ForeignKey(
         Transfer,
         on_delete=models.CASCADE,
         related_name="files",
+        null=True,
+        blank=True,
+    )
+    draft = models.ForeignKey(
+        TransferDraft,
+        on_delete=models.CASCADE,
+        related_name="files",
+        null=True,
+        blank=True,
     )
     filename = models.CharField(max_length=255)
     size = models.PositiveBigIntegerField()
@@ -322,6 +350,18 @@ class TransferFile(BaseModel):
 
     class Meta:
         db_table = "core_transfer_file"
+        constraints = [
+            CheckConstraint(
+                # Exactly one of transfer / draft must be set. This keeps the
+                # file-to-parent relation single-valued regardless of which
+                # entity owns the row at a given moment.
+                check=(
+                    Q(transfer__isnull=False, draft__isnull=True)
+                    | Q(transfer__isnull=True, draft__isnull=False)
+                ),
+                name="transferfile_exactly_one_parent",
+            ),
+        ]
 
     def __str__(self):
         return self.filename
