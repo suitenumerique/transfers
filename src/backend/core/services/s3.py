@@ -80,6 +80,27 @@ def sign_upload_part(key: str, upload_id: str, part_number: int) -> str:
     )
 
 
+def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
+    """Return a presigned GET URL that triggers a browser download.
+
+    ``ResponseContentDisposition`` is baked into the signature so S3 echoes it
+    back as a response header: the browser treats the response as a file
+    download, stays on the current page, and uses ``filename`` as the saved
+    name. Same for ``ResponseContentType``.
+    """
+    client = _get_presigning_client()
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentType": content_type or "application/octet-stream",
+        },
+        ExpiresIn=settings.TRANSFER_PRESIGNED_URL_EXPIRY,
+    )
+
+
 def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> None:
     """Finalize a multipart upload given the list of uploaded parts.
 
