@@ -12,7 +12,7 @@
 //
 // The uploader does NOT know about the Transfer domain — it only needs a
 // `signPart` function that takes a part number and returns a URL. The caller
-// (useCreateTransfer) wires that to the backend sign-part endpoint.
+// (useTransferDraft) wires that to the backend sign-part endpoint.
 
 import { uploadPart } from "./uploadPart";
 

@@ -17,11 +17,13 @@ from rest_framework.decorators import action
 from core import models
 from core.api.permissions import IsAuthenticated
 from core.api.serializers import (
+    TransferAddFileSerializer,
     TransferCompleteUploadSerializer,
-    TransferCreateSerializer,
     TransferDetailSerializer,
     TransferEventSerializer,
+    TransferFinalizeSerializer,
     TransferListSerializer,
+    TransferRemoveFileSerializer,
     TransferSignPartSerializer,
 )
 from core.api.viewsets import Pagination
@@ -45,17 +47,18 @@ def _log_event(transfer, event_type, request):
 class TransferViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
-    mixins.CreateModelMixin,
     viewsets.GenericViewSet,
 ):
-    """ViewSet for managing transfers (authenticated agent)."""
+    """ViewSet for managing transfers (authenticated agent).
+
+    Drafts have no dedicated ``create`` endpoint — the ``add-file`` action
+    doubles as the draft opener when called without a ``transfer_id``.
+    """
 
     permission_classes = [IsAuthenticated]
     pagination_class = Pagination
 
     def get_serializer_class(self):
-        if self.action == "create":
-            return TransferCreateSerializer
         if self.action == "list":
             return TransferListSerializer
         if self.action == "events":
@@ -64,6 +67,12 @@ class TransferViewSet(
             return TransferSignPartSerializer
         if self.action == "complete_upload":
             return TransferCompleteUploadSerializer
+        if self.action == "add_file":
+            return TransferAddFileSerializer
+        if self.action == "remove_file":
+            return TransferRemoveFileSerializer
+        if self.action == "finalize":
+            return TransferFinalizeSerializer
         return TransferDetailSerializer
 
     def get_queryset(self):
@@ -115,90 +124,17 @@ class TransferViewSet(
             )
         return tf
 
-    @extend_schema(
-        request=TransferCreateSerializer,
-        responses={
-            201: inline_serializer(
-                name="TransferCreateResponse",
-                fields={
-                    "transfer_id": serializers.UUIDField(),
-                    "chunk_size": serializers.IntegerField(),
-                    "files": inline_serializer(
-                        name="TransferCreateResponseFile",
-                        fields={
-                            "transfer_file_id": serializers.UUIDField(),
-                            "upload_id": serializers.CharField(),
-                            "s3_key": serializers.CharField(),
-                        },
-                        many=True,
-                    ),
-                },
-            )
-        },
-    )
-    def create(self, request, *args, **kwargs):
-        """Create a transfer and initiate multipart uploads for all its files.
+    def _check_draft(self, transfer):
+        """Guard: refuse mutations on a finalized transfer.
 
-        The request body contains the transfer-level metadata plus the list
-        of files. The response returns the transfer descriptor plus one
-        upload descriptor per file, in the same order as the request.
+        Used by ``add_file`` and ``remove_file`` — once the transfer has a
+        ``public_token``, its file list and metadata are frozen (``revoke``
+        is the only post-finalize transition).
         """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        sharing_mode = data["sharing_mode"]
-        recipients = data["recipients"]
-
-        with transaction.atomic():
-            transfer = models.Transfer.objects.create(
-                owner=request.user,
-                title=data["title"],
-                sensitive=data["sensitive"],
-                sharing_mode=sharing_mode,
-                expires_at=timezone.now()
-                + timedelta(days=int(data["expires_in_days"])),
+        if transfer.is_finalized:
+            raise drf.exceptions.PermissionDenied(
+                "Cannot modify a finalized transfer."
             )
-
-            if sharing_mode == SharingMode.EMAIL:
-                for email in recipients:
-                    models.TransferRecipient.objects.create(
-                        transfer=transfer,
-                        email=email,
-                    )
-
-            file_descriptors = []
-            for file_data in data["files"]:
-                s3_key = (
-                    f"transfers/{transfer.id}/{uuid.uuid4()}/{file_data['filename']}"
-                )
-                upload_id = s3.create_multipart_upload(
-                    key=s3_key, content_type=file_data["mime_type"]
-                )
-                transfer_file = models.TransferFile.objects.create(
-                    transfer=transfer,
-                    filename=file_data["filename"],
-                    size=file_data["size"],
-                    mime_type=file_data["mime_type"],
-                    s3_key=s3_key,
-                    upload_id=upload_id,
-                )
-                file_descriptors.append(
-                    {
-                        "transfer_file_id": str(transfer_file.id),
-                        "upload_id": upload_id,
-                        "s3_key": s3_key,
-                    }
-                )
-
-        return drf.response.Response(
-            {
-                "transfer_id": str(transfer.id),
-                "chunk_size": settings.TRANSFER_CHUNK_SIZE,
-                "files": file_descriptors,
-            },
-            status=201,
-        )
 
     @extend_schema(
         request=TransferSignPartSerializer,
@@ -312,25 +248,183 @@ class TransferViewSet(
         return drf.response.Response(status=204)
 
     @extend_schema(
-        request=None,
+        request=TransferAddFileSerializer,
+        responses={
+            201: inline_serializer(
+                name="TransferAddFileResponse",
+                fields={
+                    "transfer_id": serializers.UUIDField(),
+                    "transfer_file_id": serializers.UUIDField(),
+                    "upload_id": serializers.CharField(),
+                    "s3_key": serializers.CharField(),
+                    "chunk_size": serializers.IntegerField(),
+                },
+            )
+        },
+    )
+    @action(detail=False, methods=["post"], url_path="add-file")
+    def add_file(self, request):
+        """Attach a file to a draft transfer.
+
+        If the body carries a ``transfer_id``, the file lands on that
+        existing draft (owned by the caller, not yet finalized). If the
+        field is omitted, a new draft is created on the fly and the file
+        is attached to it — no dedicated "create transfer" endpoint is
+        needed. Either way the response shape is the same, with
+        ``transfer_id`` echoed so subsequent calls can bind to the draft.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        transfer_id = data.get("transfer_id")
+
+        with transaction.atomic():
+            if transfer_id is None:
+                # First drop in a session — create the draft as a side-effect.
+                # ``expires_at`` gets a placeholder; finalize overwrites it.
+                # No cumulative guards needed: count=1 and total_size equals
+                # the single file's size, which the serializer already bounded
+                # by the per-file limit (≤ total limit by invariant).
+                transfer = models.Transfer.objects.create(
+                    owner=request.user,
+                    expires_at=timezone.now()
+                    + timedelta(
+                        days=int(settings.TRANSFER_DEFAULT_EXPIRY_DAYS)
+                    ),
+                )
+            else:
+                try:
+                    transfer = self.get_queryset().get(id=transfer_id)
+                except models.Transfer.DoesNotExist as exc:
+                    raise drf.exceptions.NotFound(
+                        "Transfer not found."
+                    ) from exc
+                self._check_draft(transfer)
+
+                # Cumulative guards against drip-feed bypass: the serializer
+                # only sees one file at a time, so totals have to be recomputed
+                # from whatever is already attached.
+                aggregates = transfer.files.aggregate(
+                    count=Count("pk"), total_size=Sum("size")
+                )
+                existing_count = aggregates["count"] or 0
+                existing_total = aggregates["total_size"] or 0
+
+                if existing_count >= settings.TRANSFER_MAX_FILES_PER_TRANSFER:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": (
+                                f"A transfer cannot contain more than "
+                                f"{settings.TRANSFER_MAX_FILES_PER_TRANSFER} files."
+                            )
+                        }
+                    )
+                if existing_total + data["size"] > settings.TRANSFER_MAX_TOTAL_SIZE:
+                    max_go = settings.TRANSFER_MAX_TOTAL_SIZE // (1024**3)
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "size": f"Total transfer size exceeds maximum of {max_go} Go."
+                        }
+                    )
+
+            s3_key = f"transfers/{transfer.id}/{uuid.uuid4()}/{data['filename']}"
+            upload_id = s3.create_multipart_upload(
+                key=s3_key, content_type=data["mime_type"]
+            )
+            transfer_file = models.TransferFile.objects.create(
+                transfer=transfer,
+                filename=data["filename"],
+                size=data["size"],
+                mime_type=data["mime_type"],
+                s3_key=s3_key,
+                upload_id=upload_id,
+            )
+        return drf.response.Response(
+            {
+                "transfer_id": str(transfer.id),
+                "transfer_file_id": str(transfer_file.id),
+                "upload_id": upload_id,
+                "s3_key": s3_key,
+                "chunk_size": settings.TRANSFER_CHUNK_SIZE,
+            },
+            status=201,
+        )
+
+    @extend_schema(
+        request=TransferRemoveFileSerializer,
+        responses={204: None},
+    )
+    @action(detail=True, methods=["post"], url_path="remove-file")
+    def remove_file(self, request, pk=None):
+        """Detach a single file from a draft transfer.
+
+        Best-effort S3 cleanup: aborts any in-progress multipart, deletes any
+        object already landed. Safe to call on a half-uploaded file.
+
+        If the removed file was the last one on the draft, the Transfer
+        itself is dropped too — a draft carries no metadata of its own, so
+        an empty draft has no reason to linger. The server enforces this
+        invariant so clients that don't go through our frontend can't leave
+        headless drafts in the DB until the abandoned-upload cron picks
+        them up at T+24h.
+        """
+        transfer = self.get_object()
+        self._check_draft(transfer)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            transfer_file = transfer.files.get(
+                id=serializer.validated_data["transfer_file_id"]
+            )
+        except models.TransferFile.DoesNotExist as exc:
+            raise drf.exceptions.NotFound("Transfer file not found.") from exc
+
+        if transfer_file.upload_id:
+            s3.abort_multipart_upload(
+                key=transfer_file.s3_key, upload_id=transfer_file.upload_id
+            )
+        s3.delete_object(transfer_file.s3_key)
+
+        with transaction.atomic():
+            transfer_file.delete()
+            # Bypass the related manager's prefetch cache (populated by
+            # ``get_queryset().prefetch_related("files")`` during
+            # ``self.get_object()``) with a fresh query — otherwise we'd see
+            # the stale list that still contains the row we just deleted.
+            if not models.TransferFile.objects.filter(transfer=transfer).exists():
+                transfer.delete()
+
+        return drf.response.Response(status=204)
+
+    @extend_schema(
+        request=TransferFinalizeSerializer,
         responses={200: TransferDetailSerializer},
     )
     @action(detail=True, methods=["post"])
     def finalize(self, request, pk=None):
         """Finalize a transfer once all its files have been uploaded.
 
-        This is the transition that actually makes the transfer usable:
-        generates the public token, sets ``upload_completed_at`` on the
-        transfer, and fires the ``TRANSFER_CREATED`` event. Callers must
-        have successfully called ``complete-upload`` on every file first.
-        Idempotent: calling it twice on a finalized transfer just returns
-        the current state without any side effect.
+        The request body carries the full metadata set — title, expires_in_days,
+        sharing_mode, recipients, sensitive. This is the only point where
+        metadata is written: during the draft phase the transfer holds
+        placeholder defaults from ``create``, and every field is overwritten
+        here before the transition.
+
+        Generates the public token, sets ``upload_completed_at`` on the
+        transfer, fires ``TRANSFER_CREATED``, and schedules recipient emails
+        in email mode. Callers must have successfully called ``complete-upload``
+        on every file first. Idempotent on an already-finalized transfer:
+        returns the current state without applying the body.
         """
         transfer = self.get_object()
 
         if transfer.is_finalized:
             serializer = TransferDetailSerializer(transfer)
             return drf.response.Response(serializer.data)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        metadata = serializer.validated_data
 
         files = list(transfer.files.all())
         if not files:
@@ -350,15 +444,39 @@ class TransferViewSet(
             )
 
         with transaction.atomic():
+            transfer.title = metadata["title"]
+            transfer.sensitive = metadata["sensitive"]
+            transfer.sharing_mode = metadata["sharing_mode"]
+            # Anchor the expiry clock at finalize time — the countdown makes
+            # sense from the moment the link is published, not from whenever
+            # the user happened to start the draft.
+            transfer.expires_at = timezone.now() + timedelta(
+                days=int(metadata["expires_in_days"])
+            )
             transfer.public_token = _generate_public_token()
             transfer.upload_completed_at = timezone.now()
             transfer.save(
                 update_fields=[
+                    "title",
+                    "sensitive",
+                    "sharing_mode",
+                    "expires_at",
                     "public_token",
                     "upload_completed_at",
                     "updated_at",
                 ]
             )
+
+            # Replace recipients wholesale: drafts start with none, callers may
+            # have bounced between email and link modes locally, so the only
+            # source of truth is what lands in this request body.
+            transfer.recipients.all().delete()
+            if metadata["sharing_mode"] == SharingMode.EMAIL:
+                for email in metadata["recipients"]:
+                    models.TransferRecipient.objects.create(
+                        transfer=transfer, email=email,
+                    )
+
             _log_event(transfer, TransferEventType.TRANSFER_CREATED, request)
 
             if transfer.sharing_mode == SharingMode.EMAIL:
@@ -368,8 +486,8 @@ class TransferViewSet(
                     lambda: send_recipient_invitations_task.delay(str(transfer.id))
                 )
 
-        serializer = TransferDetailSerializer(transfer)
-        return drf.response.Response(serializer.data)
+        detail = TransferDetailSerializer(transfer)
+        return drf.response.Response(detail.data)
 
     @extend_schema(responses={204: None})
     @action(detail=True, methods=["post"], url_path="abort-upload")

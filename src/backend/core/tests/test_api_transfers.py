@@ -1,8 +1,9 @@
 """Tests for the Transfer API endpoints (authenticated agent).
 
-These tests cover the multipart upload flow: initiate, sign-part,
-complete-upload, abort-upload. S3 is mocked via unittest.mock — we don't hit
-the real object storage.
+These tests cover the draft + multipart upload flow: add-file (which also
+opens the draft on the first call), sign-part, complete-upload, remove-file,
+abort-upload, and finalize (where transfer-level metadata is applied in one
+shot). S3 is mocked via unittest.mock — we don't hit the real object storage.
 """
 
 from unittest.mock import MagicMock, patch
@@ -260,28 +261,32 @@ class TestTransferDetail:
         assert response.status_code == 404
 
 
-def _create_transfer(authenticated_client, files=None, **transfer_body):
-    """Helper: POST /transfers/ with a files list in a single call."""
-    body = {
-        "files": files or [{"filename": "a.bin", "size": 100}],
-        **transfer_body,
-    }
-    return authenticated_client.post(API_URL, body, format="json")
+ADD_FILE_URL = f"{API_URL}add-file/"
+
+
+def _add_file(authenticated_client, transfer_id=None, **file_body):
+    """Helper: POST /transfers/add-file/. Omit ``transfer_id`` for the first
+    drop (which opens the draft as a side-effect); pass it on subsequent
+    drops to attach the file to the same draft."""
+    defaults = {"filename": "a.bin", "size": 100}
+    defaults.update(file_body)
+    body = dict(defaults)
+    if transfer_id is not None:
+        body["transfer_id"] = str(transfer_id)
+    return authenticated_client.post(ADD_FILE_URL, body, format="json")
 
 
 def _initiate_with_file(authenticated_client, **file_body):
-    """Create a transfer with one file, return a dict that flattens the
-    response so downstream tests (sign-part, complete-upload, finalize) can
-    grab transfer_id + transfer_file_id + upload_id directly."""
-    defaults = {"filename": "a.bin", "size": 100}
-    defaults.update(file_body)
-    resp = _create_transfer(authenticated_client, files=[defaults])
+    """First-drop helper: opens a draft and attaches one file. Returns the
+    response fields the downstream tests (sign-part, complete-upload,
+    finalize) need to wire their calls."""
+    resp = _add_file(authenticated_client, **file_body)
     assert resp.status_code == 201, resp.data
     return {
         "transfer_id": resp.data["transfer_id"],
-        "transfer_file_id": resp.data["files"][0]["transfer_file_id"],
-        "upload_id": resp.data["files"][0]["upload_id"],
-        "s3_key": resp.data["files"][0]["s3_key"],
+        "transfer_file_id": resp.data["transfer_file_id"],
+        "upload_id": resp.data["upload_id"],
+        "s3_key": resp.data["s3_key"],
         "chunk_size": resp.data["chunk_size"],
     }
 
@@ -300,43 +305,77 @@ def _complete_upload(authenticated_client, transfer_id, transfer_file_id):
     )
 
 
+def _finalize(authenticated_client, transfer_id, **metadata):
+    """Helper: POST /transfers/{id}/finalize/. Empty body works — every
+    field on ``TransferFinalizeSerializer`` has a default that keeps the
+    transfer coherent (link mode, no recipients, default expiry)."""
+    return authenticated_client.post(
+        f"{API_URL}{transfer_id}/finalize/", metadata, format="json",
+    )
+
+
+def _setup_draft_with_files(authenticated_client, file_specs):
+    """Create a draft and attach each file in ``file_specs`` (a list of
+    ``{"filename", "size", ...}`` dicts). Returns ``(transfer_id, [ids])``
+    so callers can reference individual TransferFile rows.
+    """
+    initiate_resp = _add_file(authenticated_client, **file_specs[0])
+    assert initiate_resp.status_code == 201, initiate_resp.data
+    transfer_id = initiate_resp.data["transfer_id"]
+    file_ids = [initiate_resp.data["transfer_file_id"]]
+    for spec in file_specs[1:]:
+        resp = _add_file(
+            authenticated_client, transfer_id=transfer_id, **spec
+        )
+        assert resp.status_code == 201, resp.data
+        file_ids.append(resp.data["transfer_file_id"])
+    return transfer_id, file_ids
+
+
 @pytest.mark.django_db
-class TestTransferCreate:
-    """Covers POST /transfers/ — creates a transfer + all its files in one call."""
+class TestTransferAddFile:
+    """Covers POST /transfers/add-file/ — the single entry point for attaching
+    files to a draft. Calling it without ``transfer_id`` opens a new draft as
+    a side-effect; subsequent calls with ``transfer_id`` attach to the same
+    draft. There is no separate "create" endpoint.
+    """
 
     def test_unauthenticated(self, api_client):
         response = api_client.post(
-            API_URL,
-            {"files": [{"filename": "a.bin", "size": 100}]},
+            ADD_FILE_URL,
+            {"filename": "a.bin", "size": 100},
             format="json",
         )
         assert response.status_code == 401
 
-    def test_create_with_single_file(
+    def test_create_method_not_allowed(self, authenticated_client):
+        # The bare POST /transfers/ route was removed with the refactor; any
+        # attempt to reach it must 405 so clients rely on /add-file/ instead.
+        response = authenticated_client.post(
+            API_URL, {"files": [{"filename": "a.bin", "size": 1}]}, format="json"
+        )
+        assert response.status_code == 405
+
+    def test_first_drop_opens_draft(
         self, patched_s3, authenticated_client, user
     ):
-        response = _create_transfer(
+        response = _add_file(
             authenticated_client,
-            title="My transfer",
-            expires_in_days=30,
-            files=[
-                {
-                    "filename": "report.pdf",
-                    "size": 25 * 1024 * 1024,
-                    "mime_type": "application/pdf",
-                }
-            ],
+            filename="report.pdf",
+            size=25 * 1024 * 1024,
+            mime_type="application/pdf",
         )
         assert response.status_code == 201, response.data
         assert "transfer_id" in response.data
         assert response.data["chunk_size"] > 0
-        assert len(response.data["files"]) == 1
-        assert response.data["files"][0]["upload_id"] == "FAKE-UPLOAD-ID"
+        assert response.data["upload_id"] == "FAKE-UPLOAD-ID"
 
         transfer = Transfer.objects.get(id=response.data["transfer_id"])
         assert transfer.owner == user
-        assert transfer.title == "My transfer"
         assert transfer.status == TransferStatus.ACTIVE
+        # Metadata is frozen at finalize time, not here — the draft carries
+        # only placeholder defaults.
+        assert transfer.title == ""
         assert transfer.public_token is None
         assert transfer.upload_completed_at is None
         assert transfer.files.count() == 1
@@ -350,101 +389,131 @@ class TestTransferCreate:
         assert tf.s3_key.startswith(f"transfers/{transfer.id}/")
         patched_s3.create.assert_called_once()
 
-    def test_create_with_multiple_files(
+    def test_first_drop_sets_placeholder_expiry(
         self, patched_s3, authenticated_client
     ):
-        response = _create_transfer(
-            authenticated_client,
-            files=[
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
-                {"filename": "c.bin", "size": 300},
-            ],
-        )
-        assert response.status_code == 201, response.data
-        assert len(response.data["files"]) == 3
-        assert patched_s3.create.call_count == 3
-
-        transfer = Transfer.objects.get(id=response.data["transfer_id"])
-        names = sorted(f.filename for f in transfer.files.all())
-        assert names == ["a.bin", "b.bin", "c.bin"]
-
-    def test_create_default_expiry(
-        self, patched_s3, authenticated_client
-    ):
-        response = _create_transfer(authenticated_client)
+        # ``expires_at`` is required on the model, so the draft gets a
+        # default-window placeholder that ``finalize`` will overwrite.
+        response = _add_file(authenticated_client)
         assert response.status_code == 201
         transfer = Transfer.objects.get(id=response.data["transfer_id"])
         delta = (transfer.expires_at - transfer.created_at).total_seconds()
         assert delta == pytest.approx(30 * 86400, abs=1)
 
-    def test_create_invalid_expiry(
+    def test_subsequent_drop_attaches_to_same_draft(
         self, patched_s3, authenticated_client
     ):
-        response = _create_transfer(
-            authenticated_client, expires_in_days=999
-        )
-        assert response.status_code == 400
-
-    def test_create_rejects_empty_files(self, authenticated_client):
-        response = authenticated_client.post(
-            API_URL, {"files": []}, format="json"
-        )
-        assert response.status_code == 400
-
-    def test_create_rejects_missing_files(self, authenticated_client):
-        response = authenticated_client.post(API_URL, {}, format="json")
-        assert response.status_code == 400
-
-    def test_create_file_too_large(
-        self, patched_s3, authenticated_client, settings
-    ):
-        response = _create_transfer(
+        initiate = _initiate_with_file(authenticated_client)
+        # Second drop — passes the draft id back in the body.
+        response = _add_file(
             authenticated_client,
-            files=[
-                {
-                    "filename": "huge.bin",
-                    "size": settings.TRANSFER_MAX_FILE_SIZE + 1,
-                }
-            ],
+            transfer_id=initiate["transfer_id"],
+            filename="second.bin",
+            size=200,
+        )
+        assert response.status_code == 201, response.data
+        assert response.data["transfer_id"] == initiate["transfer_id"]
+
+        transfer = Transfer.objects.get(id=initiate["transfer_id"])
+        names = sorted(f.filename for f in transfer.files.all())
+        assert names == ["a.bin", "second.bin"]
+        assert patched_s3.create.call_count == 2
+
+    def test_subsequent_drop_rejects_finalized(
+        self, patched_s3, authenticated_client, user
+    ):
+        transfer = TransferFactory(owner=user)  # already finalized
+        response = _add_file(
+            authenticated_client,
+            transfer_id=transfer.id,
+            filename="late.bin",
+            size=1,
+        )
+        assert response.status_code == 403
+
+    def test_subsequent_drop_rejects_other_user(
+        self, patched_s3, authenticated_client
+    ):
+        other = TransferFactory()  # owned by someone else
+        response = _add_file(
+            authenticated_client,
+            transfer_id=other.id,
+            filename="x.bin",
+            size=1,
+        )
+        assert response.status_code == 404
+
+    def test_subsequent_drop_rejects_unknown_transfer(
+        self, patched_s3, authenticated_client
+    ):
+        import uuid as _uuid
+
+        response = _add_file(
+            authenticated_client,
+            transfer_id=_uuid.uuid4(),
+            filename="x.bin",
+            size=1,
+        )
+        assert response.status_code == 404
+
+    def test_rejects_file_too_large(
+        self, patched_s3, authenticated_client, settings
+    ):
+        response = _add_file(
+            authenticated_client,
+            filename="huge.bin",
+            size=settings.TRANSFER_MAX_FILE_SIZE + 1,
         )
         assert response.status_code == 400
 
-    def test_create_total_size_too_large(
+    def test_rejects_cumulative_total_size(
         self, patched_s3, authenticated_client, settings
     ):
-        # Each file is under TRANSFER_MAX_FILE_SIZE but their sum exceeds
-        # TRANSFER_MAX_TOTAL_SIZE → must be rejected at the transfer level.
+        # Per-file limit is bumped so each individual drop passes, but the
+        # cumulative total on the draft busts the transfer-level ceiling.
         settings.TRANSFER_MAX_FILE_SIZE = 100
         settings.TRANSFER_MAX_TOTAL_SIZE = 150
-        response = _create_transfer(
+        initiate = _initiate_with_file(authenticated_client, size=80)
+        response = _add_file(
             authenticated_client,
-            files=[
-                {"filename": "a.bin", "size": 80},
-                {"filename": "b.bin", "size": 80},
-            ],
+            transfer_id=initiate["transfer_id"],
+            filename="b.bin",
+            size=80,
         )
         assert response.status_code == 400
-        assert "files" in response.data
+        assert "size" in response.data
 
-    def test_create_missing_filename(self, patched_s3, authenticated_client):
-        response = _create_transfer(authenticated_client, files=[{"size": 100}])
-        assert response.status_code == 400
-
-    def test_create_limit_enforced(
+    def test_rejects_cumulative_count_limit(
         self, patched_s3, authenticated_client, settings
     ):
         settings.TRANSFER_MAX_FILES_PER_TRANSFER = 2
-        response = _create_transfer(
+        initiate = _initiate_with_file(authenticated_client, filename="a.bin")
+        _add_file(
             authenticated_client,
-            files=[
-                {"filename": "a", "size": 1},
-                {"filename": "b", "size": 1},
-                {"filename": "c", "size": 1},
-            ],
+            transfer_id=initiate["transfer_id"],
+            filename="b.bin",
+            size=1,
+        )
+        response = _add_file(
+            authenticated_client,
+            transfer_id=initiate["transfer_id"],
+            filename="c.bin",
+            size=1,
         )
         assert response.status_code == 400
         assert "files" in response.data
+
+    def test_rejects_missing_filename(self, patched_s3, authenticated_client):
+        response = authenticated_client.post(
+            ADD_FILE_URL, {"size": 100}, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_rejects_missing_size(self, patched_s3, authenticated_client):
+        response = authenticated_client.post(
+            ADD_FILE_URL, {"filename": "a.bin"}, format="json"
+        )
+        assert response.status_code == 400
 
 
 @pytest.mark.django_db
@@ -663,16 +732,14 @@ class TestTransferAbortUpload:
         ).exists()
 
     def test_abort_multi_file_nukes_all(self, patched_s3, authenticated_client):
-        resp = _create_transfer(
+        transfer_id, _file_ids = _setup_draft_with_files(
             authenticated_client,
-            files=[
+            [
                 {"filename": "a.bin", "size": 100},
                 {"filename": "b.bin", "size": 200},
                 {"filename": "c.bin", "size": 300},
             ],
         )
-        assert resp.status_code == 201
-        transfer_id = resp.data["transfer_id"]
 
         response = authenticated_client.post(
             f"{API_URL}{transfer_id}/abort-upload/"
@@ -733,22 +800,17 @@ class TestTransferFinalize:
         assert_single_event(transfer.id, TransferEventType.TRANSFER_CREATED)
 
     def test_finalize_multi_file(self, patched_s3, authenticated_client):
-        resp = _create_transfer(
+        transfer_id, file_ids = _setup_draft_with_files(
             authenticated_client,
-            files=[
+            [
                 {"filename": "a.bin", "size": 100},
                 {"filename": "b.bin", "size": 200},
             ],
         )
-        transfer_id = resp.data["transfer_id"]
-        for desc in resp.data["files"]:
-            _complete_upload(
-                authenticated_client, transfer_id, desc["transfer_file_id"]
-            )
+        for tf_id in file_ids:
+            _complete_upload(authenticated_client, transfer_id, tf_id)
 
-        response = authenticated_client.post(
-            f"{API_URL}{transfer_id}/finalize/"
-        )
+        response = _finalize(authenticated_client, transfer_id)
         assert response.status_code == 200, response.data
         assert response.data["public_token"] is not None
         assert_single_event(transfer_id, TransferEventType.TRANSFER_CREATED)
@@ -756,30 +818,21 @@ class TestTransferFinalize:
     def test_finalize_rejects_pending_files(
         self, patched_s3, authenticated_client
     ):
-        resp = _create_transfer(
+        transfer_id, file_ids = _setup_draft_with_files(
             authenticated_client,
-            files=[
+            [
                 {"filename": "a.bin", "size": 100},
                 {"filename": "b.bin", "size": 200},
             ],
         )
-        transfer_id = resp.data["transfer_id"]
         # Complete only the first file.
-        _complete_upload(
-            authenticated_client,
-            transfer_id,
-            resp.data["files"][0]["transfer_file_id"],
-        )
+        _complete_upload(authenticated_client, transfer_id, file_ids[0])
 
-        response = authenticated_client.post(
-            f"{API_URL}{transfer_id}/finalize/"
-        )
+        response = _finalize(authenticated_client, transfer_id)
         assert response.status_code == 400
         assert "files" in response.data
         assert "pending_file_ids" in response.data
-        assert response.data["pending_file_ids"] == [
-            resp.data["files"][1]["transfer_file_id"]
-        ]
+        assert response.data["pending_file_ids"] == [file_ids[1]]
 
         transfer = Transfer.objects.get(id=transfer_id)
         assert transfer.public_token is None
@@ -813,6 +866,206 @@ class TestTransferFinalize:
         )
         response = authenticated_client.post(
             f"{API_URL}{other.id}/finalize/"
+        )
+        assert response.status_code == 404
+
+    def test_finalize_applies_metadata(
+        self, patched_s3, authenticated_client
+    ):
+        # Metadata is frozen here, not at draft-creation time. Verify that
+        # the body's title / sharing_mode / recipients / sensitive /
+        # expires_in_days all land on the transfer in a single transition.
+        initiate = _initiate_with_file(authenticated_client)
+        _complete_upload(
+            authenticated_client,
+            initiate["transfer_id"],
+            initiate["transfer_file_id"],
+        )
+
+        before_expires = Transfer.objects.get(
+            id=initiate["transfer_id"]
+        ).expires_at
+
+        response = _finalize(
+            authenticated_client,
+            initiate["transfer_id"],
+            title="Dossier Marché",
+            sharing_mode="email",
+            recipients=["alice@example.com", "bob@example.com"],
+            sensitive=True,
+            expires_in_days=7,
+        )
+        assert response.status_code == 200, response.data
+
+        transfer = Transfer.objects.get(id=initiate["transfer_id"])
+        assert transfer.title == "Dossier Marché"
+        assert transfer.sharing_mode == "email"
+        assert transfer.sensitive is True
+        # expires_at is re-anchored from *now* at finalize, not from the
+        # draft's placeholder. The new value should differ from the one
+        # set at draft creation.
+        assert transfer.expires_at != before_expires
+        delta = (transfer.expires_at - timezone.now()).total_seconds()
+        assert delta == pytest.approx(7 * 86400, abs=5)
+        recipients = sorted(r.email for r in transfer.recipients.all())
+        assert recipients == ["alice@example.com", "bob@example.com"]
+
+    def test_finalize_rejects_email_mode_without_recipients(
+        self, patched_s3, authenticated_client
+    ):
+        initiate = _initiate_with_file(authenticated_client)
+        _complete_upload(
+            authenticated_client,
+            initiate["transfer_id"],
+            initiate["transfer_file_id"],
+        )
+        response = _finalize(
+            authenticated_client,
+            initiate["transfer_id"],
+            sharing_mode="email",
+            recipients=[],
+        )
+        assert response.status_code == 400
+        assert "recipients" in response.data
+
+    def test_finalize_rejects_link_mode_with_recipients(
+        self, patched_s3, authenticated_client
+    ):
+        initiate = _initiate_with_file(authenticated_client)
+        _complete_upload(
+            authenticated_client,
+            initiate["transfer_id"],
+            initiate["transfer_file_id"],
+        )
+        response = _finalize(
+            authenticated_client,
+            initiate["transfer_id"],
+            sharing_mode="link",
+            recipients=["alice@example.com"],
+        )
+        assert response.status_code == 400
+        assert "recipients" in response.data
+
+    def test_finalize_discards_recipients_when_mode_is_link(
+        self, patched_s3, authenticated_client
+    ):
+        # Edge case: caller switches the draft from "email" to "link" right
+        # before finalize — the final write should end up with zero recipients
+        # regardless of what was locally buffered during the draft phase.
+        initiate = _initiate_with_file(authenticated_client)
+        _complete_upload(
+            authenticated_client,
+            initiate["transfer_id"],
+            initiate["transfer_file_id"],
+        )
+        response = _finalize(
+            authenticated_client,
+            initiate["transfer_id"],
+            sharing_mode="link",
+            # No ``recipients`` key → defaults to [] which is valid for link.
+        )
+        assert response.status_code == 200
+        transfer = Transfer.objects.get(id=initiate["transfer_id"])
+        assert transfer.recipients.count() == 0
+
+
+@pytest.mark.django_db
+class TestTransferRemoveFile:
+    """Covers POST /transfers/{id}/remove-file/ — per-file detach on a draft."""
+
+    def test_unauthenticated(self, api_client, transfer):
+        response = api_client.post(
+            f"{API_URL}{transfer.id}/remove-file/",
+            {"transfer_file_id": str(transfer.id)},
+            format="json",
+        )
+        assert response.status_code == 401
+
+    def test_remove_existing_file(self, patched_s3, authenticated_client):
+        transfer_id, file_ids = _setup_draft_with_files(
+            authenticated_client,
+            [
+                {"filename": "a.bin", "size": 100},
+                {"filename": "b.bin", "size": 200},
+            ],
+        )
+
+        response = authenticated_client.post(
+            f"{API_URL}{transfer_id}/remove-file/",
+            {"transfer_file_id": file_ids[0]},
+            format="json",
+        )
+        assert response.status_code == 204
+        # S3 best-effort cleanup was triggered.
+        patched_s3.abort.assert_called()
+        patched_s3.delete.assert_called()
+
+        # The other file remains; the draft stays open.
+        remaining = list(
+            TransferFile.objects.filter(transfer_id=transfer_id).values_list(
+                "filename", flat=True
+            )
+        )
+        assert remaining == ["b.bin"]
+        assert Transfer.objects.filter(id=transfer_id).exists()
+
+    def test_remove_last_file_destroys_draft(
+        self, patched_s3, authenticated_client
+    ):
+        # Empty drafts have no metadata of their own, so removing the final
+        # file must take the parent Transfer down too — otherwise a client
+        # that bypasses our frontend could leak headless drafts until the
+        # abandoned-upload cron catches them at T+24h.
+        initiate = _initiate_with_file(authenticated_client)
+
+        response = authenticated_client.post(
+            f"{API_URL}{initiate['transfer_id']}/remove-file/",
+            {"transfer_file_id": initiate["transfer_file_id"]},
+            format="json",
+        )
+        assert response.status_code == 204
+        assert not Transfer.objects.filter(
+            id=initiate["transfer_id"]
+        ).exists()
+        assert not TransferFile.objects.filter(
+            id=initiate["transfer_file_id"]
+        ).exists()
+
+    def test_remove_unknown_file(self, patched_s3, authenticated_client):
+        import uuid as _uuid
+
+        initiate = _initiate_with_file(authenticated_client)
+        response = authenticated_client.post(
+            f"{API_URL}{initiate['transfer_id']}/remove-file/",
+            {"transfer_file_id": str(_uuid.uuid4())},
+            format="json",
+        )
+        assert response.status_code == 404
+
+    def test_remove_on_finalized_rejected(
+        self, patched_s3, authenticated_client, user
+    ):
+        # Finalized transfers are frozen — use revoke to tear them down.
+        transfer = TransferFactory(owner=user)
+        tf = TransferFileFactory(
+            transfer=transfer, upload_completed_at=timezone.now()
+        )
+        response = authenticated_client.post(
+            f"{API_URL}{transfer.id}/remove-file/",
+            {"transfer_file_id": str(tf.id)},
+            format="json",
+        )
+        assert response.status_code == 403
+
+    def test_remove_rejects_other_user(self, patched_s3, authenticated_client):
+        other_transfer = TransferFactory(
+            public_token=None, upload_completed_at=None
+        )
+        tf = TransferFileFactory(transfer=other_transfer, upload_id="UPID")
+        response = authenticated_client.post(
+            f"{API_URL}{other_transfer.id}/remove-file/",
+            {"transfer_file_id": str(tf.id)},
+            format="json",
         )
         assert response.status_code == 404
 
