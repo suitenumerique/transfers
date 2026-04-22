@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
-  DeleteConfirmationModal,
   Input,
   Loader,
+  Modal,
+  ModalSize,
   useModal,
 } from "@gouvfr-lasuite/cunningham-react";
 import {
@@ -103,11 +104,9 @@ export function TransferDetail({
     downloadFile(transfer.public_token, fileId);
   };
 
-  const handleRevokeDecision = (decision?: string | null) => {
+  const handleRevokeConfirm = () => {
     revokeModal.close();
-    if (decision === "delete") {
-      revokeTransfer.mutate(transfer.id);
-    }
+    revokeTransfer.mutate(transfer.id);
   };
 
   return (
@@ -323,14 +322,32 @@ export function TransferDetail({
         )}
       </section>
 
-      <DeleteConfirmationModal
+      <Modal
+        size={ModalSize.SMALL}
         isOpen={revokeModal.isOpen}
         onClose={revokeModal.close}
-        onDecide={handleRevokeDecision}
         title={t("Confirm revoke")}
+        rightActions={
+          <>
+            <Button
+              color="neutral"
+              variant="secondary"
+              onClick={revokeModal.close}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              color="error"
+              onClick={handleRevokeConfirm}
+              disabled={revokeTransfer.isPending}
+            >
+              {t("Deactivate")}
+            </Button>
+          </>
+        }
       >
         {t("This link will no longer work and files will be deleted.")}
-      </DeleteConfirmationModal>
+      </Modal>
     </div>
   );
 }
