@@ -85,7 +85,13 @@ export class MultipartUploader {
   private getBlob(partNumber: number): Blob {
     const start = (partNumber - 1) * this.opts.chunkSize;
     const end = Math.min(start + this.opts.chunkSize, this.opts.file.size);
-    return this.opts.file.slice(start, end);
+    // Explicit binary type prevents Firefox from routing the blob through
+    // its text-body path in XHR — on Fx 140+ an untyped slice was being
+    // widened to a UTF-16 string per chunk (two-byte per byte, 252 live
+    // copies observed in about:memory on a 19 GB upload = 15 GB of
+    // string heap). application/octet-stream keeps it on the binary
+    // stream path and the retention drops to blob refs only.
+    return this.opts.file.slice(start, end, "application/octet-stream");
   }
 
   private async uploadWithRetry(partNumber: number): Promise<UploadedPart> {
@@ -124,7 +130,36 @@ export class MultipartUploader {
     throw lastError ?? new Error("Unknown upload error");
   }
 
+  private progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastProgressEmit = 0;
+
+  // Throttle progress updates to ~10 Hz: XHR fires progress events many
+  // times per second per chunk × 4 concurrent workers ⇒ without
+  // throttling each byte round-trips through React re-renders, which
+  // burns CPU (and thrashes GC) on large files. The trailing flush
+  // guarantees the UI lands on the final 100 % value.
   private reportProgress(): void {
+    if (!this.opts.onProgress) return;
+    const now = performance.now();
+    const elapsed = now - this.lastProgressEmit;
+    if (elapsed >= 100) {
+      this.flushProgress(now);
+      return;
+    }
+    if (this.progressFlushTimer == null) {
+      this.progressFlushTimer = setTimeout(
+        () => this.flushProgress(performance.now()),
+        100 - elapsed,
+      );
+    }
+  }
+
+  private flushProgress(now: number): void {
+    if (this.progressFlushTimer != null) {
+      clearTimeout(this.progressFlushTimer);
+      this.progressFlushTimer = null;
+    }
+    this.lastProgressEmit = now;
     if (!this.opts.onProgress) return;
     const loaded = this.partProgress.reduce((acc, p) => acc + p, 0);
     this.opts.onProgress(loaded, this.opts.file.size);
