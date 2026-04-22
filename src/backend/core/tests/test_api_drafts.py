@@ -35,6 +35,7 @@ ADD_FILE_URL = f"{DRAFTS_URL}add-file/"
 
 # --- Helpers ---
 
+
 def _add_file(authenticated_client, draft_id=None, **file_body):
     """POST /drafts/add-file/. Omit ``draft_id`` for the first drop (opens
     the draft as a side-effect); pass it on subsequent drops to attach the
@@ -79,7 +80,9 @@ def _finalize(authenticated_client, draft_id, **metadata):
     ``DraftFinalizeSerializer`` has a default (link mode, no recipients,
     default expiry)."""
     return authenticated_client.post(
-        f"{DRAFTS_URL}{draft_id}/finalize/", metadata, format="json",
+        f"{DRAFTS_URL}{draft_id}/finalize/",
+        metadata,
+        format="json",
     )
 
 
@@ -92,15 +95,14 @@ def _setup_draft_with_files(authenticated_client, file_specs):
     draft_id = initiate_resp.data["draft_id"]
     file_ids = [initiate_resp.data["transfer_file_id"]]
     for spec in file_specs[1:]:
-        resp = _add_file(
-            authenticated_client, draft_id=draft_id, **spec
-        )
+        resp = _add_file(authenticated_client, draft_id=draft_id, **spec)
         assert resp.status_code == 201, resp.data
         file_ids.append(resp.data["transfer_file_id"])
     return draft_id, file_ids
 
 
 # --- Tests ---
+
 
 @pytest.mark.django_db
 class TestDraftAddFile:
@@ -128,9 +130,7 @@ class TestDraftAddFile:
         )
         assert response.status_code == 405
 
-    def test_first_drop_opens_draft(
-        self, patched_s3, authenticated_client, user
-    ):
+    def test_first_drop_opens_draft(self, patched_s3, authenticated_client, user):
         response = _add_file(
             authenticated_client,
             filename="report.pdf",
@@ -177,9 +177,7 @@ class TestDraftAddFile:
         assert names == ["a.bin", "second.bin"]
         assert patched_s3.create.call_count == 2
 
-    def test_subsequent_drop_rejects_other_user(
-        self, patched_s3, authenticated_client
-    ):
+    def test_subsequent_drop_rejects_other_user(self, patched_s3, authenticated_client):
         other = TransferDraftFactory()  # owned by someone else
         response = _add_file(
             authenticated_client,
@@ -200,9 +198,7 @@ class TestDraftAddFile:
         )
         assert response.status_code == 404
 
-    def test_rejects_file_too_large(
-        self, patched_s3, authenticated_client, settings
-    ):
+    def test_rejects_file_too_large(self, patched_s3, authenticated_client, settings):
         response = _add_file(
             authenticated_client,
             filename="huge.bin",
@@ -248,9 +244,7 @@ class TestDraftAddFile:
         assert "files" in response.data
 
     def test_rejects_missing_filename(self, patched_s3, authenticated_client):
-        response = authenticated_client.post(
-            ADD_FILE_URL, {"size": 100}, format="json"
-        )
+        response = authenticated_client.post(ADD_FILE_URL, {"size": 100}, format="json")
         assert response.status_code == 400
 
     def test_rejects_missing_size(self, patched_s3, authenticated_client):
@@ -290,9 +284,7 @@ class TestDraftSignPart:
 
     def test_sign_part_rejects_other_user(self, patched_s3, authenticated_client):
         other_draft = TransferDraftFactory()
-        tf = TransferFileFactory(
-            transfer=None, draft=other_draft, upload_id="UPID"
-        )
+        tf = TransferFileFactory(transfer=None, draft=other_draft, upload_id="UPID")
         response = authenticated_client.post(
             f"{DRAFTS_URL}{other_draft.id}/sign-part/",
             {"transfer_file_id": str(tf.id), "part_number": 1},
@@ -355,9 +347,7 @@ class TestDraftCompleteUpload:
             event_type=TransferEventType.TRANSFER_CREATED,
         ).exists()
 
-    def test_complete_with_empty_parts_rejected(
-        self, patched_s3, authenticated_client
-    ):
+    def test_complete_with_empty_parts_rejected(self, patched_s3, authenticated_client):
         initiate = _initiate_with_file(authenticated_client)
         response = authenticated_client.post(
             f"{DRAFTS_URL}{initiate['draft_id']}/complete-upload/",
@@ -387,9 +377,7 @@ class TestDraftCompleteUpload:
 
     def test_complete_rejects_other_user(self, patched_s3, authenticated_client):
         other_draft = TransferDraftFactory()
-        tf = TransferFileFactory(
-            transfer=None, draft=other_draft, upload_id="UPID"
-        )
+        tf = TransferFileFactory(transfer=None, draft=other_draft, upload_id="UPID")
         response = _complete_upload(
             authenticated_client, str(other_draft.id), str(tf.id)
         )
@@ -414,13 +402,9 @@ class TestDraftCompleteUpload:
         assert "parts" in response.data
         assert "size" in str(response.data["parts"])
         assert not TransferDraft.objects.filter(id=initiate["draft_id"]).exists()
-        assert not TransferFile.objects.filter(
-            id=initiate["transfer_file_id"]
-        ).exists()
+        assert not TransferFile.objects.filter(id=initiate["transfer_file_id"]).exists()
 
-    def test_complete_cleans_up_on_s3_error(
-        self, patched_s3, authenticated_client
-    ):
+    def test_complete_cleans_up_on_s3_error(self, patched_s3, authenticated_client):
         patched_s3.complete.side_effect = ClientError(
             {
                 "Error": {
@@ -446,12 +430,8 @@ class TestDraftCompleteUpload:
         assert "InvalidPart" in str(response.data["parts"])
 
         patched_s3.abort.assert_called_once()
-        assert not TransferDraft.objects.filter(
-            id=initiate["draft_id"]
-        ).exists()
-        assert not TransferFile.objects.filter(
-            id=initiate["transfer_file_id"]
-        ).exists()
+        assert not TransferDraft.objects.filter(id=initiate["draft_id"]).exists()
+        assert not TransferFile.objects.filter(id=initiate["transfer_file_id"]).exists()
 
 
 @pytest.mark.django_db
@@ -463,9 +443,7 @@ class TestDraftAbort:
         response = api_client.post(f"{DRAFTS_URL}{draft.id}/abort/")
         assert response.status_code == 401
 
-    def test_abort_deletes_draft_and_calls_s3(
-        self, patched_s3, authenticated_client
-    ):
+    def test_abort_deletes_draft_and_calls_s3(self, patched_s3, authenticated_client):
         initiate = _initiate_with_file(authenticated_client)
 
         response = authenticated_client.post(
@@ -475,12 +453,8 @@ class TestDraftAbort:
         patched_s3.abort.assert_called_once()
         patched_s3.delete.assert_called_once()
 
-        assert not TransferDraft.objects.filter(
-            id=initiate["draft_id"]
-        ).exists()
-        assert not TransferFile.objects.filter(
-            id=initiate["transfer_file_id"]
-        ).exists()
+        assert not TransferDraft.objects.filter(id=initiate["draft_id"]).exists()
+        assert not TransferFile.objects.filter(id=initiate["transfer_file_id"]).exists()
 
     def test_abort_multi_file_nukes_all(self, patched_s3, authenticated_client):
         draft_id, _file_ids = _setup_draft_with_files(
@@ -492,9 +466,7 @@ class TestDraftAbort:
             ],
         )
 
-        response = authenticated_client.post(
-            f"{DRAFTS_URL}{draft_id}/abort/"
-        )
+        response = authenticated_client.post(f"{DRAFTS_URL}{draft_id}/abort/")
         assert response.status_code == 204
         assert patched_s3.abort.call_count == 3
         assert patched_s3.delete.call_count == 3
@@ -503,13 +475,9 @@ class TestDraftAbort:
 
     def test_abort_rejects_other_user(self, patched_s3, authenticated_client):
         other_draft = TransferDraftFactory()
-        TransferFileFactory(
-            transfer=None, draft=other_draft, upload_id="UPID"
-        )
+        TransferFileFactory(transfer=None, draft=other_draft, upload_id="UPID")
 
-        response = authenticated_client.post(
-            f"{DRAFTS_URL}{other_draft.id}/abort/"
-        )
+        response = authenticated_client.post(f"{DRAFTS_URL}{other_draft.id}/abort/")
         assert response.status_code == 404
 
 
@@ -535,18 +503,14 @@ class TestDraftFinalize:
         assert response.data["public_token"] is not None
 
         # Draft is gone; Transfer exists under a fresh id.
-        assert not TransferDraft.objects.filter(
-            id=initiate["draft_id"]
-        ).exists()
+        assert not TransferDraft.objects.filter(id=initiate["draft_id"]).exists()
         transfer = Transfer.objects.get(id=response.data["id"])
         assert transfer.public_token is not None
         # Transfer rows only exist post-finalize, so created_at ≈ now.
         assert (timezone.now() - transfer.created_at).total_seconds() < 5
         assert_single_event(transfer.id, TransferEventType.TRANSFER_CREATED)
 
-    def test_finalize_reparents_files(
-        self, patched_s3, authenticated_client
-    ):
+    def test_finalize_reparents_files(self, patched_s3, authenticated_client):
         """The TransferFile rows carry over from draft to transfer — same
         UUIDs, same S3 keys, just a swapped FK."""
         draft_id, file_ids = _setup_draft_with_files(
@@ -585,13 +549,9 @@ class TestDraftFinalize:
         response = _finalize(authenticated_client, draft_id)
         assert response.status_code == 200, response.data
         assert response.data["public_token"] is not None
-        assert_single_event(
-            response.data["id"], TransferEventType.TRANSFER_CREATED
-        )
+        assert_single_event(response.data["id"], TransferEventType.TRANSFER_CREATED)
 
-    def test_finalize_rejects_pending_files(
-        self, patched_s3, authenticated_client
-    ):
+    def test_finalize_rejects_pending_files(self, patched_s3, authenticated_client):
         draft_id, file_ids = _setup_draft_with_files(
             authenticated_client,
             [
@@ -612,9 +572,7 @@ class TestDraftFinalize:
         assert TransferDraft.objects.filter(id=draft_id).exists()
         assert Transfer.objects.count() == 0
 
-    def test_finalize_rejects_empty_draft(
-        self, patched_s3, authenticated_client, user
-    ):
+    def test_finalize_rejects_empty_draft(self, patched_s3, authenticated_client, user):
         # A draft with zero files can't be finalized — nothing to publish.
         draft = TransferDraftFactory(owner=user)
         response = _finalize(authenticated_client, draft.id)
@@ -628,14 +586,10 @@ class TestDraftFinalize:
             draft=other_draft,
             upload_completed_at=timezone.now(),
         )
-        response = authenticated_client.post(
-            f"{DRAFTS_URL}{other_draft.id}/finalize/"
-        )
+        response = authenticated_client.post(f"{DRAFTS_URL}{other_draft.id}/finalize/")
         assert response.status_code == 404
 
-    def test_finalize_applies_metadata(
-        self, patched_s3, authenticated_client
-    ):
+    def test_finalize_applies_metadata(self, patched_s3, authenticated_client):
         # Metadata is frozen here, not at draft-creation time. Verify the
         # body's fields all land on the newly-created transfer in one write.
         initiate = _initiate_with_file(authenticated_client)
@@ -763,9 +717,7 @@ class TestDraftRemoveFile:
         assert remaining == ["b.bin"]
         assert TransferDraft.objects.filter(id=draft_id).exists()
 
-    def test_remove_last_file_destroys_draft(
-        self, patched_s3, authenticated_client
-    ):
+    def test_remove_last_file_destroys_draft(self, patched_s3, authenticated_client):
         # Empty drafts have no reason to exist — removing the last file
         # takes the draft with it, so clients that bypass our frontend
         # can't leak headless drafts until the cron sweeps them.
@@ -777,12 +729,8 @@ class TestDraftRemoveFile:
             format="json",
         )
         assert response.status_code == 204
-        assert not TransferDraft.objects.filter(
-            id=initiate["draft_id"]
-        ).exists()
-        assert not TransferFile.objects.filter(
-            id=initiate["transfer_file_id"]
-        ).exists()
+        assert not TransferDraft.objects.filter(id=initiate["draft_id"]).exists()
+        assert not TransferFile.objects.filter(id=initiate["transfer_file_id"]).exists()
 
     def test_remove_unknown_file(self, patched_s3, authenticated_client):
         initiate = _initiate_with_file(authenticated_client)
@@ -795,9 +743,7 @@ class TestDraftRemoveFile:
 
     def test_remove_rejects_other_user(self, patched_s3, authenticated_client):
         other_draft = TransferDraftFactory()
-        tf = TransferFileFactory(
-            transfer=None, draft=other_draft, upload_id="UPID"
-        )
+        tf = TransferFileFactory(transfer=None, draft=other_draft, upload_id="UPID")
         response = authenticated_client.post(
             f"{DRAFTS_URL}{other_draft.id}/remove-file/",
             {"transfer_file_id": str(tf.id)},
@@ -887,9 +833,7 @@ class TestCleanupAbandonedDraftsTask:
         Transfer.objects.filter(id=transfer.id).update(
             created_at=timezone.now() - timedelta(days=2)
         )
-        TransferFileFactory(
-            transfer=transfer, upload_completed_at=timezone.now()
-        )
+        TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
 
         cleanup_abandoned_drafts_task()
 
@@ -917,15 +861,11 @@ class TestDraftAddFileFromDrive:
             body["draft_id"] = str(draft_id)
         return authenticated_client.post(ADD_FILE_URL, body, format="json")
 
-    def test_first_drop_opens_draft_and_enqueues_task(
-        self, authenticated_client, user
-    ):
+    def test_first_drop_opens_draft_and_enqueues_task(self, authenticated_client, user):
         from django.test import TestCase
 
         with (
-            patch(
-                "core.api.viewsets.draft.import_drive_file_task"
-            ) as mock_task,
+            patch("core.api.viewsets.draft.import_drive_file_task") as mock_task,
             TestCase.captureOnCommitCallbacks(execute=True),
         ):
             response = self._add_from_drive(authenticated_client)
@@ -946,17 +886,13 @@ class TestDraftAddFileFromDrive:
         # mock being called after the request completes.
         mock_task.delay.assert_called_once_with(str(tf.id))
 
-    def test_rejects_file_too_large(
-        self, authenticated_client, settings
-    ):
+    def test_rejects_file_too_large(self, authenticated_client, settings):
         settings.TRANSFER_MAX_FILE_SIZE = 1024
         with patch("core.api.viewsets.draft.import_drive_file_task"):
             response = self._add_from_drive(authenticated_client, size=2048)
         assert response.status_code == 400
 
-    def test_mix_with_local_drop_on_same_draft(
-        self, patched_s3, authenticated_client
-    ):
+    def test_mix_with_local_drop_on_same_draft(self, patched_s3, authenticated_client):
         """A draft can hold both locally-uploaded and Drive-imported files.
         The constraint is exactly one parent (draft), not uniform source."""
         local = _initiate_with_file(authenticated_client)
@@ -969,9 +905,7 @@ class TestDraftAddFileFromDrive:
 
         draft = TransferDraft.objects.get(id=local["draft_id"])
         assert draft.files.count() == 2
-        sources = {
-            tf.source_url for tf in draft.files.all()
-        }
+        sources = {tf.source_url for tf in draft.files.all()}
         assert sources == {"", self.DRIVE_URL}
 
 
@@ -984,9 +918,7 @@ class TestDraftRetrieve:
         response = api_client.get(f"{DRAFTS_URL}{draft.id}/")
         assert response.status_code == 401
 
-    def test_retrieve_returns_file_states(
-        self, patched_s3, authenticated_client, user
-    ):
+    def test_retrieve_returns_file_states(self, patched_s3, authenticated_client, user):
         initiate = _initiate_with_file(authenticated_client)
         with patch("core.api.viewsets.draft.import_drive_file_task"):
             authenticated_client.post(
@@ -1000,9 +932,7 @@ class TestDraftRetrieve:
                 format="json",
             )
 
-        response = authenticated_client.get(
-            f"{DRAFTS_URL}{initiate['draft_id']}/"
-        )
+        response = authenticated_client.get(f"{DRAFTS_URL}{initiate['draft_id']}/")
         assert response.status_code == 200
         files_by_name = {f["filename"]: f for f in response.data["files"]}
         assert files_by_name["a.bin"]["state"] == "uploading"
@@ -1020,6 +950,7 @@ class TestImportDriveFileTask:
 
     def _make_file(self, user, size=100, filename="d.jpg"):
         from core.tasks import import_drive_file_task
+
         draft = TransferDraftFactory(owner=user)
         tf = TransferFile.objects.create(
             draft=draft,
@@ -1161,9 +1092,7 @@ class TestImportDriveFileTask:
 
         with (
             patch("core.tasks.requests.get", return_value=_FakeResponse()),
-            patch(
-                "core.tasks.s3.create_multipart_upload"
-            ) as mock_create,
+            patch("core.tasks.s3.create_multipart_upload") as mock_create,
             patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
         ):
             import_drive_file_task(str(tf.id))

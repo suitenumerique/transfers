@@ -136,9 +136,7 @@ def import_drive_file_task(transfer_file_id):
             part_number = 1
             total_bytes = 0
             buffer = bytearray()
-            for chunk in response.iter_content(
-                chunk_size=_DRIVE_IMPORT_CHUNK_SIZE
-            ):
+            for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
                 if not chunk:
                     continue
                 buffer.extend(chunk)
@@ -173,25 +171,20 @@ def import_drive_file_task(transfer_file_id):
 
         if total_bytes != tf.size:
             raise ValueError(
-                f"Drive returned {total_bytes} bytes but file declared "
-                f"{tf.size}."
+                f"Drive returned {total_bytes} bytes but file declared {tf.size}."
             )
 
         s3.complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        tf.save(
-            update_fields=["upload_id", "upload_completed_at", "updated_at"]
-        )
+        tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
     except (
         requests.RequestException,
         botocore.exceptions.ClientError,
         ValueError,
     ):
-        logger.exception(
-            "Drive import failed for TransferFile %s", transfer_file_id
-        )
+        logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
         if upload_id:
             s3.abort_multipart_upload(key=key, upload_id=upload_id)
         # delete_object is safe on a key that never got fully written — S3
@@ -205,10 +198,7 @@ def import_drive_file_task(transfer_file_id):
 def send_recipient_invitations_task(transfer_id):
     """Send invitation emails to all recipients of an email-mode transfer."""
     try:
-        transfer = (
-            Transfer.objects.select_related("owner")
-            .get(id=transfer_id)
-        )
+        transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
     except Transfer.DoesNotExist:
         return
 

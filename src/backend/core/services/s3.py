@@ -101,9 +101,7 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     )
 
 
-def upload_part_bytes(
-    key: str, upload_id: str, part_number: int, body: bytes
-) -> str:
+def upload_part_bytes(key: str, upload_id: str, part_number: int, body: bytes) -> str:
     """Upload a single part of a multipart upload server-side. Returns the
     part's ``ETag`` as a double-quoted string, ready to feed back to
     ``complete_multipart_upload``.
@@ -169,7 +167,5 @@ def delete_object(key: str) -> None:
 def head_object_size(key: str) -> int:
     """Return the actual size (ContentLength) of an object in the bucket."""
     client = get_s3_client()
-    response = client.head_object(
-        Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key
-    )
+    response = client.head_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
     return int(response["ContentLength"])
