@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { openPicker } from "@gouvfr-lasuite/drive-sdk";
-import { Icon } from "@gouvfr-lasuite/ui-kit";
+import { FolderDrive } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
 import type { DrivePickedItem } from "../api/useTransferDraft";
 
@@ -13,6 +13,11 @@ interface Props {
   // Optional upper bound: reject obviously oversized items up-front for UX.
   // The backend re-checks the per-file and cumulative limits at add-file time.
   maxFileSize?: number;
+  // "button" (default) — Cunningham neutral button, used inline with the
+  // compact dropzone once files exist. "link" — plain text link with a
+  // folder icon, used below the empty dropzone per the design handoff
+  // ("avec le service Fichiers").
+  variant?: "button" | "link";
 }
 
 // Browser-side URL concatenation: backend sends Drive paths as relative
@@ -40,6 +45,7 @@ export function DriveAttachButton({
   onError,
   disabled,
   maxFileSize,
+  variant = "button",
 }: Props) {
   const { t } = useTranslation();
   const config = useConfig();
@@ -101,6 +107,30 @@ export function DriveAttachButton({
     }
   };
 
+  if (variant === "link") {
+    return (
+      <Button
+        type="button"
+        color="brand"
+        variant="tertiary"
+        size="small"
+        className="drive-attach-link"
+        onClick={handleClick}
+        disabled={disabled || busy}
+        icon={<FolderDrive />}
+      >
+        {/* Default children rely on the translation files, which all ship
+            the key. Inline JSX children would choke on {{app}} (JSX
+            reads it as an expression, not an i18next placeholder). */}
+        <Trans
+          i18nKey="drive.attach_link_label"
+          values={{ app: drive.app_name }}
+          components={{ strong: <strong /> }}
+        />
+      </Button>
+    );
+  }
+
   return (
     <Button
       type="button"
@@ -108,7 +138,7 @@ export function DriveAttachButton({
       size="small"
       onClick={handleClick}
       disabled={disabled || busy}
-      icon={<Icon name="folder_open" />}
+      icon={<FolderDrive />}
     >
       {t("Attach from {{app}}", { app: drive.app_name })}
     </Button>

@@ -70,4 +70,5 @@ export interface DownloadTransferFull {
   files: { id: string; filename: string; size: number; mime_type: string }[];
   owner_name: string;
   owner_email: string;
+  sharing_mode: SharingMode;
 }

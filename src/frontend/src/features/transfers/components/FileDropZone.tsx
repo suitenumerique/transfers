@@ -1,20 +1,16 @@
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
-import { Icon } from "@gouvfr-lasuite/ui-kit";
+import { CloudArrow, FileError } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {
   onChange: (files: File[]) => void;
-  // Compact variant used inline with an existing file list (e.g. "+ Add an
-  // item" tile). Swaps the large headline for a tight single row.
-  compact?: boolean;
-  // Extra CTA rendered inside the dropzone frame (e.g. the Drive attach
-  // button). Non-compact: below the size hint, centered. Compact: pushed
-  // to the right of the inline row. Hidden during an active drag in both
-  // modes to keep the "drop it" state clean. The slot stopPropagation's
-  // clicks so interactive children don't also trigger the file picker.
-  extraCta?: ReactNode;
+  // When set, the dropzone swaps its cloud+hint for an error state
+  // (red dashed border, red tinted background, FileError icon + message)
+  // so the user can't miss the rejection reason. The parent is
+  // responsible for clearing the error on the next add/remove.
+  errorMessage?: string | null;
 }
 
 function formatMaxSize(bytes: number): string {
@@ -66,14 +62,11 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({
-  onChange,
-  compact = false,
-  extraCta,
-}: FileDropZoneProps) {
+export function FileDropZone({ onChange, errorMessage }: FileDropZoneProps) {
   const { t } = useTranslation();
   const config = useConfig();
   const windowDragging = useWindowFileDrag();
+  const hasError = Boolean(errorMessage);
 
   const onDrop = useCallback(
     (accepted: File[]) => {
@@ -89,71 +82,58 @@ export function FileDropZone({
   const expanded = windowDragging || isDragActive;
 
   return (
-    <div className={`file-dropzone${compact ? " file-dropzone--compact" : ""}`}>
+    <div className="file-dropzone">
       <div
         {...getRootProps()}
         className={`file-dropzone__area${
-          compact ? " file-dropzone__area--compact" : ""
-        }${expanded ? " file-dropzone__area--expanded" : ""}${
-          isDragActive ? " file-dropzone__area--active" : ""
+          expanded ? " file-dropzone__area--expanded" : ""
+        }${isDragActive ? " file-dropzone__area--active" : ""}${
+          hasError ? " file-dropzone__area--error" : ""
         }`}
       >
         <input {...getInputProps()} />
-        {compact ? (
-          <>
-            <span
-              className="file-dropzone__icon-tile"
-              aria-hidden="true"
-            >
-              <Icon name="add" />
-            </span>
-            <div className="file-dropzone__compact-text">
-              <p className="file-dropzone__headline">
-                <span className="file-dropzone__cta-link">
-                  {t("Add an item")}
-                </span>
-                <span className="file-dropzone__cta-muted">
-                  {" "}
-                  {t("or drag and drop")}
-                </span>
-              </p>
-              <p className="file-dropzone__hint">
-                {t("Max {{size}}", {
-                  size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
-                })}
-              </p>
-            </div>
-            {extraCta && !isDragActive && (
-              <div
-                className="file-dropzone__compact-extra"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {extraCta}
-              </div>
-            )}
-          </>
-        ) : (
+        {hasError ? (
           <div className="file-dropzone__cta">
-            <Icon name="cloud_upload" className="file-dropzone__icon" />
-            <p className="file-dropzone__headline">
-              {isDragActive
-                ? t("Release to upload")
-                : t("Click to upload or drag and drop")}
+            <FileError className="file-dropzone__icon file-dropzone__icon--error" />
+            <p className="file-dropzone__title file-dropzone__title--error">
+              {errorMessage}
+            </p>
+            <p className="file-dropzone__title">
+              <span className="file-dropzone__title-strong">
+                {t("Click to upload")}
+              </span>{" "}
+              <span className="file-dropzone__title-muted">
+                {t("or drag and drop")}
+              </span>
             </p>
             <p className="file-dropzone__hint">
               {t("Max {{size}}", {
                 size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
               })}
             </p>
-            {extraCta && !isDragActive && (
-              <div
-                className="file-dropzone__extra"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <span className="file-dropzone__separator">{t("or")}</span>
-                {extraCta}
-              </div>
-            )}
+          </div>
+        ) : (
+          <div className="file-dropzone__cta">
+            <CloudArrow size={32} className="file-dropzone__icon" />
+            <p className="file-dropzone__title">
+              {isDragActive ? (
+                t("Release to upload")
+              ) : (
+                <>
+                  <span className="file-dropzone__title-strong">
+                    {t("Click to upload")}
+                  </span>{" "}
+                  <span className="file-dropzone__title-muted">
+                    {t("or drag and drop")}
+                  </span>
+                </>
+              )}
+            </p>
+            <p className="file-dropzone__hint">
+              {t("Max {{size}}", {
+                size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+              })}
+            </p>
           </div>
         )}
       </div>

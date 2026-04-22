@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Icon, IconType, LaGaufreV2, UserMenu } from "@gouvfr-lasuite/ui-kit";
+import { IconLeftPanel, LaGaufreV2, UserMenu } from "@gouvfr-lasuite/ui-kit";
 import { useAuth, logout } from "@/features/auth";
 import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
@@ -22,7 +22,7 @@ export function TopBar({ sidebarCollapsed, onToggle }: TopBarProps) {
         aria-label={sidebarCollapsed ? t("Open sidebar") : t("Collapse sidebar")}
         title={sidebarCollapsed ? t("Open sidebar") : t("Collapse sidebar")}
       >
-        <Icon name="view_sidebar" type={IconType.OUTLINED} />
+        <IconLeftPanel />
       </button>
       <div className="shell-topbar__spacer" />
       <LaGaufreV2

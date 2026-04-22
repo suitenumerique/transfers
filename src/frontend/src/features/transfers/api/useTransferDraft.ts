@@ -230,14 +230,16 @@ export function useTransferDraft(): TransferDraftHandle {
         if (!filesRef.current.some((f) => f.key === key)) return;
         updateFile(key, { state: "error", error: String(err) });
         setError(String(err));
-        // All-or-nothing: a single file failure tears down the whole draft,
-        // matching the server-side semantics of complete_upload on bad ETag.
-        void abortDraft();
+        // Leave the draft alive and surface the errored row. The user
+        // decides: click Delete on the bad row (retry by re-dropping) or
+        // cancel the whole draft. Previously we tore down the draft
+        // automatically here, which made the file silently vanish from
+        // the UI — indistinguishable from a successful removal.
       })
       .finally(() => {
         currentUploaderRef.current = null;
       });
-  }, [files, abortDraft, updateFile]);
+  }, [files, updateFile]);
 
   // --- Import poller ---
   // Drive imports run server-side (celery task). We poll the draft endpoint

@@ -3,14 +3,30 @@ import { useTranslation } from "react-i18next";
 import {
   Button,
   DeleteConfirmationModal,
+  Input,
   Loader,
   useModal,
 } from "@gouvfr-lasuite/cunningham-react";
-import { Icon } from "@gouvfr-lasuite/ui-kit";
+import {
+  ArrowUpRight,
+  Checkmark,
+  ChevronDown,
+  Clock,
+  Copy,
+  Doc,
+  Download,
+  Folder,
+  Globe,
+  Perso,
+  UserAvatar,
+} from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
+import { downloadFile } from "../api/useDownload";
+import { useResendTransfer } from "../api/useResendTransfer";
 import { useRevokeTransfer } from "../api/useRevokeTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
+import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -23,13 +39,31 @@ const EVENT_LABELS: Record<string, string> = {
   files_deleted: "Files deleted",
 };
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("fr-FR", {
-    day: "numeric",
+function formatActivityDate(iso: string): string {
+  return new Date(iso).toLocaleString("fr-FR", {
+    day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// Turn "amed.benarfa@email.fr" into "Amed Ben Arfa" — purely cosmetic so the
+// avatar picks a deterministic color per person. Falls back to the raw email
+// when the local-part is uninformative (single segment, digits-only, etc.).
+function displayNameFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? "";
+  if (!local) return email;
+  const parts = local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+  return parts.length >= 2 ? parts.join(" ") : email;
+}
+
+function daysUntil(iso: string): number {
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
 export function TransferDetail({
@@ -39,19 +73,34 @@ export function TransferDetail({
 }) {
   const { t } = useTranslation();
   const revokeTransfer = useRevokeTransfer();
+  const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
+  const [recipientsOpen, setRecipientsOpen] = useState(true);
   const revokeModal = useModal();
   const events = useTransferEvents(transfer.id);
 
   const downloadUrl = transfer.public_token
     ? `${window.location.origin}/t/${transfer.public_token}`
     : "";
+  const isPublicLink = transfer.sharing_mode === "link";
+  const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
+  const days = daysUntil(transfer.expires_at);
+  const isActive = transfer.status === "active";
 
   const copyLink = async () => {
     if (!downloadUrl) return;
-    await navigator.clipboard.writeText(downloadUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(downloadUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API unavailable (insecure context) — silently swallow
+    }
+  };
+
+  const handleDownload = (fileId: string) => {
+    if (!transfer.public_token) return;
+    downloadFile(transfer.public_token, fileId);
   };
 
   const handleRevokeDecision = (decision?: string | null) => {
@@ -61,56 +110,99 @@ export function TransferDetail({
     }
   };
 
-  const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
-  const isPublicLink = transfer.sharing_mode === "link";
-
   return (
     <div className="transfer-detail">
-      <div className="transfer-detail__header">
+      <header className="transfer-detail__header">
         <h1 className="transfer-detail__title">
           {transfer.title || t("Untitled")}
         </h1>
         {transfer.status !== "active" && (
           <TransferStatusBadge status={transfer.status} />
         )}
-      </div>
+      </header>
 
       <div className="transfer-detail__meta">
+        {/* Both sharing modes expose a public token — the email flow is
+            just a notified variant. Label stays "Public link" either way
+            to match the recap mocks. */}
         <span className="transfer-detail__meta-item">
-          <Icon name={isPublicLink ? "public" : "lock"} />
-          {isPublicLink ? t("Public link") : t("Private")}
+          <Globe />
+          {t("Public link")}
         </span>
-        <span className="transfer-detail__meta-sep">·</span>
-        <span>{t("Expires on {{date}}", { date: expiresAt })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>
-          {t("{{count}} item", { count: transfer.files.length })}
+          {isActive
+            ? t("Expires in {{count}} days", { count: days })
+            : t("Expired")}
         </span>
+        <span className="transfer-detail__meta-sep">·</span>
+        <span>{t("{{count}} item", { count: transfer.files.length })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
       </div>
 
-      {downloadUrl && (
+      {isPublicLink && downloadUrl && (
         <div className="transfer-detail__link-box">
-          <span className="transfer-detail__link-url">{downloadUrl}</span>
+          <Input
+            readOnly
+            hideLabel
+            label={t("Download link")}
+            value={downloadUrl}
+            variant="classic"
+            fullWidth
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <Button
+            color="neutral"
+            variant="tertiary"
+            icon={copied ? <Checkmark /> : <Copy />}
+            onClick={copyLink}
+            aria-label={copied ? t("Link copied!") : t("Copy link")}
+            title={copied ? t("Link copied!") : t("Copy link")}
+          />
+        </div>
+      )}
+
+      {!isPublicLink && transfer.recipients.length > 0 && (
+        <section
+          className={`transfer-detail__recipients-box${
+            recipientsOpen ? " transfer-detail__recipients-box--open" : ""
+          }`}
+        >
           <button
             type="button"
-            className="transfer-detail__link-copy"
-            onClick={copyLink}
-            title={copied ? t("Link copied!") : t("Copy link")}
-            aria-label={copied ? t("Link copied!") : t("Copy link")}
+            className="transfer-detail__recipients-toggle"
+            onClick={() => setRecipientsOpen((o) => !o)}
+            aria-expanded={recipientsOpen}
           >
-            <Icon name={copied ? "check_circle" : "content_copy"} />
+            <span className="transfer-detail__recipients-chevron">
+              <ChevronDown />
+            </span>
+            <span>
+              {t("Recipients ({{count}})", {
+                count: transfer.recipients.length,
+              })}
+            </span>
           </button>
-        </div>
+          {recipientsOpen && (
+            <ul className="transfer-detail__recipients-list">
+              {transfer.recipients.map((r) => {
+                const name = displayNameFromEmail(r.email);
+                return (
+                  <li key={r.id} className="transfer-detail__recipient-row">
+                    <UserAvatar fullName={name} size="small" />
+                    <span className="transfer-detail__recipient-name">
+                      {name}
+                    </span>
+                    <span className="transfer-detail__recipient-email">
+                      &lt;{r.email}&gt;
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
       )}
 
       <ul
@@ -118,71 +210,69 @@ export function TransferDetail({
         aria-label={t("Files ({{count}})", { count: transfer.files.length })}
       >
         {transfer.files.map((file) => (
-          <li key={file.id} className="transfer-detail__file-item">
-            <span
-              className="transfer-detail__file-icon-tile"
-              aria-hidden="true"
-            >
-              <Icon name="description" />
-            </span>
-            <span className="transfer-detail__file-label">
-              {file.filename}
-              <span className="transfer-detail__file-sep">·</span>
-              {formatFileSize(file.size)}
-            </span>
-          </li>
+          <FileItem
+            key={file.id}
+            icon={<Doc />}
+            name={file.filename}
+            size={formatFileSize(file.size)}
+            state="done"
+            action={
+              <Button
+                color="neutral"
+                variant="tertiary"
+                icon={<Download />}
+                onClick={() => handleDownload(file.id)}
+                disabled={!transfer.public_token}
+                aria-label={t("Download {{name}}", { name: file.filename })}
+                title={t("Download")}
+              />
+            }
+          />
         ))}
       </ul>
 
-      {transfer.status === "active" && (
+      {isActive && (
         <div className="transfer-detail__actions">
+          {isPublicLink ? (
+            <Button
+              color="brand"
+              icon={copied ? <Checkmark /> : <Copy />}
+              onClick={copyLink}
+            >
+              {copied ? t("Link copied!") : t("Copy link")}
+            </Button>
+          ) : (
+            // Email mode: triggers the backend resend task — re-emails the
+            // shared HTML notification template to every recipient.
+            <Button
+              color="brand"
+              icon={<ArrowUpRight />}
+              onClick={() => resendTransfer.mutate(transfer.id)}
+              disabled={
+                transfer.recipients.length === 0 ||
+                resendTransfer.isPending
+              }
+            >
+              {resendTransfer.isPending
+                ? t("Sending...")
+                : resendTransfer.isSuccess
+                  ? t("Sent!")
+                  : t("Resend")}
+            </Button>
+          )}
           <Button
-            onClick={copyLink}
-            icon={
-              <Icon name={copied ? "check_circle" : "content_copy"} />
-            }
-          >
-            {copied ? t("Link copied!") : t("Copy link")}
-          </Button>
-          <Button
+            color="error"
             variant="secondary"
-            className="transfer-detail__revoke-btn"
             onClick={revokeModal.open}
             disabled={revokeTransfer.isPending}
           >
-            {t("Revoke")}
+            {t("Cancel")}
           </Button>
         </div>
       )}
 
-      {transfer.sharing_mode === "email" && transfer.recipients.length > 0 && (
-        <section className="transfer-detail__section">
-          <h2>
-            {t("Recipients ({{count}})", {
-              count: transfer.recipients.length,
-            })}
-          </h2>
-          <ul className="transfer-detail__recipients">
-            {transfer.recipients.map((r) => (
-              <li key={r.id} className="transfer-detail__recipient">
-                <span>{r.email}</span>
-                <span
-                  className={`transfer-detail__recipient-status${
-                    r.email_sent_at
-                      ? ""
-                      : " transfer-detail__recipient-status--pending"
-                  }`}
-                >
-                  {r.email_sent_at ? "✓" : "●"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
       <section className="transfer-detail__history">
-        <h2 className="transfer-detail__history-title">{t("Activity")}</h2>
+        <h2 className="transfer-detail__history-title">{t("History")}</h2>
         {events.isLoading ? (
           <Loader aria-label={t("Loading...")} />
         ) : !events.data || events.data.results.length === 0 ? (
@@ -192,12 +282,19 @@ export function TransferDetail({
         ) : (
           <div className="transfer-detail__history-table">
             <div className="transfer-detail__history-head">
-              <div>{t("Activity")}</div>
-              <div>{t("Date")}</div>
-              <div>{t("By")}</div>
+              <div className="transfer-detail__history-col">
+                {t("Activity")}
+              </div>
+              <div className="transfer-detail__history-col">
+                <Clock />
+                {t("Date")}
+              </div>
+              <div className="transfer-detail__history-col">
+                <Perso />
+                {t("By")}
+              </div>
             </div>
             {events.data.results.map((ev) => {
-              const isDownload = ev.event_type === "file_downloaded";
               const label = t(EVENT_LABELS[ev.event_type] ?? ev.event_type);
               const by =
                 ev.actor_type === "agent" ? t("You") : t("Recipient");
@@ -205,19 +302,15 @@ export function TransferDetail({
                 <div key={ev.id} className="transfer-detail__history-row">
                   <div className="transfer-detail__history-activity">
                     <span
-                      className={`transfer-detail__history-tile${
-                        isDownload ? " transfer-detail__history-tile--success" : ""
-                      }`}
+                      className="transfer-detail__history-tile"
                       aria-hidden="true"
                     >
-                      <Icon
-                        name={isDownload ? "download" : "folder"}
-                      />
+                      <Folder />
                     </span>
                     <span>{label}</span>
                   </div>
                   <div className="transfer-detail__history-date">
-                    {formatDate(ev.created_at)}
+                    {formatActivityDate(ev.created_at)}
                   </div>
                   <div className="transfer-detail__history-actor">{by}</div>
                 </div>
