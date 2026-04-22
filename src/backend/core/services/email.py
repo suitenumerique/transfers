@@ -5,7 +5,7 @@ import logging
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils import timezone, formats
+from django.utils import formats, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +14,8 @@ def _public_base_url() -> str:
     """Base URL of the deployed frontend (used to build absolute links in
     emails). Falls back to LOGIN_REDIRECT_URL — that's the post-login
     redirect target and points at the same hostname in every env."""
-    base = (
-        getattr(settings, "PUBLIC_BASE_URL", None)
-        or getattr(settings, "LOGIN_REDIRECT_URL", "")
+    base = getattr(settings, "PUBLIC_BASE_URL", None) or getattr(
+        settings, "LOGIN_REDIRECT_URL", ""
     )
     return (base or "").rstrip("/")
 
@@ -89,9 +88,7 @@ def send_recipient_invitation(transfer, recipient):
         html_body=render_to_string("core/emails/recipient_invitation.html", ctx),
         to=[recipient.email],
     )
-    logger.info(
-        "Sent invitation to %s for transfer %s", recipient.email, transfer.id
-    )
+    logger.info("Sent invitation to %s for transfer %s", recipient.email, transfer.id)
 
 
 def _owner_summary_url(transfer) -> str:

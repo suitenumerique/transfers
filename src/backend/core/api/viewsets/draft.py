@@ -137,9 +137,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 try:
                     draft = self.get_queryset().get(id=draft_id)
                 except models.TransferDraft.DoesNotExist as exc:
-                    raise drf.exceptions.NotFound(
-                        "Draft not found."
-                    ) from exc
+                    raise drf.exceptions.NotFound("Draft not found.") from exc
 
                 # Cumulative guards against drip-feed bypass: the serializer
                 # only sees one file at a time, so totals are recomputed from
@@ -162,9 +160,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 ):
                     max_go = settings.TRANSFER_MAX_TOTAL_SIZE // (1024**3)
                     raise drf.exceptions.ValidationError(
-                        {
-                            "size": f"Total transfer size exceeds maximum of {max_go} Go."
-                        }
+                        {"size": f"Total transfer size exceeds maximum of {max_go} Go."}
                     )
 
             # Build the TransferFile in-memory first so ``tf.id`` (auto-set by
@@ -178,9 +174,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 mime_type=data["mime_type"],
                 source_url=data.get("source_url", ""),
             )
-            transfer_file.s3_key = (
-                f"transfers/{transfer_file.id}/{data['filename']}"
-            )
+            transfer_file.s3_key = f"transfers/{transfer_file.id}/{data['filename']}"
 
             if transfer_file.source_url:
                 # Drive import path: no multipart opened synchronously —
@@ -190,9 +184,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # won't be uploading any parts.
                 transfer_file.save()
                 transaction.on_commit(
-                    lambda: import_drive_file_task.delay(
-                        str(transfer_file.id)
-                    )
+                    lambda: import_drive_file_task.delay(str(transfer_file.id))
                 )
             else:
                 upload_id = s3.create_multipart_upload(
@@ -237,9 +229,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             upload_id=transfer_file.upload_id,
             part_number=data["part_number"],
         )
-        return drf.response.Response(
-            {"url": url, "part_number": data["part_number"]}
-        )
+        return drf.response.Response({"url": url, "part_number": data["part_number"]})
 
     @extend_schema(
         request=DraftCompleteUploadSerializer,
@@ -412,7 +402,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             if metadata["sharing_mode"] == SharingMode.EMAIL:
                 for email in metadata["recipients"]:
                     models.TransferRecipient.objects.create(
-                        transfer=transfer, email=email,
+                        transfer=transfer,
+                        email=email,
                     )
 
             _log_event(transfer, TransferEventType.TRANSFER_CREATED, request)
@@ -431,6 +422,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
 
 # --- Helpers ---
+
 
 def _abort_draft_s3(draft):
     """Best-effort abort of every in-progress multipart upload on the draft."""

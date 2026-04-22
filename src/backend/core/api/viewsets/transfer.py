@@ -146,9 +146,9 @@ class TransferViewSet(
     def events(self, request, pk=None):
         """List events for a transfer."""
         transfer = self.get_object()
-        events = models.TransferEvent.objects.filter(
-            transfer_id=transfer.id
-        ).order_by("-created_at")
+        events = models.TransferEvent.objects.filter(transfer_id=transfer.id).order_by(
+            "-created_at"
+        )
         page = self.paginate_queryset(events)
         if page is not None:
             serializer = TransferEventSerializer(page, many=True)

@@ -32,9 +32,7 @@ class TestTransferList:
 
     def test_list_shows_user_transfers(self, authenticated_client, user):
         transfer = TransferFactory(owner=user)
-        TransferFileFactory(
-            transfer=transfer, upload_completed_at=timezone.now()
-        )
+        TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
         response = authenticated_client.get(API_URL)
         assert response.status_code == 200
         assert response.data["count"] == 1
@@ -45,14 +43,10 @@ class TestTransferList:
         assert response.status_code == 200
         assert response.data["count"] == 0
 
-    def test_list_excludes_other_users(
-        self, authenticated_client, user
-    ):
+    def test_list_excludes_other_users(self, authenticated_client, user):
         # Mine.
         mine = TransferFactory(owner=user)
-        TransferFileFactory(
-            transfer=mine, upload_completed_at=timezone.now()
-        )
+        TransferFileFactory(transfer=mine, upload_completed_at=timezone.now())
         # Another user's.
         TransferFactory()
 
@@ -185,9 +179,7 @@ class TestTransferList:
         assert row["consulted"] is True
         assert row["downloaded"] is True
 
-    def test_list_annotations_zero_files(
-        self, authenticated_client, user
-    ):
+    def test_list_annotations_zero_files(self, authenticated_client, user):
         """Transfer with no files must render zeros, not None.
 
         Pins that ``Sum(..., default=0)`` is in place — without the default,
@@ -251,9 +243,7 @@ class TestTransferRevoke:
 
     def test_revoke_rejects_other_user(self, authenticated_client):
         other_transfer = TransferFactory()
-        response = authenticated_client.post(
-            f"{API_URL}{other_transfer.id}/revoke/"
-        )
+        response = authenticated_client.post(f"{API_URL}{other_transfer.id}/revoke/")
         assert response.status_code == 404
 
 
@@ -276,7 +266,5 @@ class TestTransferEvents:
 
     def test_events_rejects_other_user(self, authenticated_client):
         other_transfer = TransferFactory()
-        response = authenticated_client.get(
-            f"{API_URL}{other_transfer.id}/events/"
-        )
+        response = authenticated_client.get(f"{API_URL}{other_transfer.id}/events/")
         assert response.status_code == 404
