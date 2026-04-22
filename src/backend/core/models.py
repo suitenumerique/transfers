@@ -347,6 +347,15 @@ class TransferFile(BaseModel):
         help_text="Set once all parts have been uploaded and the multipart "
         "upload has been completed on S3.",
     )
+    source_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        default="",
+        help_text="Public Drive permalink when the file was imported "
+        "server-side rather than uploaded by the browser. Preserved after "
+        "import completes for audit — the bytes live in our S3 like any "
+        "other file once ``upload_completed_at`` is set.",
+    )
 
     class Meta:
         db_table = "core_transfer_file"

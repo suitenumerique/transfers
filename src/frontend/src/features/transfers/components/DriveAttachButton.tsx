@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Loader } from "@gouvfr-lasuite/cunningham-react";
-import { openPicker, type Item } from "@gouvfr-lasuite/drive-sdk";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { openPicker } from "@gouvfr-lasuite/drive-sdk";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useConfig } from "@/features/providers/config";
+import type { DrivePickedItem } from "../api/useTransferDraft";
 
 interface Props {
-  onPick: (files: File[]) => void;
+  onPick: (items: DrivePickedItem[]) => void;
   onError?: (message: string) => void;
   disabled?: boolean;
-  // Optional upper bound: reject obviously oversized items before we pay
-  // the bytes over the wire. TransferForm re-checks the aggregate after
-  // merge, so this is purely a UX shortcut.
+  // Optional upper bound: reject obviously oversized items up-front for UX.
+  // The backend re-checks the per-file and cumulative limits at add-file time.
   maxFileSize?: number;
 }
 
@@ -24,14 +24,17 @@ function joinUrl(base: string, path: string): string {
   return base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
 }
 
-// Design note: this component performs a *hard copy*. We fetch the picked
-// items' bytes from Drive and re-upload them to our own S3 via the same
-// multipart flow as local drops. A reference-based model was considered
-// and rejected because (1) Drive & Transferts TTLs don't match, (2) link
-// recipients usually lack Drive accounts, (3) Drive doesn't expose scoped
-// un-authenticated download URLs today. Keep this as hard copy — if a
-// future reference mode is ever needed, add it as a second action,
-// don't replace this.
+// Design note: attachment is a *server-side import* — we pass the Drive
+// public permalink (``url_permalink``) to the backend, which streams the
+// bytes into our S3 via a celery task. No dl+ul through the browser means
+// no tab memory pressure and no throttling, and the file looks identical
+// to a browser-uploaded one once the import completes. The tradeoff is
+// that the picked Drive item is flipped to public when picked — a
+// mechanism owned by Drive itself, not by us.
+//
+// A hard-copy mode (browser fetches bytes and re-uploads) was tried
+// first and rejected: it buffers the full file in tab RAM via `blob()`
+// and pins the user's machine in the data path.
 export function DriveAttachButton({
   onPick,
   onError,
@@ -55,10 +58,18 @@ export function DriveAttachButton({
       });
       if (result.type !== "picked" || !result.items) return;
 
-      // Up-front size guard. Avoids downloading 20 GiB just to discard at
-      // TransferForm's merge-time limit check.
+      // Narrow the SDK's Item type to the fields we need. The picker
+      // response shape is stable under this subset (tested against the
+      // ANCT Drive release on 2026-04-22).
+      const items = result.items as unknown as Array<{
+        url_permalink: string;
+        filename: string;
+        size: number;
+        mimetype: string;
+      }>;
+
       if (maxFileSize) {
-        const oversized = result.items.find((it) => it.size > maxFileSize);
+        const oversized = items.find((it) => it.size > maxFileSize);
         if (oversized) {
           onError?.(
             t(
@@ -70,41 +81,14 @@ export function DriveAttachButton({
         }
       }
 
-      // Sequential download: cap resident memory at ~1 blob + 1 File so
-      // users picking several large files don't OOM the tab.
-      //
-      // `credentials: "include"` is REQUIRED: Drive's `item.url` points
-      // to the authenticated media route, not an S3 pre-signed URL.
-      //
-      // Per-item error handling: accumulate successes and deliver them
-      // even if some items fail, so partial picks aren't lost.
-      const files: File[] = [];
-      const failed: string[] = [];
-      for (const item of result.items as Item[]) {
-        try {
-          const res = await fetch(item.url, { credentials: "include" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const blob = await res.blob();
-          files.push(
-            new File([blob], item.title, {
-              type: blob.type || "application/octet-stream",
-            }),
-          );
-        } catch {
-          failed.push(item.title);
-        }
-      }
-
-      if (files.length > 0) onPick(files);
-
-      if (failed.length > 0) {
-        onError?.(
-          t(
-            "Could not download from {{app}}. Check that the file is accessible and try again.",
-            { app: drive.app_name },
-          ),
-        );
-      }
+      onPick(
+        items.map((it) => ({
+          url_permalink: it.url_permalink,
+          filename: it.filename,
+          size: it.size,
+          mimetype: it.mimetype,
+        })),
+      );
     } catch {
       onError?.(
         t(
@@ -124,17 +108,9 @@ export function DriveAttachButton({
       size="small"
       onClick={handleClick}
       disabled={disabled || busy}
-      icon={
-        busy ? (
-          <Loader size="small" />
-        ) : (
-          <Icon name="folder_open" />
-        )
-      }
+      icon={<Icon name="folder_open" />}
     >
-      {busy
-        ? t("Downloading from {{app}}...", { app: drive.app_name })
-        : t("Attach from {{app}}", { app: drive.app_name })}
+      {t("Attach from {{app}}", { app: drive.app_name })}
     </Button>
   );
 }

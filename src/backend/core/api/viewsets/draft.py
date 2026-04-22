@@ -24,6 +24,7 @@ from core.api.permissions import IsAuthenticated
 from core.api.serializers import (
     DraftAddFileSerializer,
     DraftCompleteUploadSerializer,
+    DraftDetailSerializer,
     DraftFinalizeSerializer,
     DraftRemoveFileSerializer,
     DraftSignPartSerializer,
@@ -31,6 +32,7 @@ from core.api.serializers import (
 )
 from core.enums import ActorType, SharingMode, TransferEventType
 from core.services import s3
+from core.tasks import import_drive_file_task
 
 
 def _log_event(transfer, event_type, request):
@@ -67,7 +69,17 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             return DraftRemoveFileSerializer
         if self.action == "finalize":
             return DraftFinalizeSerializer
+        if self.action == "retrieve":
+            return DraftDetailSerializer
         return DraftAddFileSerializer
+
+    def retrieve(self, request, pk=None):
+        """GET /drafts/{id}/ — slim projection of the draft's file list with
+        per-file states, used by the frontend to poll server-side imports
+        (Drive) and observe ``importing → done`` transitions.
+        """
+        draft = self.get_object()
+        return drf.response.Response(DraftDetailSerializer(draft).data)
 
     def _get_pending_file(self, draft, file_id):
         try:
@@ -164,26 +176,40 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 filename=data["filename"],
                 size=data["size"],
                 mime_type=data["mime_type"],
+                source_url=data.get("source_url", ""),
             )
             transfer_file.s3_key = (
                 f"transfers/{transfer_file.id}/{data['filename']}"
             )
-            upload_id = s3.create_multipart_upload(
-                key=transfer_file.s3_key, content_type=data["mime_type"]
-            )
-            transfer_file.upload_id = upload_id
-            transfer_file.save()
 
-        return drf.response.Response(
-            {
-                "draft_id": str(draft.id),
-                "transfer_file_id": str(transfer_file.id),
-                "upload_id": upload_id,
-                "s3_key": transfer_file.s3_key,
-                "chunk_size": settings.TRANSFER_CHUNK_SIZE,
-            },
-            status=201,
-        )
+            if transfer_file.source_url:
+                # Drive import path: no multipart opened synchronously —
+                # the celery task will open its own, drain Drive into it,
+                # and set ``upload_completed_at`` when done. The client
+                # doesn't need ``upload_id`` / ``chunk_size`` because it
+                # won't be uploading any parts.
+                transfer_file.save()
+                transaction.on_commit(
+                    lambda: import_drive_file_task.delay(
+                        str(transfer_file.id)
+                    )
+                )
+            else:
+                upload_id = s3.create_multipart_upload(
+                    key=transfer_file.s3_key, content_type=data["mime_type"]
+                )
+                transfer_file.upload_id = upload_id
+                transfer_file.save()
+
+        response_body = {
+            "draft_id": str(draft.id),
+            "transfer_file_id": str(transfer_file.id),
+        }
+        if not transfer_file.source_url:
+            response_body["upload_id"] = transfer_file.upload_id
+            response_body["s3_key"] = transfer_file.s3_key
+            response_body["chunk_size"] = settings.TRANSFER_CHUNK_SIZE
+        return drf.response.Response(response_body, status=201)
 
     @extend_schema(
         request=DraftSignPartSerializer,

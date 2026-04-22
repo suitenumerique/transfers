@@ -21,15 +21,25 @@ import { MultipartUploader } from "../upload/MultipartUploader";
 // draft deletion automatically, so the local reset is purely bookkeeping.
 
 export type DraftFileState =
-  | "registering" // POST /transfers or /add-file in flight
-  | "registered" // waiting in queue for the upload pump
+  | "registering" // POST /drafts/add-file/ in flight
+  | "registered" // waiting in queue for the upload pump (local uploads only)
   | "uploading" // MultipartUploader is pushing chunks to S3
-  | "done" // complete-upload succeeded
-  | "error"; // registration or upload failed
+  | "importing" // server-side Drive import in progress (celery task)
+  | "done" // upload / import succeeded
+  | "error"; // registration, upload, or import failed
 
 export interface DraftFile {
   key: string;
-  file: File;
+  // Local File, present only for browser-uploaded drops. Absent for
+  // server-side Drive imports (the bytes never reach the browser).
+  file: File | null;
+  // Denormalized metadata: mirrors File fields for local drops, comes
+  // from the Drive picker for imports. Lets the UI render uniformly.
+  name: string;
+  size: number;
+  mimeType: string;
+  // Drive permalink for imported files; empty string otherwise.
+  sourceUrl: string;
   backendId: string | null;
   s3Key: string | null;
   uploadId: string | null;
@@ -48,12 +58,22 @@ export interface FinalizeMetadata {
   sensitive?: boolean;
 }
 
+// Shape of an item returned by the Drive picker after Nathan's fix — the
+// public permalink is in ``url_permalink``. Narrowed to what we consume.
+export interface DrivePickedItem {
+  url_permalink: string;
+  filename: string;
+  size: number;
+  mimetype: string;
+}
+
 export interface TransferDraftHandle {
   draftId: string | null;
   files: DraftFile[];
   isSubmitting: boolean;
   error: string | null;
   addFile: (file: File) => void;
+  attachFromDrive: (items: DrivePickedItem[]) => void;
   removeFile: (key: string) => void;
   submit: (metadata: FinalizeMetadata) => Promise<TransferDetail>;
   abort: () => Promise<void>;
@@ -62,9 +82,23 @@ export interface TransferDraftHandle {
 interface AddFileResponse {
   draft_id: string;
   transfer_file_id: string;
-  upload_id: string;
-  s3_key: string;
-  chunk_size: number;
+  // These three are only present on the local-upload path. Drive imports
+  // skip the multipart ceremony (the server-side celery task owns it).
+  upload_id?: string;
+  s3_key?: string;
+  chunk_size?: number;
+}
+
+interface DraftDetailResponse {
+  id: string;
+  files: Array<{
+    id: string;
+    filename: string;
+    size: number;
+    mime_type: string;
+    state: "uploading" | "importing" | "done";
+    source_url: string;
+  }>;
 }
 
 interface SignPartResponse {
@@ -137,18 +171,21 @@ export function useTransferDraft(): TransferDraftHandle {
 
   // --- Upload pump ---
   // Runs as an effect: whenever `files` changes, if no uploader is active,
-  // pick the first `registered` file and start it.
+  // pick the first `registered` file and start it. Drive imports never hit
+  // this state (they go `registering → importing` on the backend echo), so
+  // the pump sees only local uploads with a File attached.
   useEffect(() => {
     if (currentUploaderRef.current) return;
     const next = files.find((f) => f.state === "registered");
-    if (!next || !next.backendId || !next.chunkSize) return;
+    if (!next || !next.backendId || !next.chunkSize || !next.file) return;
 
     const backendId = next.backendId;
     const chunkSize = next.chunkSize;
     const key = next.key;
+    const localFile = next.file;
 
     const uploader = new MultipartUploader({
-      file: next.file,
+      file: localFile,
       chunkSize,
       parallelism: 4,
       signPart: async (partNumber) => {
@@ -185,7 +222,7 @@ export function useTransferDraft(): TransferDraftHandle {
             parts,
           }),
         });
-        updateFile(key, { state: "done", loaded: next.file.size });
+        updateFile(key, { state: "done", loaded: localFile.size });
       })
       .catch((err) => {
         // Don't leak an error state if the user explicitly aborted the whole
@@ -202,6 +239,69 @@ export function useTransferDraft(): TransferDraftHandle {
       });
   }, [files, abortDraft, updateFile]);
 
+  // --- Import poller ---
+  // Drive imports run server-side (celery task). We poll the draft endpoint
+  // to detect `importing → done` transitions. Started lazily when at least
+  // one file is in the `importing` state; stopped as soon as none remain.
+  // If a file we believe is importing has disappeared server-side, the
+  // task failed → mark it error locally so the UI surfaces it.
+  useEffect(() => {
+    const hasImporting = files.some((f) => f.state === "importing");
+    if (!hasImporting) return;
+    const id = draftIdRef.current;
+    if (!id) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
+        if (cancelled) return;
+
+        const byBackendId = new Map(resp.files.map((f) => [f.id, f]));
+        const localByKey = new Map(
+          filesRef.current.map((f) => [f.key, f] as const),
+        );
+
+        const next = Array.from(localByKey.values()).map((f) => {
+          if (f.state !== "importing") return f;
+          if (!f.backendId) return f;
+          const server = byBackendId.get(f.backendId);
+          if (!server) {
+            return {
+              ...f,
+              state: "error" as DraftFileState,
+              error: "Import from Drive failed.",
+            };
+          }
+          if (server.state === "done") {
+            return {
+              ...f,
+              state: "done" as DraftFileState,
+              loaded: f.total,
+            };
+          }
+          return f;
+        });
+        const mutated = next.some((f, i) => {
+          const prev = filesRef.current[i];
+          return prev && (prev.state !== f.state || prev.loaded !== f.loaded);
+        });
+        if (mutated) writeFiles(next);
+      } catch {
+        // Transient errors are fine — the next tick will catch the state.
+      }
+    };
+
+    const handle = window.setInterval(tick, 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [files, writeFiles]);
+
   const registerFile = useCallback(
     async (
       draftFile: DraftFile,
@@ -214,10 +314,12 @@ export function useTransferDraft(): TransferDraftHandle {
             method: "POST",
             body: JSON.stringify({
               ...(knownDraftId ? { draft_id: knownDraftId } : {}),
-              filename: draftFile.file.name,
-              size: draftFile.file.size,
-              mime_type:
-                draftFile.file.type || "application/octet-stream",
+              filename: draftFile.name,
+              size: draftFile.size,
+              mime_type: draftFile.mimeType || "application/octet-stream",
+              ...(draftFile.sourceUrl
+                ? { source_url: draftFile.sourceUrl }
+                : {}),
             }),
           },
         );
@@ -262,13 +364,24 @@ export function useTransferDraft(): TransferDraftHandle {
           return null;
         }
 
-        updateFile(draftFile.key, {
-          backendId: resp.transfer_file_id,
-          uploadId: resp.upload_id,
-          s3Key: resp.s3_key,
-          chunkSize: resp.chunk_size,
-          state: "registered",
-        });
+        // Drive-import path: no upload_id / s3_key / chunk_size echoed
+        // back, the celery task owns the multipart from here. Straight to
+        // "importing" — the upload pump only runs on "registered" files
+        // (which always have a File), so imports skip it entirely.
+        if (draftFile.sourceUrl) {
+          updateFile(draftFile.key, {
+            backendId: resp.transfer_file_id,
+            state: "importing",
+          });
+        } else {
+          updateFile(draftFile.key, {
+            backendId: resp.transfer_file_id,
+            uploadId: resp.upload_id ?? null,
+            s3Key: resp.s3_key ?? null,
+            chunkSize: resp.chunk_size ?? null,
+            state: "registered",
+          });
+        }
         return resp.draft_id;
       } catch (err) {
         updateFile(draftFile.key, {
@@ -287,23 +400,8 @@ export function useTransferDraft(): TransferDraftHandle {
     [updateFile],
   );
 
-  const addFile = useCallback(
-    (file: File) => {
-      const key = fileKey(file);
-      // Guard against duplicate drops sneaking past the caller's dedupe.
-      if (filesRef.current.some((f) => f.key === key)) return;
-
-      const draftFile: DraftFile = {
-        key,
-        file,
-        backendId: null,
-        s3Key: null,
-        uploadId: null,
-        chunkSize: null,
-        loaded: 0,
-        total: file.size,
-        state: "registering",
-      };
+  const startRegistration = useCallback(
+    (draftFile: DraftFile) => {
       writeFiles([...filesRef.current, draftFile]);
       setError(null);
 
@@ -311,9 +409,10 @@ export function useTransferDraft(): TransferDraftHandle {
         draftIdRef.current === null &&
         draftInitPromiseRef.current === null
       ) {
-        // First drop: this call will birth the draft on the backend. Store
-        // the promise so concurrent addFile calls wait for the draft id
-        // instead of racing multiple "create-draft" requests.
+        // First attach of the session: this call will birth the draft on
+        // the backend. Store the promise so concurrent addFile /
+        // attachFromDrive calls wait for the draft id instead of racing
+        // multiple "create-draft" requests.
         draftInitPromiseRef.current = registerFile(draftFile, null).then(
           (id) => {
             if (!id) {
@@ -322,14 +421,10 @@ export function useTransferDraft(): TransferDraftHandle {
             return id;
           },
         );
-        // Swallow the rejection at this top-level call site — the error
-        // state on the file row carries enough info for the UI.
         draftInitPromiseRef.current.catch(() => {});
         return;
       }
 
-      // Not the first drop: wait for the draft id (may already be resolved)
-      // then attach the file to it.
       void (async () => {
         const id =
           draftIdRef.current ?? (await draftInitPromiseRef.current);
@@ -347,6 +442,60 @@ export function useTransferDraft(): TransferDraftHandle {
       })();
     },
     [registerFile, updateFile, writeFiles],
+  );
+
+  const addFile = useCallback(
+    (file: File) => {
+      const key = fileKey(file);
+      // Guard against duplicate drops sneaking past the caller's dedupe.
+      if (filesRef.current.some((f) => f.key === key)) return;
+
+      const draftFile: DraftFile = {
+        key,
+        file,
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        sourceUrl: "",
+        backendId: null,
+        s3Key: null,
+        uploadId: null,
+        chunkSize: null,
+        loaded: 0,
+        total: file.size,
+        state: "registering",
+      };
+      startRegistration(draftFile);
+    },
+    [startRegistration],
+  );
+
+  const attachFromDrive = useCallback(
+    (items: DrivePickedItem[]) => {
+      for (const item of items) {
+        // Dedupe by source url so re-picking the same Drive item is a no-op.
+        const key = `drive:${item.url_permalink}`;
+        if (filesRef.current.some((f) => f.key === key)) continue;
+
+        const draftFile: DraftFile = {
+          key,
+          file: null,
+          name: item.filename,
+          size: item.size,
+          mimeType: item.mimetype,
+          sourceUrl: item.url_permalink,
+          backendId: null,
+          s3Key: null,
+          uploadId: null,
+          chunkSize: null,
+          loaded: 0,
+          total: item.size,
+          state: "registering",
+        };
+        startRegistration(draftFile);
+      }
+    },
+    [startRegistration],
   );
 
   const removeFile = useCallback(
@@ -451,6 +600,7 @@ export function useTransferDraft(): TransferDraftHandle {
     isSubmitting,
     error,
     addFile,
+    attachFromDrive,
     removeFile,
     submit,
     abort: abortDraft,

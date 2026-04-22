@@ -16,6 +16,7 @@ import {
   fileKey,
   useTransferDraft,
   type DraftFile,
+  type DrivePickedItem,
 } from "../api/useTransferDraft";
 import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
@@ -150,6 +151,58 @@ export function TransferForm() {
     }
   };
 
+  const handleDrivePick = (items: DrivePickedItem[]) => {
+    setFileError(null);
+
+    const oversized = items.find(
+      (it) => it.size > config.TRANSFER_MAX_FILE_SIZE,
+    );
+    if (oversized) {
+      setFileError(
+        t("File too large: {{name}} ({{size}}). Maximum: {{max}}.", {
+          name: oversized.filename,
+          size: formatBytes(oversized.size),
+          max: formatBytes(config.TRANSFER_MAX_FILE_SIZE),
+        }),
+      );
+      return;
+    }
+
+    // Same cumulative guards as local drops.
+    if (
+      draft.files.length + items.length >
+      config.TRANSFER_MAX_FILES_PER_TRANSFER
+    ) {
+      setFileError(
+        t("Too many files. Maximum: {{max}}.", {
+          max: config.TRANSFER_MAX_FILES_PER_TRANSFER,
+        }),
+      );
+      return;
+    }
+
+    const currentTotal = draft.files.reduce((sum, f) => sum + f.total, 0);
+    const addedTotal = items.reduce((sum, it) => sum + it.size, 0);
+    if (currentTotal + addedTotal > config.TRANSFER_MAX_TOTAL_SIZE) {
+      setFileError(
+        t("Total size exceeds the limit of {{max}}.", {
+          max: formatBytes(config.TRANSFER_MAX_TOTAL_SIZE),
+        }),
+      );
+      return;
+    }
+
+    draft.attachFromDrive(items);
+
+    if (
+      items.length > 0 &&
+      title.trim() === "" &&
+      draft.files.length === 0
+    ) {
+      setTitle(stripExtension(items[0].filename));
+    }
+  };
+
   const hasFiles = draft.files.length > 0;
   const currentSize = draft.files.reduce((sum, f) => sum + f.total, 0);
   const anyError = draft.files.some((f) => f.state === "error");
@@ -216,7 +269,7 @@ export function TransferForm() {
             extraCta={
               config.DRIVE ? (
                 <DriveAttachButton
-                  onPick={handleFilesChange}
+                  onPick={handleDrivePick}
                   onError={setFileError}
                   disabled={busy}
                   maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
@@ -224,6 +277,8 @@ export function TransferForm() {
               ) : undefined
             }
           />
+          {/* extraCta now rides inside the FileDropZone in compact mode
+              too, so no external Drive CTA below the file list. */}
 
           {hasFiles && (
             <ul
@@ -239,28 +294,30 @@ export function TransferForm() {
                     className="transfer-form__file-icon-tile"
                     aria-hidden="true"
                   >
-                    {df.state === "registering" ? (
+                    {df.state === "registering" || df.state === "importing" ? (
                       <Loader size="small" />
                     ) : df.state === "done" ? (
                       <Icon name="check_circle" />
                     ) : df.state === "error" ? (
                       <Icon name="error_outline" />
+                    ) : df.sourceUrl ? (
+                      <Icon name="folder_open" />
                     ) : (
                       <Icon name="description" />
                     )}
                   </span>
                   <div className="transfer-form__file-info">
-                    <span className="transfer-form__file-name">
-                      {df.file.name}
-                    </span>
+                    <span className="transfer-form__file-name">{df.name}</span>
                     <span className="transfer-form__file-meta">
                       {df.state === "uploading"
                         ? `${formatBytes(df.loaded)} / ${formatBytes(df.total)} · ${percent(df)}%`
-                        : df.state === "error"
-                          ? (df.error ?? t("Error creating transfer."))
-                          : df.state === "done"
-                            ? `${formatBytes(df.total)} · ${t("Ready")}`
-                            : formatBytes(df.total)}
+                        : df.state === "importing"
+                          ? `${formatBytes(df.total)} · ${t("Importing...")}`
+                          : df.state === "error"
+                            ? (df.error ?? t("Error creating transfer."))
+                            : df.state === "done"
+                              ? `${formatBytes(df.total)} · ${t("Ready")}`
+                              : formatBytes(df.total)}
                     </span>
                     {df.state === "uploading" && (
                       <div
@@ -284,7 +341,7 @@ export function TransferForm() {
                       void draft.removeFile(df.key);
                     }}
                     disabled={busy}
-                    aria-label={t("Remove {{name}}", { name: df.file.name })}
+                    aria-label={t("Remove {{name}}", { name: df.name })}
                     title={t("Remove")}
                   >
                     <Icon name="close" />
@@ -292,20 +349,6 @@ export function TransferForm() {
                 </li>
               ))}
             </ul>
-          )}
-
-          {hasFiles && config.DRIVE && (
-            // In compact mode the dropzone hides its extraCta slot (there's
-            // no room), so surface the Drive attach button as a sibling so
-            // users can still pull more items from Drive mid-draft.
-            <div className="transfer-form__extra-sources">
-              <DriveAttachButton
-                onPick={handleFilesChange}
-                onError={setFileError}
-                disabled={busy}
-                maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
-              />
-            </div>
           )}
 
           {fileError && <Alert type={VariantType.ERROR}>{fileError}</Alert>}

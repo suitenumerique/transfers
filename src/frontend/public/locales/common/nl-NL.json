@@ -32,6 +32,7 @@
   "or": "of",
   "Attach from {{app}}": "Toevoegen vanuit {{app}}",
   "Downloading from {{app}}...": "Downloaden vanuit {{app}}…",
+  "Importing...": "Importeren…",
   "Could not download from {{app}}. Check that the file is accessible and try again.": "Downloaden vanuit {{app}} is mislukt. Controleer of het bestand toegankelijk is en probeer opnieuw.",
   "Release to upload": "Laat los om te uploaden",
   "Error creating transfer.": "Fout bij het aanmaken van de overdracht.",
