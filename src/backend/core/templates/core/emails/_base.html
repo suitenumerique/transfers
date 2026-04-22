@@ -82,17 +82,17 @@
             <td style="padding:24px 32px 32px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="vertical-align:middle;">
+                  <td style="vertical-align:middle;text-align:left;">
                     <img src="{{ rf_logo_url }}" width="80" height="44" alt="République Française" style="display:block;border:0;" />
                   </td>
-                  <td style="vertical-align:middle;text-align:left;padding-left:16px;">
-                    <img src="{{ st_logo_url }}" width="74" height="40" alt="La Suite territoriale" style="display:block;border:0;" />
-                  </td>
                   {% if terms_url %}
-                  <td style="vertical-align:middle;text-align:right;font-size:12px;color:#5d5d70;line-height:1.8;">
+                  <td style="vertical-align:middle;text-align:center;font-size:12px;color:#5d5d70;line-height:1.8;">
                     <a href="{{ terms_url }}" style="color:#5d5d70;text-decoration:underline;">Conditions générales d'utilisation</a>
                   </td>
                   {% endif %}
+                  <td style="vertical-align:middle;text-align:right;">
+                    <img src="{{ st_logo_url }}" width="74" height="40" alt="La Suite territoriale" style="display:block;border:0;margin-left:auto;" />
+                  </td>
                 </tr>
               </table>
             </td>
