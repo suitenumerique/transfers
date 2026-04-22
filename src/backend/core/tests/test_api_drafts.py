@@ -894,3 +894,281 @@ class TestCleanupAbandonedDraftsTask:
         cleanup_abandoned_drafts_task()
 
         assert Transfer.objects.filter(id=transfer.id).exists()
+
+
+@pytest.mark.django_db
+class TestDraftAddFileFromDrive:
+    """POST /drafts/add-file/ with ``source_url`` set — server-side Drive
+    import path. No multipart opened synchronously, celery task enqueued,
+    slim response (no upload_id/chunk_size — the client won't be uploading
+    anything)."""
+
+    DRIVE_URL = "https://fichiers.example.gouv.fr/api/v1.0/items/abc/download/"
+
+    def _add_from_drive(self, authenticated_client, draft_id=None, **overrides):
+        body = {
+            "filename": "IMG.jpg",
+            "size": 100,
+            "mime_type": "image/jpeg",
+            "source_url": self.DRIVE_URL,
+        }
+        body.update(overrides)
+        if draft_id is not None:
+            body["draft_id"] = str(draft_id)
+        return authenticated_client.post(ADD_FILE_URL, body, format="json")
+
+    def test_first_drop_opens_draft_and_enqueues_task(
+        self, authenticated_client, user
+    ):
+        from django.test import TestCase
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task"
+            ) as mock_task,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            response = self._add_from_drive(authenticated_client)
+
+        assert response.status_code == 201, response.data
+        # No multipart ceremony exposed to the client on the import path.
+        assert "upload_id" not in response.data
+        assert "chunk_size" not in response.data
+
+        draft = TransferDraft.objects.get(id=response.data["draft_id"])
+        assert draft.owner == user
+        tf = draft.files.get()
+        assert tf.source_url == self.DRIVE_URL
+        assert tf.upload_id == ""
+        assert tf.upload_completed_at is None
+
+        # Task enqueued on commit, not in transaction — verified by the
+        # mock being called after the request completes.
+        mock_task.delay.assert_called_once_with(str(tf.id))
+
+    def test_rejects_file_too_large(
+        self, authenticated_client, settings
+    ):
+        settings.TRANSFER_MAX_FILE_SIZE = 1024
+        with patch("core.api.viewsets.draft.import_drive_file_task"):
+            response = self._add_from_drive(authenticated_client, size=2048)
+        assert response.status_code == 400
+
+    def test_mix_with_local_drop_on_same_draft(
+        self, patched_s3, authenticated_client
+    ):
+        """A draft can hold both locally-uploaded and Drive-imported files.
+        The constraint is exactly one parent (draft), not uniform source."""
+        local = _initiate_with_file(authenticated_client)
+        with patch("core.api.viewsets.draft.import_drive_file_task"):
+            imported = self._add_from_drive(
+                authenticated_client, draft_id=local["draft_id"]
+            )
+        assert imported.status_code == 201
+        assert imported.data["draft_id"] == local["draft_id"]
+
+        draft = TransferDraft.objects.get(id=local["draft_id"])
+        assert draft.files.count() == 2
+        sources = {
+            tf.source_url for tf in draft.files.all()
+        }
+        assert sources == {"", self.DRIVE_URL}
+
+
+@pytest.mark.django_db
+class TestDraftRetrieve:
+    """GET /drafts/{id}/ — polling endpoint for per-file state."""
+
+    def test_unauthenticated(self, api_client):
+        draft = TransferDraftFactory()
+        response = api_client.get(f"{DRAFTS_URL}{draft.id}/")
+        assert response.status_code == 401
+
+    def test_retrieve_returns_file_states(
+        self, patched_s3, authenticated_client, user
+    ):
+        initiate = _initiate_with_file(authenticated_client)
+        with patch("core.api.viewsets.draft.import_drive_file_task"):
+            authenticated_client.post(
+                ADD_FILE_URL,
+                {
+                    "draft_id": initiate["draft_id"],
+                    "filename": "drive.jpg",
+                    "size": 50,
+                    "source_url": "https://drive.example/x/download/",
+                },
+                format="json",
+            )
+
+        response = authenticated_client.get(
+            f"{DRAFTS_URL}{initiate['draft_id']}/"
+        )
+        assert response.status_code == 200
+        files_by_name = {f["filename"]: f for f in response.data["files"]}
+        assert files_by_name["a.bin"]["state"] == "uploading"
+        assert files_by_name["drive.jpg"]["state"] == "importing"
+
+    def test_retrieve_rejects_other_user(self, authenticated_client):
+        other = TransferDraftFactory()
+        response = authenticated_client.get(f"{DRAFTS_URL}{other.id}/")
+        assert response.status_code == 404
+
+
+@pytest.mark.django_db
+class TestImportDriveFileTask:
+    """Unit tests for the celery task ``import_drive_file_task``."""
+
+    def _make_file(self, user, size=100, filename="d.jpg"):
+        from core.tasks import import_drive_file_task
+        draft = TransferDraftFactory(owner=user)
+        tf = TransferFile.objects.create(
+            draft=draft,
+            filename=filename,
+            size=size,
+            mime_type="image/jpeg",
+            s3_key=f"transfers/placeholder/{filename}",
+            source_url="https://drive.example.org/x/download/",
+        )
+        return tf, import_drive_file_task
+
+    def test_idempotent_when_already_completed(self, user):
+        tf, task = self._make_file(user)
+        tf.upload_completed_at = timezone.now()
+        tf.save(update_fields=["upload_completed_at"])
+
+        with (
+            patch("core.tasks.requests.get") as mock_get,
+            patch("core.tasks.s3"),
+        ):
+            task(str(tf.id))
+
+        # Never touched Drive: the row was already done.
+        mock_get.assert_not_called()
+        assert TransferFile.objects.filter(id=tf.id).exists()
+
+    def test_missing_file_is_a_noop(self):
+        from core.tasks import import_drive_file_task
+
+        with patch("core.tasks.requests.get") as mock_get:
+            import_drive_file_task(str(_uuid.uuid4()))
+        mock_get.assert_not_called()
+
+    def test_happy_path_streams_and_marks_complete(self, user):
+        """One-part happy path: Drive returns the bytes, celery drains
+        them into a fresh multipart, row is marked complete."""
+        from core.tasks import import_drive_file_task
+
+        tf, _ = self._make_file(user, size=12, filename="hi.txt")
+        # One chunk, payload exactly matches the declared size.
+        payload = b"hello-bytes!"
+        assert len(payload) == 12
+
+        mock_response = _uuid.SafeUUID  # any object, not used — replaced below
+
+        class _FakeResponse:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def raise_for_status(self_inner):
+                pass
+
+            def iter_content(self_inner, chunk_size):
+                yield payload
+
+        with (
+            patch("core.tasks.requests.get", return_value=_FakeResponse()),
+            patch(
+                "core.tasks.s3.create_multipart_upload",
+                return_value="MP-1",
+            ),
+            patch(
+                "core.tasks.s3.upload_part_bytes",
+                return_value='"etag-1"',
+            ) as mock_upload_part,
+            patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
+        ):
+            import_drive_file_task(str(tf.id))
+
+        tf.refresh_from_db()
+        assert tf.upload_completed_at is not None
+        assert tf.upload_id == ""
+        mock_upload_part.assert_called_once()
+        mock_complete.assert_called_once()
+
+    def test_size_mismatch_tears_down(self, user):
+        """Drive returns fewer bytes than declared — the row must be deleted
+        and any in-flight multipart aborted."""
+        from core.tasks import import_drive_file_task
+
+        tf, _ = self._make_file(user, size=1000, filename="short.bin")
+
+        class _FakeResponse:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def raise_for_status(self_inner):
+                pass
+
+            def iter_content(self_inner, chunk_size):
+                yield b"nope"  # 4 bytes, not 1000
+
+        with (
+            patch("core.tasks.requests.get", return_value=_FakeResponse()),
+            patch(
+                "core.tasks.s3.create_multipart_upload",
+                return_value="MP-2",
+            ),
+            patch(
+                "core.tasks.s3.upload_part_bytes",
+                return_value='"etag-1"',
+            ),
+            patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
+            patch("core.tasks.s3.delete_object") as mock_delete,
+            patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
+        ):
+            import_drive_file_task(str(tf.id))
+
+        assert not TransferFile.objects.filter(id=tf.id).exists()
+        mock_complete.assert_not_called()
+        mock_abort.assert_called_once()
+        mock_delete.assert_called_once()
+
+    def test_drive_http_error_tears_down(self, user):
+        """Drive responds 403 / 404 — the row is deleted, no multipart
+        opened in the first place (the HTTP call errors before that)."""
+        import requests as _requests
+        from core.tasks import import_drive_file_task
+
+        tf, _ = self._make_file(user)
+
+        class _FakeResponse:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def raise_for_status(self_inner):
+                raise _requests.HTTPError("403 Forbidden")
+
+            def iter_content(self_inner, chunk_size):
+                return iter(())
+
+        with (
+            patch("core.tasks.requests.get", return_value=_FakeResponse()),
+            patch(
+                "core.tasks.s3.create_multipart_upload"
+            ) as mock_create,
+            patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
+        ):
+            import_drive_file_task(str(tf.id))
+
+        assert not TransferFile.objects.filter(id=tf.id).exists()
+        mock_create.assert_not_called()
+        mock_abort.assert_not_called()

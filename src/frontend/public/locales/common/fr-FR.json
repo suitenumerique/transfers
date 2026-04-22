@@ -43,6 +43,7 @@
   "or": "ou",
   "Attach from {{app}}": "Joindre depuis {{app}}",
   "Downloading from {{app}}...": "Téléchargement depuis {{app}}…",
+  "Importing...": "Import en cours…",
   "Could not download from {{app}}. Check that the file is accessible and try again.": "Impossible de télécharger depuis {{app}}. Vérifiez que le fichier est accessible et réessayez.",
   "Release to upload": "Relâchez pour envoyer",
   "Error creating transfer.": "Erreur lors de la création du transfert.",

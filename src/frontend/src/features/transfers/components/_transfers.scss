@@ -963,6 +963,16 @@
     min-width: 0;
   }
 
+  // Compact-mode counterpart of &__extra — sits at the far right of the
+  // inline row so the Drive button is reachable without drifting below
+  // the file list.
+  &__compact-extra {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    pointer-events: auto;
+  }
+
   &__cta-link {
     color: var(--c--contextuals--content--semantic--brand--primary);
     font-weight: 500;

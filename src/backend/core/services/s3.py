@@ -101,6 +101,28 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     )
 
 
+def upload_part_bytes(
+    key: str, upload_id: str, part_number: int, body: bytes
+) -> str:
+    """Upload a single part of a multipart upload server-side. Returns the
+    part's ``ETag`` as a double-quoted string, ready to feed back to
+    ``complete_multipart_upload``.
+
+    This is the server-side counterpart of ``sign_upload_part`` — used by
+    the Drive-import celery task, where bytes flow through the backend
+    rather than being PUT directly by the browser.
+    """
+    client = get_s3_client()
+    response = client.upload_part(
+        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Key=key,
+        UploadId=upload_id,
+        PartNumber=part_number,
+        Body=body,
+    )
+    return response["ETag"]
+
+
 def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> None:
     """Finalize a multipart upload given the list of uploaded parts.
 

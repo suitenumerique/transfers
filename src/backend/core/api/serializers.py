@@ -171,6 +171,11 @@ class DraftAddFileSerializer(serializers.Serializer):
     expires_in_days, sensitive) is set only at finalize time, and populates
     the freshly-created ``Transfer`` there — see ``TransferFinalizeSerializer``.
 
+    Two attach modes coexist: browser-side multipart upload (no
+    ``source_url``), and server-side Drive import (``source_url`` set to a
+    public permalink — the backend fetches the bytes via a celery task, no
+    multipart ceremony exposed to the client).
+
     Per-file size is checked here; cumulative limits (file count, total
     draft size) live in the viewset because they depend on what the target
     draft already holds.
@@ -182,6 +187,9 @@ class DraftAddFileSerializer(serializers.Serializer):
     mime_type = serializers.CharField(
         max_length=255, required=False, allow_blank=True, default=""
     )
+    source_url = serializers.URLField(
+        max_length=2048, required=False, allow_blank=True, default=""
+    )
 
     def validate_size(self, value):
         if value > settings.TRANSFER_MAX_FILE_SIZE:
@@ -190,6 +198,45 @@ class DraftAddFileSerializer(serializers.Serializer):
                 f"File exceeds maximum size of {max_go} Go."
             )
         return value
+
+
+class DraftFileStateSerializer(serializers.ModelSerializer):
+    """Lightweight projection of a draft's file rows for the polling
+    endpoint — exposes just enough state for the frontend to render
+    per-file progress for server-side Drive imports."""
+
+    state = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.TransferFile
+        fields = [
+            "id",
+            "filename",
+            "size",
+            "mime_type",
+            "state",
+            "source_url",
+        ]
+        read_only_fields = fields
+
+    def get_state(self, obj) -> str:
+        if obj.upload_completed_at is not None:
+            return "done"
+        if obj.source_url:
+            return "importing"
+        return "uploading"
+
+
+class DraftDetailSerializer(serializers.ModelSerializer):
+    """GET /drafts/{id}/ — frontend polls this while any file is
+    server-side-importing, to observe transitions to ``done``."""
+
+    files = DraftFileStateSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = models.TransferDraft
+        fields = ["id", "created_at", "files"]
+        read_only_fields = fields
 
 
 class DraftRemoveFileSerializer(serializers.Serializer):

@@ -9,11 +9,11 @@ interface FileDropZoneProps {
   // Compact variant used inline with an existing file list (e.g. "+ Add an
   // item" tile). Swaps the large headline for a tight single row.
   compact?: boolean;
-  // Extra CTA rendered inside the standard dropzone frame, below the size
-  // hint (e.g. the Drive attach button). The slot stopPropagation's clicks
-  // so interactive children don't also trigger the file picker, and hides
-  // itself during an active drag to keep the "drop it" state clean. Ignored
-  // in compact mode — the tight row has no room for it.
+  // Extra CTA rendered inside the dropzone frame (e.g. the Drive attach
+  // button). Non-compact: below the size hint, centered. Compact: pushed
+  // to the right of the inline row. Hidden during an active drag in both
+  // modes to keep the "drop it" state clean. The slot stopPropagation's
+  // clicks so interactive children don't also trigger the file picker.
   extraCta?: ReactNode;
 }
 
@@ -123,6 +123,14 @@ export function FileDropZone({
                 })}
               </p>
             </div>
+            {extraCta && !isDragActive && (
+              <div
+                className="file-dropzone__compact-extra"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {extraCta}
+              </div>
+            )}
           </>
         ) : (
           <div className="file-dropzone__cta">
