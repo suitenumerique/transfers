@@ -26,9 +26,15 @@ export function ShellLayout({ children }: PropsWithChildren) {
     }
   };
 
+  // Sidebar is always mounted so width animates smoothly between the
+  // two states instead of popping in/out. The collapsed class shrinks it
+  // to 0 via CSS transition; inner content has a fixed min-width so it
+  // doesn't reflow while sliding.
   return (
-    <div className="shell-layout">
-      {!collapsed && <Sidebar />}
+    <div
+      className={`shell-layout${collapsed ? " shell-layout--sidebar-collapsed" : ""}`}
+    >
+      <Sidebar />
       <div className="shell-layout__main">
         <TopBar
           sidebarCollapsed={collapsed}

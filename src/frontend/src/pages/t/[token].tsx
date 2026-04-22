@@ -1,7 +1,16 @@
+import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
+import {
+  LaGaufreV2,
+  ProConnectButton,
+  QuestionMark,
+} from "@gouvfr-lasuite/ui-kit";
 import { ApiError } from "@/features/api/client";
-import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
+import { login, useAuth } from "@/features/auth";
+import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
+import { useConfig } from "@/features/providers/config";
 import { useDownloadTransfer } from "@/features/transfers/api/useDownload";
 import { DownloadView } from "@/features/transfers/components/DownloadView";
 
@@ -24,13 +33,15 @@ function getErrorReason(error: unknown): DownloadErrorReason {
 export default function DownloadPage() {
   const { t } = useTranslation();
   const router = useRouter();
+  const config = useConfig();
+  const { user } = useAuth();
   const token = router.query.token as string | undefined;
 
   const { data, isLoading, isError, error } = useDownloadTransfer(token);
 
   const renderContent = () => {
     if (isLoading) {
-      return <p>{t("Loading...")}</p>;
+      return <p className="download-page__status">{t("Loading...")}</p>;
     }
     if (isError || !data) {
       const reason = getErrorReason(error);
@@ -40,10 +51,7 @@ export default function DownloadPage() {
         not_found: t("This link does not exist."),
       };
       return (
-        <>
-          <h1>{t("Transferts")}</h1>
-          <p>{messages[reason]}</p>
-        </>
+        <p className="download-page__status">{messages[reason]}</p>
       );
     }
     return <DownloadView transfer={data} token={token!} />;
@@ -51,10 +59,47 @@ export default function DownloadPage() {
 
   return (
     <div className="download-page">
-      <header className="download-page__header">
-        <LanguagePicker size="small" compact />
+      <header className="download-page__topbar">
+        <Link
+          href="/"
+          className="download-page__brand"
+          aria-label={t("Transferts")}
+        >
+          {/* The bundled "transferts-logo.svg" is the wordmark — icon +
+              "Transferts" text already inside the SVG. Don't double up
+              with a sibling label or you get two "Transferts" strings. */}
+          <img
+            src="/images/transferts-logo.svg"
+            alt="Transferts"
+            height={36}
+          />
+        </Link>
+        <div className="download-page__topbar-right">
+          <LaGaufreV2
+            widgetPath={TERRITORIALE_GAUFRE.widgetPath}
+            apiUrl={TERRITORIALE_GAUFRE.apiUrl}
+            showMoreLimit={100}
+          />
+          {!user && <ProConnectButton onClick={login} />}
+        </div>
       </header>
-      {renderContent()}
+
+      <main className="download-page__main">{renderContent()}</main>
+
+      {config.HELP_URL && (
+        <Button
+          color="neutral"
+          variant="tertiary"
+          size="small"
+          icon={<QuestionMark />}
+          aria-label={t("Help")}
+          title={t("Help")}
+          href={config.HELP_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="download-page__help"
+        />
+      )}
     </div>
   );
 }

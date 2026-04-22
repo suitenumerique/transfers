@@ -2,25 +2,24 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
+// router is read in the parent to highlight the active row; navigation
+// itself uses Next.js Link so the URL bar updates via client-side push.
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import {
-  Icon,
-  IconType,
-  TreeProvider,
-  TreeView,
-  TreeViewItem,
-  TreeViewNodeTypeEnum,
-  type TreeViewDataType,
-  type TreeViewNodeProps,
+  ChevronDown,
+  Folder,
+  Plus,
+  QuestionMark,
+  Zoom,
 } from "@gouvfr-lasuite/ui-kit";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
 import type { TransferListItem } from "@/features/api/types";
-
-type TransferNode = TransferListItem;
+import { useConfig } from "@/features/providers/config";
 
 export function Sidebar() {
   const { t } = useTranslation();
   const router = useRouter();
+  const config = useConfig();
   const activeId =
     typeof router.query.id === "string" ? router.query.id : undefined;
   const { data } = useTransfers(1);
@@ -53,19 +52,19 @@ export function Sidebar() {
           <img
             src="/images/transferts-logo.svg"
             alt="Transferts"
-            height={28}
+            height={36}
           />
         </Link>
       </div>
 
       <div className="shell-sidebar__top">
         <Link href="/" className="shell-sidebar__nav-row">
-          <Icon name="add" />
+          <Plus />
           <span>{t("New transfer")}</span>
         </Link>
 
         <div className="shell-sidebar__nav-row shell-sidebar__nav-row--input">
-          <Icon name="search" />
+          <Zoom />
           <input
             type="search"
             value={query}
@@ -76,137 +75,106 @@ export function Sidebar() {
         </div>
       </div>
 
-      <TransferTree actives={actives} archives={archives} activeId={activeId} />
+      <div className="shell-sidebar__tree">
+        <TransferSection
+          label={t("Active transfers")}
+          items={actives}
+          activeId={activeId}
+        />
+        <TransferSection
+          label={t("Archives")}
+          items={archives}
+          activeId={activeId}
+          muted
+        />
+      </div>
 
       <div className="shell-sidebar__flex" />
 
       <div className="shell-sidebar__footer">
-        <Button
-          color="neutral"
-          size="small"
-          icon={<Icon name="help" type={IconType.OUTLINED} />}
-          aria-label={t("Help")}
-          title={t("Help")}
-        />
-        <Button
-          color="neutral"
-          size="small"
-          icon={<Icon name="settings" type={IconType.OUTLINED} />}
-          aria-label={t("Settings")}
-          title={t("Settings")}
-        />
+        {config.HELP_URL && (
+          <Button
+            color="neutral"
+            variant="tertiary"
+            size="small"
+            icon={<QuestionMark />}
+            aria-label={t("Help")}
+            title={t("Help")}
+            href={config.HELP_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          />
+        )}
       </div>
     </aside>
   );
 }
 
-// Two TITLE sections + NODE leaves is the pattern we draw from the Figma
-// handoff (each transfer is a Tree Part, each section header a Title Section).
-function TransferTree({
-  actives,
-  archives,
+// Collapsible section: clickable header with rotating chevron + flat list
+// of transfers below. We dropped ui-kit's TreeView (it doesn't expose a
+// collapse-by-title API) — it was only being used as a styled list of
+// leaves anyway, which a plain <button>/<ul> covers with better a11y.
+function TransferSection({
+  label,
+  items,
   activeId,
+  muted = false,
 }: {
-  actives: TransferListItem[];
-  archives: TransferListItem[];
-  activeId?: string;
+  label: string;
+  items: TransferListItem[];
+  activeId: string | undefined;
+  muted?: boolean;
 }) {
   const { t } = useTranslation();
-  const router = useRouter();
-
-  const toNode = (item: TransferListItem): TreeViewDataType<TransferNode> => ({
-    ...item,
-  });
-
-  // Key changes when the dataset shifts so TreeProvider re-seeds (it only
-  // reads initialTreeData on mount).
-  const dataKey = useMemo(
-    () =>
-      [...actives, ...archives]
-        .map((i) => `${i.id}:${i.status}`)
-        .join("|"),
-    [actives, archives],
-  );
-
-  const initialTreeData: TreeViewDataType<TransferNode>[] = [
-    {
-      id: "__section-actives",
-      nodeType: TreeViewNodeTypeEnum.TITLE,
-      headerTitle: t("Active transfers"),
-      children: actives.map(toNode),
-    },
-    {
-      id: "__section-archives",
-      nodeType: TreeViewNodeTypeEnum.TITLE,
-      headerTitle: t("Archives"),
-      children: archives.map(toNode),
-    },
-  ];
+  const [open, setOpen] = useState(true);
+  const sectionId = `shell-section-${label.replace(/\s+/g, "-").toLowerCase()}`;
 
   return (
-    <TreeProvider<TransferNode>
-      key={dataKey}
-      initialTreeData={initialTreeData}
-    >
-      <TreeView<TransferNode>
-        rootNodeId="__root"
-        selectedNodeId={activeId}
-        initialOpenState={{
-          "__section-actives": true,
-          "__section-archives": true,
-        }}
-        renderNode={(props) => (
-          <TransferTreeItem
-            {...props}
-            onNavigate={(id) => router.push(`/transfers/${id}`)}
-          />
-        )}
-      />
-    </TreeProvider>
-  );
-}
-
-function TransferTreeItem(
-  props: TreeViewNodeProps<TransferNode> & {
-    onNavigate: (id: string) => void;
-  },
-) {
-  const { t } = useTranslation();
-  const { node, onNavigate, ...itemProps } = props;
-  const data = node.data;
-
-  // ui-kit dispatches TITLE / SEPARATOR / VIEW_MORE nodes internally —
-  // renderNode is only called for NODE / SIMPLE_NODE leaves in our shape.
-  return (
-    <TreeViewItem
-      {...itemProps}
-      node={node}
-      onClick={() => onNavigate(data.value.id)}
-    >
-      <Icon
-        name="folder"
-        type={IconType.OUTLINED}
-        className={
-          "status" in data.value && data.value.status !== "active"
-            ? "shell-sidebar__tree-row-icon shell-sidebar__tree-row-icon--muted"
-            : "shell-sidebar__tree-row-icon"
-        }
-      />
-      <span className="shell-sidebar__tree-row-label">
-        {("title" in data.value && data.value.title) || t("Untitled")}
-      </span>
+    <section className="shell-sidebar__section">
       <button
         type="button"
-        className="shell-sidebar__tree-row-menu"
-        aria-label={t("More actions")}
-        title={t("More actions")}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
+        className="shell-sidebar__section-header"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={sectionId}
       >
-        <Icon name="more_horiz" />
+        <span>{label}</span>
+        <ChevronDown
+          className={`shell-sidebar__section-chevron${
+            open ? "" : " shell-sidebar__section-chevron--closed"
+          }`}
+        />
       </button>
-    </TreeViewItem>
+      <div
+        className={`shell-sidebar__section-collapse${
+          open ? " shell-sidebar__section-collapse--open" : ""
+        }`}
+      >
+        <ul id={sectionId} className="shell-sidebar__section-list">
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className={`shell-sidebar__tree-row${
+                item.id === activeId ? " shell-sidebar__tree-row--active" : ""
+              }`}
+            >
+              <Link
+                href={`/transfers/${item.id}`}
+                className="shell-sidebar__tree-row-link"
+              >
+                <Folder
+                  className={`shell-sidebar__tree-row-icon${
+                    muted ? " shell-sidebar__tree-row-icon--muted" : ""
+                  }`}
+                />
+                <span className="shell-sidebar__tree-row-label">
+                  {item.title || t("Untitled")}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
   );
 }
