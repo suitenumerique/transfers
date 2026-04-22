@@ -1,6 +1,8 @@
-Bonjour,
+Un fichier a été téléchargé.
 
-Votre fichier « {{ filename }} » du transfert « {{ transfer.title|default:filename }} » a été téléchargé.
+Votre fichier « {{ filename }} » du transfert « {{ transfer.title|default:filename }} » vient d'être téléchargé.
 
-Cordialement,
-{{ transfer.owner.full_name|default:"L'équipe Transferts" }}
+Voir le récapitulatif : {{ cta_url }}
+
+—
+Transferts — La Suite territoriale

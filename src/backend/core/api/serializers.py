@@ -348,6 +348,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "files",
             "owner_name",
             "owner_email",
+            "sharing_mode",
         ]
         read_only_fields = fields
 

@@ -1,12 +1,13 @@
-Bonjour,
+{% load humanize_size %}Nouveau transfert partagé avec vous.
 
-{{ sender_name }} vous a envoyé des fichiers via Transferts.
+{{ sender_name }}{% if sender_email and sender_email != sender_name %} ({{ sender_email }}){% endif %} vous a transféré{% if transfer.title %} : {{ transfer.title }}{% endif %}.
 
-Titre : {{ transfer.title|default:"Sans titre" }}
+{{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %} · {{ total_size|humanize_size }}
+{% for file in files %}- {{ file.filename }} · {{ file.size|humanize_size }}
+{% endfor %}
+Le lien est valable jusqu'au {{ expires_date }} à {{ expires_time }}.
 
-Accédez aux fichiers : {{ download_url }}
+Télécharger les fichiers : {{ download_url }}
 
-Ce lien expire le {{ transfer.expires_at|date:"d/m/Y" }}.
-
-Cordialement,
-L'équipe Transferts
+—
+Transferts — La Suite territoriale

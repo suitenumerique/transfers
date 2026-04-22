@@ -167,6 +167,23 @@ class Base(Configuration):
         environ_prefix=None,
     )
 
+    # End-user help / documentation URL. Surfaced by the frontend on the
+    # sidebar's "?" button as an external link (new tab) AND as the
+    # "Contacter le service support" link in the footer of every
+    # notification email. Defaults to the Suite Numérique docs page for
+    # the Transferts product. Override `SUPPORT_URL` separately if you
+    # need to point support somewhere different from in-app help.
+    HELP_URL = values.Value(
+        "https://docs.suite.anct.gouv.fr/docs/281bc1f0-5911-4442-b4b7-af78d77f0e1e/",
+        environ_name="HELP_URL",
+        environ_prefix=None,
+    )
+    SUPPORT_URL = values.Value(
+        "https://docs.suite.anct.gouv.fr/docs/281bc1f0-5911-4442-b4b7-af78d77f0e1e/",
+        environ_name="SUPPORT_URL",
+        environ_prefix=None,
+    )
+
     # Drive integration: when DRIVE_BASE_URL is set, the frontend renders an
     # "Attach from Drive" picker. Picked files are downloaded client-side
     # (with the agent's Drive session cookie) and uploaded through our
@@ -178,7 +195,7 @@ class Base(Configuration):
         "base_url": os.environ.get("DRIVE_BASE_URL", ""),
         "sdk_url": os.environ.get("DRIVE_SDK_URL", "/sdk"),
         "api_url": os.environ.get("DRIVE_API_URL", "/api/v1.0"),
-        "app_name": os.environ.get("DRIVE_APP_NAME", "Drive"),
+        "app_name": os.environ.get("DRIVE_APP_NAME", "Fichiers"),
     }
 
     STORAGES = {
@@ -551,6 +568,14 @@ class Development(Base):
     DEBUG = True
 
     SESSION_COOKIE_NAME = "transferts_sessionid"
+
+    # Dev-only switch: mount a GET endpoint that hands back a session
+    # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined
+    # only in Development so production can't even read the flag from an
+    # attacker-controlled env.
+    DEV_AUTH_BYPASS = values.BooleanValue(
+        default=False, environ_name="DEV_AUTH_BYPASS", environ_prefix=None
+    )
 
     USE_SWAGGER = True
     SESSION_CACHE_ALIAS = "session"

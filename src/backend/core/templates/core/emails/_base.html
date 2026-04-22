@@ -1,0 +1,105 @@
+{% load humanize_size %}{% spaceless %}<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ subject }}</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#25252f;">
+  {% comment %}
+    Single-column email wrapped in tables so Outlook / older mail
+    clients render it consistently. All styling inline; mail clients
+    strip <style> blocks and don't honour external stylesheets.
+  {% endcomment %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:12px;border:1px solid #e1e2e5;max-width:600px;width:100%;">
+          {% comment %}
+            Brand header — wordmark SVG includes both the icon and the
+            "Transferts" text, so don't pair it with a sibling label.
+          {% endcomment %}
+          <tr>
+            <td align="center" style="padding:32px 24px 16px;">
+              <img src="{{ logo_url }}" width="150" height="40" alt="Transferts" style="display:block;border:0;" />
+            </td>
+          </tr>
+
+          {% comment %}
+            Banner — top eyebrow strip in brand-tertiary, conveys the
+            event type at a glance.
+          {% endcomment %}
+          {% block banner %}
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eaf1fb;border-radius:8px;">
+                <tr>
+                  <td style="padding:14px 16px;color:#0659C5;font-weight:600;font-size:14px;">
+                    {% if banner_icon %}<span style="display:inline-block;vertical-align:middle;margin-right:8px;">{{ banner_icon|safe }}</span>{% endif %}
+                    {{ banner_label }}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endblock %}
+
+          {% block content %}{% endblock %}
+
+          {% comment %}
+            CTA button — table-based so Outlook renders it as a button
+            rather than a flat link. Children supply the URL + label.
+          {% endcomment %}
+          {% block cta %}
+          {% if cta_url %}
+          <tr>
+            <td align="center" style="padding:8px 32px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td bgcolor="#0659C5" style="border-radius:8px;">
+                    <a href="{{ cta_url }}" style="display:inline-block;padding:12px 28px;color:#ffffff;font-weight:600;font-size:15px;text-decoration:none;border-radius:8px;">
+                      {% if cta_icon %}<span style="display:inline-block;vertical-align:middle;margin-right:8px;">{{ cta_icon|safe }}</span>{% endif %}
+                      {{ cta_label }}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+          {% endblock %}
+
+          {% comment %}
+            Footer — gov branding + support links, separated by an
+            inset divider.
+          {% endcomment %}
+          <tr>
+            <td style="padding:0 32px;">
+              <hr style="border:0;border-top:1px solid #ebedf0;margin:0;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 32px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:middle;">
+                    <img src="{{ rf_logo_url }}" width="80" height="44" alt="République Française" style="display:block;border:0;" />
+                  </td>
+                  <td style="vertical-align:middle;text-align:left;padding-left:16px;">
+                    <img src="{{ st_logo_url }}" width="74" height="40" alt="La Suite territoriale" style="display:block;border:0;" />
+                  </td>
+                  {% if terms_url %}
+                  <td style="vertical-align:middle;text-align:right;font-size:12px;color:#5d5d70;line-height:1.8;">
+                    <a href="{{ terms_url }}" style="color:#5d5d70;text-decoration:underline;">Conditions générales d'utilisation</a>
+                  </td>
+                  {% endif %}
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>{% endspaceless %}
