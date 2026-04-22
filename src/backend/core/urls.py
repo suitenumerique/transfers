@@ -7,12 +7,14 @@ from rest_framework.routers import DefaultRouter
 
 from core.api.viewsets.config import ConfigView
 from core.api.viewsets.download import DownloadFileView, DownloadTransferView
+from core.api.viewsets.draft import TransferDraftViewSet
 from core.api.viewsets.transfer import TransferViewSet
 from core.api.viewsets.user import UserViewSet
 from core.authentication.urls import urlpatterns as oidc_urls
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="users")
+router.register("drafts", TransferDraftViewSet, basename="drafts")
 router.register("transfers", TransferViewSet, basename="transfers")
 
 urlpatterns = [

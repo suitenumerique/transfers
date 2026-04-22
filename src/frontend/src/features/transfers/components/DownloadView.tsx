@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import type { DownloadTransferFull } from "@/features/api/types";
@@ -12,10 +11,6 @@ interface DownloadViewProps {
 
 export function DownloadView({ transfer, token }: DownloadViewProps) {
   const { t } = useTranslation();
-  // Per-file download state: which file is currently downloading, and any
-  // error surfaced by the last attempt.
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const expiresAt = new Date(transfer.expires_at).toLocaleDateString("fr-FR", {
     day: "numeric",
@@ -24,18 +19,6 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
   });
 
   const totalSize = transfer.files.reduce((a, f) => a + f.size, 0);
-
-  const handleDownload = async (fileId: string, filename: string) => {
-    setDownloadingId(fileId);
-    setDownloadError(null);
-    try {
-      await downloadFile(token, fileId, filename);
-    } catch {
-      setDownloadError(t("Download failed."));
-    } finally {
-      setDownloadingId(null);
-    }
-  };
 
   return (
     <div className="download-view">
@@ -63,31 +46,22 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
             </span>
           </h2>
           <ul className="download-view__file-list">
-            {transfer.files.map((file) => {
-              const isDownloading = downloadingId === file.id;
-              return (
-                <li key={file.id} className="download-view__file">
-                  <div className="download-view__file-meta">
-                    <span className="download-view__filename">
-                      {file.filename}
-                    </span>
-                    <span className="download-view__size">
-                      {formatFileSize(file.size)}
-                    </span>
-                  </div>
-                  <Button
-                    onClick={() => handleDownload(file.id, file.filename)}
-                    disabled={downloadingId !== null}
-                  >
-                    {isDownloading ? t("Downloading...") : t("Download")}
-                  </Button>
-                </li>
-              );
-            })}
+            {transfer.files.map((file) => (
+              <li key={file.id} className="download-view__file">
+                <div className="download-view__file-meta">
+                  <span className="download-view__filename">
+                    {file.filename}
+                  </span>
+                  <span className="download-view__size">
+                    {formatFileSize(file.size)}
+                  </span>
+                </div>
+                <Button onClick={() => downloadFile(token, file.id)}>
+                  {t("Download")}
+                </Button>
+              </li>
+            ))}
           </ul>
-          {downloadError && (
-            <p className="download-view__error">{downloadError}</p>
-          )}
         </div>
       )}
     </div>

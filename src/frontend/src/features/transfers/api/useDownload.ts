@@ -11,24 +11,15 @@ export function useDownloadTransfer(token: string | undefined) {
   });
 }
 
-// Fetches a file as a blob and triggers a programmatic download.
-export async function downloadFile(
-  token: string,
-  fileId: string,
-  filename: string,
-): Promise<void> {
-  const url = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Download failed: ${res.status}`);
-  }
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
+// Triggers a download by navigating to the backend endpoint, which 302s to a
+// presigned S3 URL. The browser sees the response's Content-Disposition:
+// attachment header (baked into the presigned URL) and hands off to its
+// native download manager — the current page stays put, no blob is buffered
+// in memory, and large files stream straight from S3 to disk.
+export function downloadFile(token: string, fileId: string): void {
   const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = filename;
+  a.href = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(objectUrl);
 }

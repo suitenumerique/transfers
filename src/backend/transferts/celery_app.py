@@ -19,8 +19,8 @@ app.conf.beat_schedule = {
         "task": "core.tasks.expire_transfers_task",
         "schedule": 3600.0,  # Every hour
     },
-    "cleanup-abandoned-uploads": {
-        "task": "core.tasks.cleanup_abandoned_uploads_task",
+    "cleanup-abandoned-drafts": {
+        "task": "core.tasks.cleanup_abandoned_drafts_task",
         "schedule": 21600.0,  # Every 6 hours
     },
 }

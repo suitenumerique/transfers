@@ -80,6 +80,49 @@ def sign_upload_part(key: str, upload_id: str, part_number: int) -> str:
     )
 
 
+def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
+    """Return a presigned GET URL that triggers a browser download.
+
+    ``ResponseContentDisposition`` is baked into the signature so S3 echoes it
+    back as a response header: the browser treats the response as a file
+    download, stays on the current page, and uses ``filename`` as the saved
+    name. Same for ``ResponseContentType``.
+    """
+    client = _get_presigning_client()
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentType": content_type or "application/octet-stream",
+        },
+        ExpiresIn=settings.TRANSFER_PRESIGNED_URL_EXPIRY,
+    )
+
+
+def upload_part_bytes(
+    key: str, upload_id: str, part_number: int, body: bytes
+) -> str:
+    """Upload a single part of a multipart upload server-side. Returns the
+    part's ``ETag`` as a double-quoted string, ready to feed back to
+    ``complete_multipart_upload``.
+
+    This is the server-side counterpart of ``sign_upload_part`` — used by
+    the Drive-import celery task, where bytes flow through the backend
+    rather than being PUT directly by the browser.
+    """
+    client = get_s3_client()
+    response = client.upload_part(
+        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Key=key,
+        UploadId=upload_id,
+        PartNumber=part_number,
+        Body=body,
+    )
+    return response["ETag"]
+
+
 def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> None:
     """Finalize a multipart upload given the list of uploaded parts.
 

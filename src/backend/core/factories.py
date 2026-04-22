@@ -36,17 +36,32 @@ class TransferFactory(factory.django.DjangoModelFactory):
     title = factory.Faker("sentence", nb_words=4)
     expires_at = factory.LazyFunction(lambda: timezone.now() + timedelta(days=7))
     status = TransferStatus.ACTIVE
-    # By default, factories produce finalized transfers (public_token set,
-    # upload_completed_at set). Override in tests that need a pending one.
+    # A Transfer row only exists post-finalize, so every instance carries
+    # a public token by default. Override in tests that need a custom one.
     public_token = factory.LazyFunction(lambda: secrets.token_urlsafe(32))
-    upload_completed_at = factory.LazyFunction(timezone.now)
+
+
+class TransferDraftFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.TransferDraft
+
+    owner = factory.SubFactory(UserFactory)
 
 
 class TransferFileFactory(factory.django.DjangoModelFactory):
+    """Factory for TransferFile.
+
+    Produces a file attached to a finalized Transfer by default. Pass
+    ``draft=draft, transfer=None`` to produce a draft-owned file — the
+    model's check constraint enforces exactly one parent, so callers must
+    pick one or the other.
+    """
+
     class Meta:
         model = models.TransferFile
 
     transfer = factory.SubFactory(TransferFactory)
+    draft = None
     filename = factory.Faker("file_name")
     size = factory.fuzzy.FuzzyInteger(1024, 10 * 1024 * 1024)
     mime_type = "application/octet-stream"
