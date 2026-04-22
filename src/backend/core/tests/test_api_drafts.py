@@ -19,7 +19,7 @@ from django.utils import timezone
 import pytest
 from botocore.exceptions import ClientError
 
-from core.enums import TransferEventType, TransferStatus
+from core.enums import TransferEventType
 from core.factories import (
     TransferDraftFactory,
     TransferFactory,
@@ -1063,8 +1063,6 @@ class TestImportDriveFileTask:
         payload = b"hello-bytes!"
         assert len(payload) == 12
 
-        mock_response = _uuid.SafeUUID  # any object, not used — replaced below
-
         class _FakeResponse:
             def __enter__(self_inner):
                 return self_inner
@@ -1143,6 +1141,7 @@ class TestImportDriveFileTask:
         """Drive responds 403 / 404 — the row is deleted, no multipart
         opened in the first place (the HTTP call errors before that)."""
         import requests as _requests
+
         from core.tasks import import_drive_file_task
 
         tf, _ = self._make_file(user)
