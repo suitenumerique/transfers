@@ -49,7 +49,7 @@ export default function MyApp(props: AppPropsWithLayout) {
   return (
     <>
       <Head>
-        <title>Transfers</title>
+        <title>Transferts</title>
         <meta name="description" content="Service de transfert de fichiers" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>

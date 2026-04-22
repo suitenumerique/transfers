@@ -58,7 +58,20 @@ export function Sidebar() {
       </div>
 
       <div className="shell-sidebar__top">
-        <Link href="/" className="shell-sidebar__nav-row">
+        <Link
+          href="/"
+          className="shell-sidebar__nav-row"
+          onClick={() => {
+            // If the user is already on `/` viewing a success panel from
+            // a just-finalized transfer, Next.js Link treats this as a
+            // no-op (same URL) and the form stays stuck on the confirm
+            // screen. Broadcast a reset signal that TransferForm
+            // listens to so the form bounces back to its empty state.
+            if (router.pathname === "/") {
+              window.dispatchEvent(new CustomEvent("transferts:new-transfer"));
+            }
+          }}
+        >
           <Plus />
           <span>{t("New transfer")}</span>
         </Link>
@@ -82,7 +95,7 @@ export function Sidebar() {
           activeId={activeId}
         />
         <TransferSection
-          label={t("Archives")}
+          label={t("Deactivated transfers")}
           items={archives}
           activeId={activeId}
           muted

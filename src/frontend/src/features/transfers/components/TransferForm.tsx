@@ -330,6 +330,16 @@ export function TransferForm() {
     setFileError(null);
   };
 
+  // The sidebar's "New transfer" link points to `/`. When the user is
+  // already on `/` viewing a success panel, Next.js Link is a no-op and
+  // `finalized` stays set. The Sidebar dispatches this event on click so
+  // we bounce back to the empty form regardless of current route state.
+  useEffect(() => {
+    const handler = () => handleNewTransfer();
+    window.addEventListener("transferts:new-transfer", handler);
+    return () => window.removeEventListener("transferts:new-transfer", handler);
+  }, []);
+
   const expiryOptions = EXPIRY_CHOICES.map((days) => ({
     label: t("{{count}} days", { count: days }),
     value: String(days),
@@ -510,10 +520,7 @@ export function TransferForm() {
               className={`transfer-form__tab${
                 sharingMode === "link" ? " transfer-form__tab--active" : ""
               }`}
-              onClick={() => {
-                setSharingMode("link");
-                setRecipients([]);
-              }}
+              onClick={() => setSharingMode("link")}
               disabled={busy}
             >
               <LinkIcon />

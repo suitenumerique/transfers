@@ -152,11 +152,14 @@ export function TransferDetail({
             fullWidth
             onFocus={(e) => e.currentTarget.select()}
           />
+          {/* Link stays visible on deactivated transfers for reference,
+              but copying is disabled — the URL no longer resolves. */}
           <Button
             color="neutral"
             variant="tertiary"
             icon={copied ? <Checkmark /> : <Copy />}
             onClick={copyLink}
+            disabled={!isActive}
             aria-label={copied ? t("Link copied!") : t("Copy link")}
             title={copied ? t("Link copied!") : t("Copy link")}
           />
@@ -222,7 +225,7 @@ export function TransferDetail({
                 variant="tertiary"
                 icon={<Download />}
                 onClick={() => handleDownload(file.id)}
-                disabled={!transfer.public_token}
+                disabled={!isActive || !transfer.public_token}
                 aria-label={t("Download {{name}}", { name: file.filename })}
                 title={t("Download")}
               />
@@ -266,7 +269,7 @@ export function TransferDetail({
             onClick={revokeModal.open}
             disabled={revokeTransfer.isPending}
           >
-            {t("Cancel")}
+            {t("Deactivate")}
           </Button>
         </div>
       )}
