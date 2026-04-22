@@ -1,12 +1,12 @@
 # Transfers
 
-Service de transfert de fichiers souverain pour La Suite territoriale.
+Sovereign file transfer service for La Suite territoriale.
 
 Forked from [suitenumerique/messages](https://github.com/suitenumerique/messages).
 
 ## Stack
 
-- **Backend**: Django + DRF, PostgreSQL, Celery/Redis, S3 (MinIO en dev)
+- **Backend**: Django + DRF, PostgreSQL, Celery/Redis, S3 (MinIO in dev)
 - **Frontend**: React (Next.js)
 - **Auth**: ProConnect via OIDC
 
