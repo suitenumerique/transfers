@@ -88,6 +88,9 @@ db.sqlite3
 .claude
 CLAUDE.md
 
+# Local reference clones of sibling La Suite projects
+.drive
+
 # Various
 .turbo
 

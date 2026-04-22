@@ -147,7 +147,7 @@ class Base(Configuration):
         environ_prefix=None,
     )
     TRANSFER_CHUNK_SIZE = values.PositiveIntegerValue(
-        10 * 1024 * 1024,  # 10 MiB
+        25 * 1024 * 1024,  # 25 MiB
         environ_name="TRANSFER_CHUNK_SIZE",
         environ_prefix=None,
     )
@@ -157,13 +157,29 @@ class Base(Configuration):
         environ_prefix=None,
     )
     # Lifetime of a presigned part URL. The browser re-signs on every retry,
-    # so this only needs to cover one PUT attempt. 5 min is very comfortable
-    # even on slow 3G (a 10 MiB chunk at 256 Kbps takes ~5 min).
+    # so this only needs to cover one PUT attempt. 10 min leaves plenty of
+    # headroom for a 25 MiB chunk even on a poor link (~13 min at 256 Kbps
+    # would force a retry, which is free: MultipartUploader re-signs on each
+    # attempt).
     TRANSFER_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
-        300,  # 5 min
+        600,  # 10 min
         environ_name="TRANSFER_PRESIGNED_URL_EXPIRY",
         environ_prefix=None,
     )
+
+    # Drive integration: when DRIVE_BASE_URL is set, the frontend renders an
+    # "Attach from Drive" picker. Picked files are downloaded client-side
+    # (with the agent's Drive session cookie) and uploaded through our
+    # regular multipart flow — hard copy in our S3, no reference stored.
+    # Using os.environ directly: django-configurations' values.Value() isn't
+    # resolved when embedded in a dict literal (it only scans top-level
+    # class attributes).
+    DRIVE_CONFIG = {
+        "base_url": os.environ.get("DRIVE_BASE_URL", ""),
+        "sdk_url": os.environ.get("DRIVE_SDK_URL", "/sdk"),
+        "api_url": os.environ.get("DRIVE_API_URL", "/api/v1.0"),
+        "app_name": os.environ.get("DRIVE_APP_NAME", "Drive"),
+    }
 
     STORAGES = {
         "default": {

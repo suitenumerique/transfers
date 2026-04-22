@@ -1,0 +1,116 @@
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { openPicker } from "@gouvfr-lasuite/drive-sdk";
+import { Icon } from "@gouvfr-lasuite/ui-kit";
+import { useConfig } from "@/features/providers/config";
+import type { DrivePickedItem } from "../api/useTransferDraft";
+
+interface Props {
+  onPick: (items: DrivePickedItem[]) => void;
+  onError?: (message: string) => void;
+  disabled?: boolean;
+  // Optional upper bound: reject obviously oversized items up-front for UX.
+  // The backend re-checks the per-file and cumulative limits at add-file time.
+  maxFileSize?: number;
+}
+
+// Browser-side URL concatenation: backend sends Drive paths as relative
+// strings (`/sdk`, `/api/v1.0`); we join them with the base URL before
+// handing them to the SDK.
+function joinUrl(base: string, path: string): string {
+  if (!path) return base;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
+}
+
+// Design note: attachment is a *server-side import* — we pass the Drive
+// public permalink (``url_permalink``) to the backend, which streams the
+// bytes into our S3 via a celery task. No dl+ul through the browser means
+// no tab memory pressure and no throttling, and the file looks identical
+// to a browser-uploaded one once the import completes. The tradeoff is
+// that the picked Drive item is flipped to public when picked — a
+// mechanism owned by Drive itself, not by us.
+//
+// A hard-copy mode (browser fetches bytes and re-uploads) was tried
+// first and rejected: it buffers the full file in tab RAM via `blob()`
+// and pins the user's machine in the data path.
+export function DriveAttachButton({
+  onPick,
+  onError,
+  disabled,
+  maxFileSize,
+}: Props) {
+  const { t } = useTranslation();
+  const config = useConfig();
+  const [busy, setBusy] = useState(false);
+
+  if (!config.DRIVE) return null;
+
+  const drive = config.DRIVE;
+
+  const handleClick = async () => {
+    setBusy(true);
+    try {
+      const result = await openPicker({
+        url: joinUrl(drive.base_url, drive.sdk_url),
+        apiUrl: joinUrl(drive.base_url, drive.api_url),
+      });
+      if (result.type !== "picked" || !result.items) return;
+
+      // Narrow the SDK's Item type to the fields we need. The picker
+      // response shape is stable under this subset (tested against the
+      // ANCT Drive release on 2026-04-22).
+      const items = result.items as unknown as Array<{
+        url_permalink: string;
+        filename: string;
+        size: number;
+        mimetype: string;
+      }>;
+
+      if (maxFileSize) {
+        const oversized = items.find((it) => it.size > maxFileSize);
+        if (oversized) {
+          onError?.(
+            t(
+              "Could not download from {{app}}. Check that the file is accessible and try again.",
+              { app: drive.app_name },
+            ),
+          );
+          return;
+        }
+      }
+
+      onPick(
+        items.map((it) => ({
+          url_permalink: it.url_permalink,
+          filename: it.filename,
+          size: it.size,
+          mimetype: it.mimetype,
+        })),
+      );
+    } catch {
+      onError?.(
+        t(
+          "Could not download from {{app}}. Check that the file is accessible and try again.",
+          { app: drive.app_name },
+        ),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      color="neutral"
+      size="small"
+      onClick={handleClick}
+      disabled={disabled || busy}
+      icon={<Icon name="folder_open" />}
+    >
+      {t("Attach from {{app}}", { app: drive.app_name })}
+    </Button>
+  );
+}

@@ -761,50 +761,6 @@
     transition: width 200ms ease;
   }
 
-
-  &__busy-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.92);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  &__busy-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--c--globals--spacings--sm);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-  }
-
-  &__busy-spinner {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    border: 4px solid var(--c--contextuals--border--surface--primary);
-    border-top-color: var(--c--contextuals--content--semantic--brand--tertiary);
-    animation: transfer-form-busy-spin 0.9s linear infinite;
-  }
-
-  &__progress-label {
-    margin: 0;
-    font-size: var(--c--globals--font--sizes--sm);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-  }
-
-  &__progress-sublabel {
-    margin: 0;
-    font-size: var(--c--globals--font--sizes--xs);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-    max-width: 360px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   &__file-list {
     list-style: none;
     padding: 0;
@@ -900,32 +856,30 @@
     }
   }
 
-  &__progress-bar {
-    width: 360px;
-    max-width: 80vw;
-    height: 8px;
+  // Per-file progress rendered inside a file-item while its upload is in
+  // flight. The bar sits below the filename + byte counter, so the row
+  // always shows at a glance how far along each file is.
+  &__file-progress {
+    margin-top: 4px;
+    height: 4px;
+    width: 100%;
     background: var(--c--contextuals--background--semantic--brand--tertiary);
     border-radius: 999px;
     overflow: hidden;
   }
 
-  &__progress-fill {
+  &__file-progress-fill {
     height: 100%;
     background: var(--c--contextuals--background--semantic--brand--primary);
     transition: width 150ms linear;
   }
 
-  &__progress-percent {
-    margin: 0;
-    font-size: var(--c--globals--font--sizes--md);
-    font-weight: 600;
-    color: var(--c--contextuals--content--semantic--brand--primary);
+  &__file-item--done &__file-icon {
+    color: var(--c--contextuals--content--semantic--success--primary);
   }
 
-  @keyframes transfer-form-busy-spin {
-    to {
-      transform: rotate(360deg);
-    }
+  &__file-item--error &__file-icon {
+    color: var(--c--contextuals--content--semantic--danger--primary);
   }
 
 }
@@ -1009,6 +963,16 @@
     min-width: 0;
   }
 
+  // Compact-mode counterpart of &__extra — sits at the far right of the
+  // inline row so the Drive button is reachable without drifting below
+  // the file list.
+  &__compact-extra {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    pointer-events: auto;
+  }
+
   &__cta-link {
     color: var(--c--contextuals--content--semantic--brand--primary);
     font-weight: 500;
@@ -1039,6 +1003,24 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
+  // "extra CTA" slot under the hint — hosts the Drive attach button when the
+  // dropzone is in non-compact mode. Re-enables pointer events locally so
+  // interactive children can receive clicks even though the parent dropzone
+  // is the drop target.
+  &__extra {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    margin-top: var(--c--globals--spacings--sm);
+    pointer-events: auto;
+  }
+
+  &__separator {
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    text-transform: lowercase;
+  }
 }
 
 // Download View

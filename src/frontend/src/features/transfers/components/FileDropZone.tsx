@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
@@ -6,7 +6,15 @@ import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {
   onChange: (files: File[]) => void;
+  // Compact variant used inline with an existing file list (e.g. "+ Add an
+  // item" tile). Swaps the large headline for a tight single row.
   compact?: boolean;
+  // Extra CTA rendered inside the dropzone frame (e.g. the Drive attach
+  // button). Non-compact: below the size hint, centered. Compact: pushed
+  // to the right of the inline row. Hidden during an active drag in both
+  // modes to keep the "drop it" state clean. The slot stopPropagation's
+  // clicks so interactive children don't also trigger the file picker.
+  extraCta?: ReactNode;
 }
 
 function formatMaxSize(bytes: number): string {
@@ -58,7 +66,11 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({ onChange, compact = false }: FileDropZoneProps) {
+export function FileDropZone({
+  onChange,
+  compact = false,
+  extraCta,
+}: FileDropZoneProps) {
   const { t } = useTranslation();
   const config = useConfig();
   const windowDragging = useWindowFileDrag();
@@ -111,6 +123,14 @@ export function FileDropZone({ onChange, compact = false }: FileDropZoneProps) {
                 })}
               </p>
             </div>
+            {extraCta && !isDragActive && (
+              <div
+                className="file-dropzone__compact-extra"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {extraCta}
+              </div>
+            )}
           </>
         ) : (
           <div className="file-dropzone__cta">
@@ -125,6 +145,15 @@ export function FileDropZone({ onChange, compact = false }: FileDropZoneProps) {
                 size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
               })}
             </p>
+            {extraCta && !isDragActive && (
+              <div
+                className="file-dropzone__extra"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="file-dropzone__separator">{t("or")}</span>
+                {extraCta}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -60,5 +60,12 @@ LOGOUT_REDIRECT_URL=http://localhost:8900
 OIDC_REDIRECT_ALLOWED_HOSTS=["http://localhost:8900"]
 OIDC_AUTH_REQUEST_EXTRA_PARAMS={"acr_values": "eidas1"}
 
+# Drive integration — leave blank to hide the "Attach from Drive" button.
+# Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)
+# to enable it. The target Drive must allow our origin in BOTH
+# `CORS_ALLOWED_ORIGINS` AND `SDK_CORS_ALLOWED_ORIGINS`, and keep
+# `CORS_ALLOW_CREDENTIALS=True`.
+DRIVE_BASE_URL=
+
 # Frontend
 FRONTEND_THEME=dsfr
