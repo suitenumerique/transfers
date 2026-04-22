@@ -42,14 +42,19 @@ TRANSFER_MAX_TOTAL_SIZE=21474836480
 
 OIDC_CREATE_USER=True
 
-# OIDC — Set in backend.local with your OIDC provider (ProConnect, etc.)
-# OIDC_OP_JWKS_ENDPOINT=
-# OIDC_OP_AUTHORIZATION_ENDPOINT=
-# OIDC_OP_TOKEN_ENDPOINT=
-# OIDC_OP_USER_ENDPOINT=
-# OIDC_OP_LOGOUT_ENDPOINT=
-# OIDC_RP_CLIENT_ID=
-# OIDC_RP_CLIENT_SECRET=
+# OIDC endpoints — public URLs for ProConnect (AgentConnect integration
+# env). Safe to commit; the sensitive parts (client id + secret) stay in
+# backend.local. These are also required at boot: mozilla-django-oidc
+# validates `OIDC_RP_SIGN_ALGO=RS256` needs either JWKS or a key, else
+# it raises ImproperlyConfigured and the app never starts (including on
+# CI where .local is empty).
+OIDC_OP_JWKS_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/jwks
+OIDC_OP_AUTHORIZATION_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/authorize
+OIDC_OP_TOKEN_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/token
+OIDC_OP_USER_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/userinfo
+OIDC_OP_LOGOUT_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/session/end
+# OIDC_RP_CLIENT_ID=          # set in backend.local
+# OIDC_RP_CLIENT_SECRET=      # set in backend.local
 OIDC_RP_SIGN_ALGO=RS256
 OIDC_RP_SCOPES="openid email"
 
