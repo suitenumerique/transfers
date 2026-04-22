@@ -61,28 +61,43 @@
 }
 
 // Landing page (unauthenticated)
+// Public landing (pre-login). Single centered column — an illustration
+// pairs with it on the right in the final mock, but that asset isn't
+// ready yet, so for now the content block sits alone, vertically and
+// horizontally centered in the viewport. Text stays left-aligned inside
+// the block (the mock places it in the left column; only the column
+// wrapper is centered).
 .home-landing {
+  // Parent is a flex container from the UIKit MainLayout; without an
+  // explicit width the section shrinks to fit its content and the
+  // `justify-content: center` inside becomes a no-op. Fill the row so
+  // centering works.
+  flex: 1;
+  width: 100%;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
   align-items: center;
-  text-align: center;
-  gap: var(--c--globals--spacings--md);
-  padding: 0 var(--c--globals--spacings--md);
+  justify-content: center;
   min-height: calc(100vh - 120px);
-  width: 100vw;
-  position: relative;
-  left: 50%;
-  transform: translateX(-50%);
+  padding:
+    var(--c--globals--spacings--xl)
+    var(--c--globals--spacings--md);
 
-  &__logo {
-    height: 64px;
-    width: auto;
-    margin-bottom: var(--c--globals--spacings--sm);
+  &__content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: 420px;
+    width: 100%;
+    gap: var(--c--globals--spacings--md);
+  }
+
+  &__icon {
+    display: block;
+    margin-bottom: var(--c--globals--spacings--xs);
   }
 
   &__title {
-    font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+    font-size: var(--c--globals--font--sizes--h2, 1.75rem);
     font-weight: 700;
     line-height: 1.15;
     margin: 0;
@@ -91,9 +106,17 @@
 
   &__subtitle {
     margin: 0;
-    font-size: var(--c--globals--font--sizes--lg);
+    font-size: var(--c--globals--font--sizes--md);
     line-height: 1.5;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+    margin-top: var(--c--globals--spacings--xs);
+    flex-wrap: wrap;
   }
 }
 
