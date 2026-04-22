@@ -101,6 +101,8 @@ def _owner_summary_url(transfer) -> str:
 
 def notify_owner_link_opened(transfer):
     """Notify the transfer owner that the download link was opened."""
+    if not getattr(settings, "NOTIFY_SENDER_EVENTS", False):
+        return
     if not transfer.owner or not transfer.owner.email:
         return
 
@@ -132,6 +134,8 @@ def notify_owner_link_opened(transfer):
 
 def notify_owner_file_downloaded(transfer, filename):
     """Notify the transfer owner that a file was downloaded."""
+    if not getattr(settings, "NOTIFY_SENDER_EVENTS", False):
+        return
     if not transfer.owner or not transfer.owner.email:
         return
 
