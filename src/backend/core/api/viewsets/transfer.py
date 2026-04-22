@@ -7,7 +7,7 @@ objects). Listing / retrieving / inspecting events happen here; mutation
 beyond revoke does not exist.
 """
 
-from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.db.models import Count, Exists, OuterRef, Sum
 from django.utils import timezone
 
 import rest_framework as drf

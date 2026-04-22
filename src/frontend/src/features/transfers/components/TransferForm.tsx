@@ -88,7 +88,6 @@ export function TransferForm() {
     return () => {
       void draft.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFilesChange = (incoming: File[]) => {
