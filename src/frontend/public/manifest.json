@@ -9,5 +9,13 @@
   "orientation": "portrait-primary",
   "categories": ["productivity"],
   "lang": "fr",
-  "dir": "ltr"
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/images/transferts-favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
 }
