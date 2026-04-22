@@ -23,7 +23,7 @@ from core.api.serializers import (
     TransferListSerializer,
 )
 from core.api.viewsets import Pagination
-from core.enums import ActorType, TransferEventType, TransferStatus
+from core.enums import ActorType, SharingMode, TransferEventType, TransferStatus
 
 
 def _log_event(transfer, event_type, request):
@@ -107,6 +107,36 @@ class TransferViewSet(
         transfer.save(update_fields=["status", "revoked_at", "updated_at"])
 
         _log_event(transfer, TransferEventType.TRANSFER_REVOKED, request)
+
+        serializer = TransferDetailSerializer(transfer)
+        return drf.response.Response(serializer.data)
+
+    @extend_schema(responses={200: TransferDetailSerializer})
+    @action(detail=True, methods=["post"])
+    def resend(self, request, pk=None):
+        """Re-send the recipient invitation emails for an email-mode
+        transfer. No-op on link-mode transfers (no recipients).
+
+        Stamps `email_sent_at` back to NULL on each recipient before
+        delegating to the existing celery task — the task only emails
+        recipients with `email_sent_at IS NULL`, so a reset is the most
+        precise trigger.
+        """
+        from core.tasks import send_recipient_invitations_task
+
+        transfer = self.get_object()
+
+        if transfer.status != TransferStatus.ACTIVE:
+            raise drf.exceptions.ValidationError(
+                {"status": "Only active transfers can be re-sent."}
+            )
+        if transfer.sharing_mode != SharingMode.EMAIL:
+            raise drf.exceptions.ValidationError(
+                {"sharing_mode": "Resend only applies to email-mode transfers."}
+            )
+
+        transfer.recipients.update(email_sent_at=None)
+        send_recipient_invitations_task.delay(str(transfer.id))
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

@@ -1,8 +1,8 @@
-Bonjour,
+Votre transfert a été consulté.
 
 Le lien de téléchargement de votre transfert « {{ transfer.title|default:filename }} » vient d'être consulté.
 
-Fichier : {{ filename }}
+Voir le récapitulatif : {{ cta_url }}
 
-Cordialement,
-{{ transfer.owner.full_name|default:"L'équipe Transferts" }}
+—
+Transferts — La Suite territoriale

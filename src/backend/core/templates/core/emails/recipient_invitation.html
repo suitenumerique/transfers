@@ -1,0 +1,47 @@
+{% extends "core/emails/_base.html" %}
+{% load humanize_size %}
+
+{% block content %}
+  {# Body line: who shared what. #}
+  <tr>
+    <td style="padding:0 32px 24px;font-size:15px;line-height:1.5;color:#25252f;">
+      <strong>{{ sender_name }}</strong>{% if sender_email and sender_email != sender_name %} ({{ sender_email }}){% endif %} {{ verb_label }}{% if transfer.title %} : <strong><em>{{ transfer.title }}</em></strong>{% endif %}.
+    </td>
+  </tr>
+
+  {# Files block #}
+  <tr>
+    <td style="padding:0 32px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fafbfc;border:1px solid #e1e2e5;border-radius:10px;">
+        <tr>
+          <td style="padding:16px 20px;font-weight:600;font-size:14px;color:#25252f;border-bottom:1px solid #ebedf0;">
+            {{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %}
+            <span style="color:#5d5d70;font-weight:400;"> &middot; {{ total_size|humanize_size }}</span>
+          </td>
+        </tr>
+        {% for file in files %}
+        <tr>
+          <td style="padding:12px 20px;{% if not forloop.last %}border-bottom:1px solid #ebedf0;{% endif %}font-size:14px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="22" style="vertical-align:middle;color:#5d5d70;">
+                  <span style="font-size:18px;">&#128196;</span>
+                </td>
+                <td style="vertical-align:middle;color:#25252f;font-weight:600;">{{ file.filename }}</td>
+                <td style="vertical-align:middle;color:#5d5d70;font-weight:400;text-align:right;white-space:nowrap;">&middot; {{ file.size|humanize_size }}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </td>
+  </tr>
+
+  {# Expiry line #}
+  <tr>
+    <td align="center" style="padding:24px 32px 8px;font-size:14px;color:#25252f;">
+      Le lien est valable jusqu'au <strong>{{ expires_date }}</strong> à <strong>{{ expires_time }}</strong>
+    </td>
+  </tr>
+{% endblock %}
