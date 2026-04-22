@@ -30,12 +30,40 @@ const queryClient = new QueryClient({
   },
 });
 
+// Cunningham's DeleteConfirmationModal ships a hard-coded "Supprimer" /
+// "Delete" button label. Our revoke action is semantically a deactivation,
+// not a deletion — override via `customLocales` so the modal's CTA reads
+// "Désactiver" in every language we ship.
+const CUSTOM_LOCALES = {
+  "fr-FR": {
+    components: {
+      modals: {
+        helpers: {
+          delete_confirmation: { delete: "Désactiver" },
+        },
+      },
+    },
+  },
+  "en-US": {
+    components: {
+      modals: {
+        helpers: {
+          delete_confirmation: { delete: "Deactivate" },
+        },
+      },
+    },
+  },
+};
+
 function AppContent({ Component, pageProps }: AppPropsWithLayout) {
   const { i18n } = useTranslation();
   const getLayout = Component.getLayout ?? ((page) => page);
 
   return (
-    <CunninghamProvider currentLocale={i18n.language}>
+    <CunninghamProvider
+      currentLocale={i18n.language}
+      customLocales={CUSTOM_LOCALES}
+    >
       <ConfigProvider>
         <Auth>
           {getLayout(<Component {...pageProps} />)}
