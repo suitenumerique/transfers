@@ -184,6 +184,16 @@ class Base(Configuration):
         environ_prefix=None,
     )
 
+    # Sender-side notifications ("your transfer was opened" / "your file
+    # was downloaded") are opt-in — off by default while we refine the
+    # UX. Flip `NOTIFY_SENDER_EVENTS=true` in env to re-enable. The
+    # recipient invitation email is separate and always sent.
+    NOTIFY_SENDER_EVENTS = values.BooleanValue(
+        default=False,
+        environ_name="NOTIFY_SENDER_EVENTS",
+        environ_prefix=None,
+    )
+
     # Drive integration: when DRIVE_BASE_URL is set, the frontend renders an
     # "Attach from Drive" picker. Picked files are downloaded client-side
     # (with the agent's Drive session cookie) and uploaded through our
