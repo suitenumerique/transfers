@@ -1,5 +1,6 @@
 import { type ReactElement } from "react";
 import { useRouter } from "next/router";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { MainLayout } from "@/features/layouts/components/main/MainLayout";
 import { TransferDetail } from "@/features/transfers/components/TransferDetail";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
@@ -10,7 +11,12 @@ const TransferDetailPage: NextPageWithLayout = () => {
   const id = router.query.id as string | undefined;
   const { data: transfer, isLoading, isError } = useTransfer(id);
 
-  if (isLoading) return <p className="app-content">Chargement...</p>;
+  if (isLoading)
+    return (
+      <div className="app-content app-content--loading">
+        <Spinner size="lg" />
+      </div>
+    );
   if (isError || !transfer)
     return <p className="app-content">Transfert introuvable.</p>;
 

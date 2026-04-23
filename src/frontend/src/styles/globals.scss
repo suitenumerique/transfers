@@ -57,6 +57,15 @@ body {
     margin-bottom: 1.5rem;
   }
 
+  // Full-page loading state — vertically centred spinner without the
+  // max-width cap biting (flex container aligns the children itself).
+  &--loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 50vh;
+  }
+
   // Cap the authenticated home narrower than the default app-content so the
   // two-column form stays readable at a glance on wide viewports. ``.home``
   // is also a flex column so the upload section inside can grow to fill

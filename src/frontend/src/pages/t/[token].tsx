@@ -6,6 +6,7 @@ import {
   LaGaufreV2,
   ProConnectButton,
   QuestionMark,
+  Spinner,
 } from "@gouvfr-lasuite/ui-kit";
 import { ApiError } from "@/features/api/client";
 import { login, useAuth } from "@/features/auth";
@@ -41,7 +42,11 @@ export default function DownloadPage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <p className="download-page__status">{t("Loading...")}</p>;
+      return (
+        <div className="download-page__status" aria-label={t("Loading...")}>
+          <Spinner size="lg" />
+        </div>
+      );
     }
     if (isError || !data) {
       const reason = getErrorReason(error);

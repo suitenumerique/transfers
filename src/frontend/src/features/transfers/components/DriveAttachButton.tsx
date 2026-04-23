@@ -57,45 +57,22 @@ export function DriveAttachButton({
 
   const handleClick = async () => {
     setBusy(true);
-    // The SDK only resolves on `ITEMS_SELECTED` / `CANCEL` messages posted
-    // from the Drive picker UI. Closing the popup with the OS X button
-    // sends neither — the awaited promise sits forever and `busy` stays
-    // true, leaving our button stuck grey. Intercept the popup the SDK
-    // opens via `window.open` so we can watch `popup.closed` and treat a
-    // user-closed window as a cancel.
-    //
-    // TODO: remove once the upstream SDK resolves on popup close —
-    // suitenumerique/drive:src/frontend/packages/sdk/src/Picker.ts already
-    // has a commented-out `watchForClosing` (disabled over a COOP false-
-    // positive during cross-origin auth redirects). A fix there ships a
-    // `0.0.3`+ and we can drop this wrapper.
-    const originalOpen = window.open;
-    let popup: Window | null = null;
-    window.open = ((...args: Parameters<typeof window.open>) => {
-      popup = originalOpen.apply(window, args);
-      return popup;
-    }) as typeof window.open;
     try {
-      const pickerPromise = openPicker({
+      // Known UX wart: the SDK resolves only on ITEMS_SELECTED / CANCEL
+      // messages from inside the Drive picker UI — closing the popup via
+      // the OS X button leaves this promise pending forever, and the
+      // button stays stuck grey until the tab is reloaded. A previous
+      // workaround watched `popup.closed` to force-cancel, but that
+      // produced false positives under COOP once the popup redirected
+      // cross-origin through ProConnect, wrecking the integration
+      // entirely. The fix lives upstream in
+      // suitenumerique/drive:src/frontend/packages/sdk/src/Picker.ts
+      // (a `watchForClosing` helper is already drafted + commented-out
+      // there pending a COOP-safe resolution).
+      const result = await openPicker({
         url: joinUrl(drive.base_url, drive.sdk_url),
         apiUrl: joinUrl(drive.base_url, drive.api_url),
       });
-
-      const closedByUserPromise = new Promise<{ type: "cancelled" }>(
-        (resolve) => {
-          const id = window.setInterval(() => {
-            if (popup && popup.closed) {
-              window.clearInterval(id);
-              resolve({ type: "cancelled" });
-            }
-          }, 300);
-          // Clear the watcher if the picker resolves first — otherwise we
-          // leak the interval forever.
-          pickerPromise.finally(() => window.clearInterval(id));
-        },
-      );
-
-      const result = await Promise.race([pickerPromise, closedByUserPromise]);
       if (result.type !== "picked" || !result.items) return;
 
       // Narrow the SDK's Item type to the fields we need. The picker
@@ -137,7 +114,6 @@ export function DriveAttachButton({
         ),
       );
     } finally {
-      window.open = originalOpen;
       setBusy(false);
     }
   };

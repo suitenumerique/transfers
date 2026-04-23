@@ -151,6 +151,12 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
+  &__loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
 }
 
 // Transfer Card
@@ -1325,6 +1331,9 @@
   }
 
   &__status {
+    display: flex;
+    justify-content: center;
+    align-items: center;
     font-size: var(--c--globals--font--sizes--md);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     margin-top: var(--c--globals--spacings--3xl);

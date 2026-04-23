@@ -1,10 +1,10 @@
 import { useTranslation } from "react-i18next";
 import {
   Alert,
-  Loader,
   Pagination,
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { useState } from "react";
 import { useTransfers } from "../api/useTransfers";
 import { TransferCard } from "./TransferCard";
@@ -18,8 +18,8 @@ export function TransferList() {
 
   if (isLoading) {
     return (
-      <div className="transfer-list__loading">
-        <Loader aria-label={t("Loading...")} />
+      <div className="transfer-list__loading" aria-label={t("Loading...")}>
+        <Spinner size="lg" />
       </div>
     );
   }
