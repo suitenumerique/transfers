@@ -540,6 +540,16 @@
   }
 }
 
+// Hint shown under the submit button while waiting for uploads to
+// finish — reassures the user that leaving the tab kills the upload.
+.transfer-form__submit-hint {
+  margin: calc(-1 * var(--c--globals--spacings--sm)) 0 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  text-align: center;
+  line-height: 1.4;
+}
+
 // Validity duration — inline label + compact dropdown trigger (handoff).
 .transfer-form__validity {
   display: flex;
@@ -790,16 +800,33 @@
 
   &__gauge-fill {
     height: 100%;
-    background: linear-gradient(
-      90deg,
-      var(--c--contextuals--background--semantic--brand--primary) 0%,
-      color-mix(
-        in srgb,
-        var(--c--contextuals--background--semantic--brand--primary) 60%,
-        #fff
-      ) 100%
-    );
-    transition: width 200ms ease;
+    transition:
+      width 200ms ease,
+      background-color 200ms ease;
+
+    // Traffic-light colouring driven by the `--neutral | --warning | --danger`
+    // modifier set from the JS (thresholds 75 % / 90 %). Neutral is a dark
+    // grey against the light rail; warning orange; danger red.
+    &--neutral {
+      background: var(
+        --c--contextuals--content--semantic--neutral--secondary,
+        #5d5d70
+      );
+    }
+
+    &--warning {
+      background: var(
+        --c--contextuals--background--semantic--warning--primary,
+        #e86e0c
+      );
+    }
+
+    &--danger {
+      background: var(
+        --c--contextuals--content--semantic--error--primary,
+        #c00100
+      );
+    }
   }
 
   &__file-list {
