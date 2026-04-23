@@ -7,12 +7,5 @@ export function useTransfer(id: string | undefined) {
     queryKey: ["transfers", id],
     queryFn: () => apiFetch<TransferDetail>(`/transfers/${id}/`),
     enabled: !!id,
-    refetchInterval: (query) => {
-      const transfer = query.state.data;
-      if (!transfer) return false;
-      // Poll while there are recipients waiting for email delivery
-      const pending = transfer.recipients?.some((r) => !r.email_sent_at);
-      return pending ? 3000 : false;
-    },
   });
 }
