@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   Button,
   Input,
-  Loader,
   Modal,
   ModalSize,
   useModal,
@@ -19,6 +18,7 @@ import {
   Folder,
   Globe,
   Perso,
+  Spinner,
   UserAvatar,
 } from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
@@ -276,7 +276,7 @@ export function TransferDetail({
       <section className="transfer-detail__history">
         <h2 className="transfer-detail__history-title">{t("History")}</h2>
         {events.isLoading ? (
-          <Loader aria-label={t("Loading...")} />
+          <Spinner />
         ) : !events.data || events.data.results.length === 0 ? (
           <p className="transfer-detail__history-empty">
             {t("No activity yet.")}

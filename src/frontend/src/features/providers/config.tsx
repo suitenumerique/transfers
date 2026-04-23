@@ -1,10 +1,5 @@
-import {
-  PropsWithChildren,
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import { PropsWithChildren, createContext, useContext } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
 
 export interface DriveConfig {
@@ -28,36 +23,43 @@ export interface AppConfig {
   DRIVE?: DriveConfig;
 }
 
-const ConfigContext = createContext<AppConfig | null>(null);
+interface ConfigContextValue {
+  config: AppConfig | null;
+  isReady: boolean;
+}
 
+const ConfigContext = createContext<ConfigContextValue>({
+  config: null,
+  isReady: false,
+});
+
+// Renders children unconditionally so the Auth provider mounts and fires its
+// own /users/me/ query in parallel — two sequential spinners on first paint
+// was painful and both endpoints are independent.
 export const ConfigProvider = ({ children }: PropsWithChildren) => {
-  const [config, setConfig] = useState<AppConfig | null>(null);
-
-  useEffect(() => {
-    apiFetch<AppConfig>("/config/")
-      .then((data) => setConfig(data))
-      .catch(() => {
-        // TODO: handle error state
-      });
-  }, []);
-
-  if (!config) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-        <p>Chargement…</p>
-      </div>
-    );
-  }
+  const query = useQuery<AppConfig>({
+    queryKey: ["config"],
+    queryFn: () => apiFetch<AppConfig>("/config/"),
+    retry: false,
+    staleTime: Infinity,
+  });
 
   return (
-    <ConfigContext.Provider value={config}>{children}</ConfigContext.Provider>
+    <ConfigContext.Provider
+      value={{ config: query.data ?? null, isReady: query.isFetched }}
+    >
+      {children}
+    </ConfigContext.Provider>
   );
 };
 
 export const useConfig = (): AppConfig => {
-  const config = useContext(ConfigContext);
+  const { config } = useContext(ConfigContext);
   if (!config) {
     throw new Error("`useConfig` must be used within a `ConfigProvider`.");
   }
   return config;
 };
+
+export const useConfigReady = (): boolean =>
+  useContext(ConfigContext).isReady;

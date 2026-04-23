@@ -1,5 +1,7 @@
 import React, { PropsWithChildren, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
+import { useConfigReady } from "@/features/providers/config";
 
 interface User {
   id: string;
@@ -43,6 +45,7 @@ const fetchMe = async (): Promise<User> => {
 };
 
 export const Auth = ({ children }: PropsWithChildren) => {
+  const configReady = useConfigReady();
   const query = useQuery<User, Error & { code?: number }>({
     queryKey: ["auth", "me"],
     queryFn: fetchMe,
@@ -55,7 +58,12 @@ export const Auth = ({ children }: PropsWithChildren) => {
     return undefined;
   }, [query.isError, query.error?.code, query.data]);
 
-  if (!query.isFetched) {
+  // Wait for BOTH the config fetch and the /users/me/ fetch. ConfigProvider
+  // renders its children unconditionally (so Auth and its useQuery mount
+  // immediately, in parallel with the config fetch) — without this gate,
+  // a page could render briefly without config available. Single spinner
+  // covers both fetches.
+  if (!query.isFetched || !configReady) {
     return (
       <div
         style={{
@@ -65,7 +73,7 @@ export const Auth = ({ children }: PropsWithChildren) => {
           height: "100vh",
         }}
       >
-        Loading...
+        <Spinner size="xl" />
       </div>
     );
   }
