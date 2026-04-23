@@ -1,8 +1,0 @@
-Un fichier a été téléchargé.
-
-Votre fichier « {{ filename }} » du transfert « {{ transfer.title|default:filename }} » vient d'être téléchargé.
-
-Voir le récapitulatif : {{ cta_url }}
-
-—
-Transferts — La Suite territoriale
