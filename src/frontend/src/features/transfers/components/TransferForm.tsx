@@ -54,6 +54,11 @@ function StorageGauge({
   maxSize: number;
 }) {
   const pct = Math.min((currentSize / maxSize) * 100, 100);
+  // Traffic-light fill colour based on fullness. Thresholds picked so a
+  // casually-filled form stays neutral grey (plenty of headroom), the bar
+  // warns in orange past 75 % (user is approaching the cap, last chance to
+  // drop a file), and goes red on 90 %+ (next file likely rejected).
+  const level = pct >= 90 ? "danger" : pct >= 75 ? "warning" : "neutral";
   return (
     <div className="transfer-form__gauge">
       <div className="transfer-form__gauge-meta">
@@ -64,7 +69,7 @@ function StorageGauge({
       </div>
       <div className="transfer-form__gauge-track">
         <div
-          className="transfer-form__gauge-fill"
+          className={`transfer-form__gauge-fill transfer-form__gauge-fill--${level}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -73,6 +78,37 @@ function StorageGauge({
 }
 
 const EXPIRY_CHOICES = [7, 30, 90];
+
+// Small 16px spinner used as the submit button's `icon` while the form
+// waits for uploads to finish + finalize to return. Inherits currentColor
+// so it shows white on the filled brand button.
+function ButtonSpinner() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="file-item__ring file-item__ring--spin"
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke="currentColor"
+        strokeOpacity="0.35"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M12 3a9 9 0 0 1 9 9"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 // Indeterminate spinner used while a Fichiers import runs server-side.
 // Plain CSS rotation — the SVG node itself is stable across draft
@@ -577,7 +613,9 @@ export function TransferForm() {
             fullWidth
             disabled={submitDisabled}
             icon={
-              busy ? undefined : sharingMode === "email" ? (
+              busy ? (
+                <ButtonSpinner />
+              ) : sharingMode === "email" ? (
                 <ArrowUpRight />
               ) : (
                 <Copy />
@@ -592,6 +630,14 @@ export function TransferForm() {
                   : t("Send")
                 : t("Create link")}
           </Button>
+
+          {busy && (
+            <p className="transfer-form__submit-hint" role="status">
+              {t(
+                "Your transfer will be created once the upload finishes. Keep this tab open.",
+              )}
+            </p>
+          )}
         </section>
       </div>
     </form>
