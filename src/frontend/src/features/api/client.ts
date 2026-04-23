@@ -42,6 +42,14 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    // Session died mid-flight (cookie expired, server-side logout, etc.).
+    // The page showed cached data with no way to reauth in place — force a
+    // full reload of the landing, which re-runs useAuth against the now-
+    // empty session and surfaces the "Sign in" flow. replace() keeps the
+    // dead URL out of browser history.
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.location.replace("/");
+    }
     throw new ApiError(
       (body as Record<string, string>).detail || res.statusText,
       res.status,
