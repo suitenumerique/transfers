@@ -1,8 +1,13 @@
 """Drop all tables in the public schema of the PostgreSQL database."""
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
+
+# Any env that may hold real user data — anything other than dev/test.
+# Guard raises CommandError (exit 1) instead of printing + returning 0 so
+# a chained deploy script fails loudly rather than silently proceeding.
+FORBIDDEN_ENVIRONMENTS = {"production", "staging"}
 
 
 class Command(BaseCommand):
@@ -13,12 +18,12 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         """Drop all tables in the public schema of the PostgreSQL database."""
 
-        # Forbit it in production!
-        if settings.ENVIRONMENT == "production":
-            self.stdout.write(
-                self.style.ERROR("This command is not allowed in production!")
+        env = settings.ENVIRONMENT
+        if env in FORBIDDEN_ENVIRONMENTS:
+            raise CommandError(
+                f"drop_all_tables refuses to run in '{env}'. "
+                f"Allowed environments: any except {sorted(FORBIDDEN_ENVIRONMENTS)}."
             )
-            return
 
         self.stdout.write("Dropping all tables...")
 

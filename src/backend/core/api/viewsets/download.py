@@ -10,7 +10,6 @@ from core import models
 from core.api.serializers import DownloadTransferSerializer
 from core.enums import ActorType, TransferEventType, TransferStatus
 from core.services.s3 import sign_download_url
-from core.tasks import send_file_downloaded_notification, send_link_opened_notification
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
 
@@ -68,7 +67,6 @@ class DownloadTransferView(APIView):
             return denied
 
         _record_visitor_event(transfer, TransferEventType.LINK_OPENED, request)
-        send_link_opened_notification.delay(str(transfer.id))
         serializer = DownloadTransferSerializer(transfer)
         return Response(serializer.data)
 
@@ -109,9 +107,6 @@ class DownloadFileView(APIView):
                 "file_id": str(transfer_file.id),
                 "filename": transfer_file.filename,
             },
-        )
-        send_file_downloaded_notification.delay(
-            str(transfer.id), transfer_file.filename
         )
 
         # Redirect the browser straight to S3 so the download bytes never

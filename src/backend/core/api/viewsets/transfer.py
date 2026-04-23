@@ -22,20 +22,9 @@ from core.api.serializers import (
     TransferEventSerializer,
     TransferListSerializer,
 )
+from core.api.utils import log_agent_event
 from core.api.viewsets import Pagination
-from core.enums import ActorType, SharingMode, TransferEventType, TransferStatus
-
-
-def _log_event(transfer, event_type, request):
-    """Emit a ``TransferEvent`` with the request context."""
-    models.TransferEvent.objects.create(
-        transfer_id=transfer.id,
-        event_type=event_type,
-        actor_type=ActorType.AGENT,
-        actor_id=request.user.id,
-        ip=request.META.get("REMOTE_ADDR"),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
-    )
+from core.enums import SharingMode, TransferEventType, TransferStatus
 
 
 class TransferViewSet(
@@ -106,7 +95,7 @@ class TransferViewSet(
         transfer.revoked_at = timezone.now()
         transfer.save(update_fields=["status", "revoked_at", "updated_at"])
 
-        _log_event(transfer, TransferEventType.TRANSFER_REVOKED, request)
+        log_agent_event(transfer, TransferEventType.TRANSFER_REVOKED, request)
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

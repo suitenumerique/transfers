@@ -12,11 +12,7 @@ from celery import shared_task
 from core.enums import ActorType, TransferEventType, TransferStatus
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
-from core.services.email import (
-    notify_owner_file_downloaded,
-    notify_owner_link_opened,
-    send_recipient_invitation,
-)
+from core.services.email import send_recipient_invitation
 
 logger = logging.getLogger(__name__)
 
@@ -221,27 +217,3 @@ def send_recipient_invitations_task(transfer_id):
                 recipient.email,
                 transfer_id,
             )
-
-
-@shared_task
-def send_link_opened_notification(transfer_id):
-    """Notify the owner that their transfer link was opened."""
-    try:
-        transfer = (
-            Transfer.objects.select_related("owner")
-            .prefetch_related("files")
-            .get(id=transfer_id)
-        )
-    except Transfer.DoesNotExist:
-        return
-    notify_owner_link_opened(transfer)
-
-
-@shared_task
-def send_file_downloaded_notification(transfer_id, filename):
-    """Notify the owner that a file was downloaded."""
-    try:
-        transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
-    except Transfer.DoesNotExist:
-        return
-    notify_owner_file_downloaded(transfer, filename)

@@ -169,3 +169,25 @@ def head_object_size(key: str) -> int:
     client = get_s3_client()
     response = client.head_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
     return int(response["ContentLength"])
+
+
+def abort_uploads_for_files(files) -> None:
+    """Best-effort abort of every in-progress multipart upload across ``files``.
+
+    Iterable of ``TransferFile`` rows (queryset or list). Files without an
+    ``upload_id`` are skipped. Individual S3 failures are logged and swallowed
+    by ``abort_multipart_upload``."""
+    for tf in files:
+        if tf.upload_id:
+            abort_multipart_upload(tf.s3_key, tf.upload_id)
+
+
+def delete_objects_for_files(files) -> None:
+    """Best-effort delete of every S3 object backing ``files``.
+
+    Iterable of ``TransferFile`` rows (queryset or list). Files without an
+    ``s3_key`` are skipped. Individual S3 failures are logged and swallowed
+    by ``delete_object``."""
+    for tf in files:
+        if tf.s3_key:
+            delete_object(tf.s3_key)
