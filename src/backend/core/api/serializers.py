@@ -124,7 +124,6 @@ class TransferListSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "sharing_mode",
-            "sensitive",
             "expires_at",
             "revoked_at",
             "created_at",
@@ -149,7 +148,6 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "sharing_mode",
-            "sensitive",
             "public_token",
             "expires_at",
             "revoked_at",
@@ -252,9 +250,9 @@ class DraftFinalizeSerializer(serializers.Serializer):
     """POST /drafts/{id}/finalize/ body.
 
     Carries all transfer-level metadata (title, expires, sharing mode,
-    recipients, sensitive) — a draft holds files only, never metadata.
-    Finalize is the single write that creates the Transfer row with its
-    real values and reparents the draft's files to it.
+    recipients) — a draft holds files only, never metadata. Finalize is
+    the single write that creates the Transfer row with its real values
+    and reparents the draft's files to it.
     """
 
     title = serializers.CharField(
@@ -265,7 +263,6 @@ class DraftFinalizeSerializer(serializers.Serializer):
         required=False,
         default=settings.TRANSFER_DEFAULT_EXPIRY_DAYS,
     )
-    sensitive = serializers.BooleanField(required=False, default=False)
     sharing_mode = serializers.ChoiceField(
         choices=SharingMode.choices,
         required=False,

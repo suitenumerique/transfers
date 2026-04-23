@@ -348,8 +348,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         """Create the Transfer and reparent the draft's files to it.
 
         Single write-point for transfer-level metadata: the body carries
-        ``title`` / ``sharing_mode`` / ``recipients`` / ``expires_in_days``
-        / ``sensitive``. The Transfer is born fully-formed (public_token
+        ``title`` / ``sharing_mode`` / ``recipients`` / ``expires_in_days``.
+        The Transfer is born fully-formed (public_token
         populated, ``created_at`` acts as the publication timestamp), every
         TransferFile in the draft is reparented in one UPDATE, and the draft
         is deleted. Recipient emails are scheduled on transaction commit.
@@ -383,7 +383,6 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,
                 title=metadata["title"],
-                sensitive=metadata["sensitive"],
                 sharing_mode=metadata["sharing_mode"],
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
