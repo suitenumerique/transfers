@@ -605,7 +605,6 @@ class TestDraftFinalize:
             title="Dossier Marché",
             sharing_mode="email",
             recipients=["alice@example.com", "bob@example.com"],
-            sensitive=True,
             expires_in_days=7,
         )
         assert response.status_code == 200, response.data
@@ -613,7 +612,6 @@ class TestDraftFinalize:
         transfer = Transfer.objects.get(id=response.data["id"])
         assert transfer.title == "Dossier Marché"
         assert transfer.sharing_mode == "email"
-        assert transfer.sensitive is True
         # expires_at is anchored at finalize time.
         delta = (transfer.expires_at - timezone.now()).total_seconds()
         assert delta == pytest.approx(7 * 86400, abs=5)

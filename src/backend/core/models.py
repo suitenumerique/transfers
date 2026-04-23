@@ -201,14 +201,6 @@ class Transfer(BaseModel):
         choices=SharingMode.choices,
         default=SharingMode.LINK,
     )
-    sensitive = models.BooleanField(
-        default=False,
-        help_text=(
-            "Reserved — the agent can flag a transfer as sensitive, but this "
-            "flag has no runtime effect yet. Surfaced on the transfer detail "
-            "for future product use."
-        ),
-    )
 
     class Meta:
         db_table = "core_transfer"
@@ -273,8 +265,8 @@ class TransferDraft(BaseModel):
     ``Transfer`` is created and the draft's ``TransferFile`` rows are
     reparented to it (see ``TransferDraftViewSet.finalize``). Drafts are
     never surfaced publicly and hold no transfer-level metadata: title,
-    sharing_mode, recipients, expiry and sensitive all come from the
-    finalize request body.
+    sharing_mode, recipients and expiry all come from the finalize
+    request body.
     """
 
     owner = models.ForeignKey(
