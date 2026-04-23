@@ -1,8 +1,0 @@
-Votre transfert a été consulté.
-
-Le lien de téléchargement de votre transfert « {{ transfer.title|default:filename }} » vient d'être consulté.
-
-Voir le récapitulatif : {{ cta_url }}
-
-—
-Transferts — La Suite territoriale

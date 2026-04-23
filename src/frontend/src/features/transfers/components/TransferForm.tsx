@@ -27,6 +27,7 @@ import {
 } from "@gouvfr-lasuite/ui-kit";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
+import { formatFileSize } from "@/features/utils/string-helper";
 import {
   fileKey,
   useTransferDraft,
@@ -37,14 +38,6 @@ import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
 import { FileItem } from "./FileItem";
 import { RecipientInput } from "./RecipientInput";
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 function StorageGauge({
   currentSize,
@@ -63,7 +56,7 @@ function StorageGauge({
     <div className="transfer-form__gauge">
       <div className="transfer-form__gauge-meta">
         <span>
-          {formatBytes(currentSize)} {"·"} {formatBytes(maxSize)}{" "}
+          {formatFileSize(currentSize)} {"·"} {formatFileSize(maxSize)}{" "}
           {/* used / total */}
         </span>
       </div>
@@ -230,8 +223,8 @@ export function TransferForm() {
       setFileError(
         t("File too large: {{name}} ({{size}}). Maximum: {{max}}.", {
           name: oversized.name,
-          size: formatBytes(oversized.size),
-          max: formatBytes(config.TRANSFER_MAX_FILE_SIZE),
+          size: formatFileSize(oversized.size),
+          max: formatFileSize(config.TRANSFER_MAX_FILE_SIZE),
         }),
       );
       return;
@@ -258,7 +251,7 @@ export function TransferForm() {
     if (currentTotal + addedTotal > config.TRANSFER_MAX_TOTAL_SIZE) {
       setFileError(
         t("Total size exceeds the limit of {{max}}.", {
-          max: formatBytes(config.TRANSFER_MAX_TOTAL_SIZE),
+          max: formatFileSize(config.TRANSFER_MAX_TOTAL_SIZE),
         }),
       );
       return;
@@ -290,8 +283,8 @@ export function TransferForm() {
       setFileError(
         t("File too large: {{name}} ({{size}}). Maximum: {{max}}.", {
           name: oversized.filename,
-          size: formatBytes(oversized.size),
-          max: formatBytes(config.TRANSFER_MAX_FILE_SIZE),
+          size: formatFileSize(oversized.size),
+          max: formatFileSize(config.TRANSFER_MAX_FILE_SIZE),
         }),
       );
       return;
@@ -315,7 +308,7 @@ export function TransferForm() {
     if (currentTotal + addedTotal > config.TRANSFER_MAX_TOTAL_SIZE) {
       setFileError(
         t("Total size exceeds the limit of {{max}}.", {
-          max: formatBytes(config.TRANSFER_MAX_TOTAL_SIZE),
+          max: formatFileSize(config.TRANSFER_MAX_TOTAL_SIZE),
         }),
       );
       return;
@@ -512,7 +505,7 @@ export function TransferForm() {
                     key={df.key}
                     icon={icon}
                     name={df.name}
-                    size={formatBytes(df.total)}
+                    size={formatFileSize(df.total)}
                     state={itemState}
                     extras={extras}
                     action={action}

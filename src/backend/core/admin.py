@@ -54,7 +54,7 @@ class TransferAdmin(admin.ModelAdmin):
         "expires_at",
         "created_at",
     )
-    list_filter = ("status", "sensitive")
+    list_filter = ("status",)
     search_fields = ("id", "title", "public_token", "owner__email")
     readonly_fields = (
         "id",

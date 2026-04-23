@@ -24,7 +24,6 @@
     "@gouvfr-lasuite/cunningham-react": "4.3.0",
     "@gouvfr-lasuite/drive-sdk": "^0.0.2",
     "@gouvfr-lasuite/ui-kit": "0.20.1",
-    "@hookform/resolvers": "5.2.2",
     "@sentry/nextjs": "10.38.0",
     "@tanstack/react-query": "5.90.20",
     "@tanstack/react-query-devtools": "5.91.3",
@@ -36,11 +35,9 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-dropzone": "14.4.0",
-    "react-hook-form": "7.71.1",
     "react-i18next": "16.5.4",
     "react-toastify": "11.0.5",
-    "sass": "1.97.3",
-    "zod": "4.3.6"
+    "sass": "1.97.3"
   },
   "devDependencies": {
     "@tanstack/eslint-plugin-query": "5.91.4",

@@ -30,20 +30,10 @@ from core.api.serializers import (
     DraftSignPartSerializer,
     TransferDetailSerializer,
 )
-from core.enums import ActorType, SharingMode, TransferEventType
+from core.api.utils import log_agent_event
+from core.enums import SharingMode, TransferEventType
 from core.services import s3
 from core.tasks import import_drive_file_task
-
-
-def _log_event(transfer, event_type, request):
-    models.TransferEvent.objects.create(
-        transfer_id=transfer.id,
-        event_type=event_type,
-        actor_type=ActorType.AGENT,
-        actor_id=request.user.id,
-        ip=request.META.get("REMOTE_ADDR"),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
-    )
 
 
 class TransferDraftViewSet(viewsets.GenericViewSet):
@@ -260,7 +250,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             )
         except botocore.exceptions.ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code", "Unknown")
-            _abort_draft_s3(draft)
+            s3.abort_uploads_for_files(draft.files.all())
             draft.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -276,8 +266,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         # history for the rationale; same guard applies here.
         actual_size = s3.head_object_size(transfer_file.s3_key)
         if actual_size != transfer_file.size:
-            _abort_draft_s3(draft)
-            _delete_draft_s3_objects(draft)
+            files = list(draft.files.all())
+            s3.abort_uploads_for_files(files)
+            s3.delete_objects_for_files(files)
             draft.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -342,8 +333,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         via cascade. All-or-nothing; safe to call on a half-uploaded draft.
         """
         draft = self.get_object()
-        _abort_draft_s3(draft)
-        _delete_draft_s3_objects(draft)
+        files = list(draft.files.all())
+        s3.abort_uploads_for_files(files)
+        s3.delete_objects_for_files(files)
         draft.delete()
         return drf.response.Response(status=204)
 
@@ -356,8 +348,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         """Create the Transfer and reparent the draft's files to it.
 
         Single write-point for transfer-level metadata: the body carries
-        ``title`` / ``sharing_mode`` / ``recipients`` / ``expires_in_days``
-        / ``sensitive``. The Transfer is born fully-formed (public_token
+        ``title`` / ``sharing_mode`` / ``recipients`` / ``expires_in_days``.
+        The Transfer is born fully-formed (public_token
         populated, ``created_at`` acts as the publication timestamp), every
         TransferFile in the draft is reparented in one UPDATE, and the draft
         is deleted. Recipient emails are scheduled on transaction commit.
@@ -391,7 +383,6 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,
                 title=metadata["title"],
-                sensitive=metadata["sensitive"],
                 sharing_mode=metadata["sharing_mode"],
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
@@ -406,7 +397,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         email=email,
                     )
 
-            _log_event(transfer, TransferEventType.TRANSFER_CREATED, request)
+            log_agent_event(transfer, TransferEventType.TRANSFER_CREATED, request)
 
             if transfer.sharing_mode == SharingMode.EMAIL:
                 from core.tasks import send_recipient_invitations_task
@@ -422,17 +413,3 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
 
 # --- Helpers ---
-
-
-def _abort_draft_s3(draft):
-    """Best-effort abort of every in-progress multipart upload on the draft."""
-    for tf in draft.files.all():
-        if tf.upload_id:
-            s3.abort_multipart_upload(tf.s3_key, tf.upload_id)
-
-
-def _delete_draft_s3_objects(draft):
-    """Best-effort delete of every S3 object already landed for the draft."""
-    for tf in draft.files.all():
-        if tf.s3_key:
-            s3.delete_object(tf.s3_key)

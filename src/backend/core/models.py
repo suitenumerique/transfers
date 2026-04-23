@@ -201,14 +201,6 @@ class Transfer(BaseModel):
         choices=SharingMode.choices,
         default=SharingMode.LINK,
     )
-    sensitive = models.BooleanField(
-        default=False,
-        help_text=(
-            "Reserved — the agent can flag a transfer as sensitive, but this "
-            "flag has no runtime effect yet. Surfaced on the transfer detail "
-            "for future product use."
-        ),
-    )
 
     class Meta:
         db_table = "core_transfer"
@@ -234,20 +226,6 @@ class Transfer(BaseModel):
         # So accessibility only depends on status + expiry.
         return self.status == TransferStatus.ACTIVE and not self.is_expired
 
-    def abort_pending_uploads(self) -> None:
-        """Abort every in-progress S3 multipart upload attached to this transfer.
-
-        Best-effort: failures on an individual file are logged by the S3
-        wrapper and swallowed so one broken file does not block the others.
-        Files already completed — or that never started a multipart upload —
-        are skipped.
-        """
-        from core.services import s3
-
-        for tf in self.files.all():
-            if tf.upload_id:
-                s3.abort_multipart_upload(tf.s3_key, tf.upload_id)
-
     def delete_s3_objects(self) -> None:
         """Delete every S3 object attached to this transfer.
 
@@ -257,9 +235,7 @@ class Transfer(BaseModel):
         """
         from core.services import s3
 
-        for tf in self.files.all():
-            if tf.s3_key:
-                s3.delete_object(tf.s3_key)
+        s3.delete_objects_for_files(self.files.all())
 
 
 class TransferRecipient(BaseModel):
@@ -289,8 +265,8 @@ class TransferDraft(BaseModel):
     ``Transfer`` is created and the draft's ``TransferFile`` rows are
     reparented to it (see ``TransferDraftViewSet.finalize``). Drafts are
     never surfaced publicly and hold no transfer-level metadata: title,
-    sharing_mode, recipients, expiry and sensitive all come from the
-    finalize request body.
+    sharing_mode, recipients and expiry all come from the finalize
+    request body.
     """
 
     owner = models.ForeignKey(
