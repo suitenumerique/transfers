@@ -75,13 +75,13 @@ export function Sidebar() {
       <div className="shell-sidebar__tree">
         <TransferSection
           label={t("Active transfers")}
-          archived={false}
+          deactivated={false}
           search={search}
           activeId={activeId}
         />
         <TransferSection
-          label={t("Archived transfers")}
-          archived={true}
+          label={t("Deactivated transfers")}
+          deactivated={true}
           search={search}
           activeId={activeId}
           muted
@@ -113,13 +113,13 @@ export function Sidebar() {
 // leaves anyway, which a plain <button>/<ul> covers with better a11y.
 function TransferSection({
   label,
-  archived,
+  deactivated,
   search,
   activeId,
   muted = false,
 }: {
   label: string;
-  archived: boolean;
+  deactivated: boolean;
   search: string;
   activeId: string | undefined;
   muted?: boolean;
@@ -131,7 +131,7 @@ function TransferSection({
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useTransfers({ archived, search });
+  } = useTransfers({ deactivated, search });
 
   const listRef = useRef<HTMLUListElement>(null);
   // Local pending flag: `isFetchingNextPage` takes a render cycle to flip,
