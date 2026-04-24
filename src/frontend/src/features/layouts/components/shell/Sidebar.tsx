@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
@@ -10,10 +10,11 @@ import {
   Folder,
   Plus,
   QuestionMark,
+  XMark,
   Zoom,
 } from "@gouvfr-lasuite/ui-kit";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
-import type { TransferListItem } from "@/features/api/types";
+import { useDebouncedValue } from "@/features/utils/use-debounced-value";
 import { useConfig } from "@/features/providers/config";
 
 export function Sidebar() {
@@ -22,24 +23,9 @@ export function Sidebar() {
   const config = useConfig();
   const activeId =
     typeof router.query.id === "string" ? router.query.id : undefined;
-  const { data } = useTransfers(1);
 
-  const [query, setQuery] = useState("");
-
-  const { actives, archives } = useMemo(() => {
-    const items = data?.results ?? [];
-    const filter = (arr: TransferListItem[]) => {
-      const q = query.trim().toLowerCase();
-      if (!q) return arr;
-      return arr.filter((it) =>
-        (it.title || t("Untitled")).toLowerCase().includes(q),
-      );
-    };
-    return {
-      actives: filter(items.filter((it) => it.status === "active")),
-      archives: filter(items.filter((it) => it.status !== "active")),
-    };
-  }, [data, query, t]);
+  const [searchInput, setSearchInput] = useState("");
+  const search = useDebouncedValue(searchInput, 300);
 
   return (
     <aside className="shell-sidebar">
@@ -58,20 +44,7 @@ export function Sidebar() {
       </div>
 
       <div className="shell-sidebar__top">
-        <Link
-          href="/"
-          className="shell-sidebar__nav-row"
-          onClick={() => {
-            // If the user is already on `/` viewing a success panel from
-            // a just-finalized transfer, Next.js Link treats this as a
-            // no-op (same URL) and the form stays stuck on the confirm
-            // screen. Broadcast a reset signal that TransferForm
-            // listens to so the form bounces back to its empty state.
-            if (router.pathname === "/") {
-              window.dispatchEvent(new CustomEvent("transferts:new-transfer"));
-            }
-          }}
-        >
+        <Link href="/" className="shell-sidebar__nav-row">
           <Plus />
           <span>{t("New transfer")}</span>
         </Link>
@@ -80,29 +53,40 @@ export function Sidebar() {
           <Zoom />
           <input
             type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder={t("Search")}
             aria-label={t("Search transfers")}
           />
+          {searchInput && (
+            <button
+              type="button"
+              className="shell-sidebar__nav-row-clear"
+              onClick={() => setSearchInput("")}
+              aria-label={t("Clear search")}
+              title={t("Clear search")}
+            >
+              <XMark />
+            </button>
+          )}
         </div>
       </div>
 
       <div className="shell-sidebar__tree">
         <TransferSection
           label={t("Active transfers")}
-          items={actives}
+          archived={false}
+          search={search}
           activeId={activeId}
         />
         <TransferSection
-          label={t("Deactivated transfers")}
-          items={archives}
+          label={t("Archived transfers")}
+          archived={true}
+          search={search}
           activeId={activeId}
           muted
         />
       </div>
-
-      <div className="shell-sidebar__flex" />
 
       <div className="shell-sidebar__footer">
         {config.HELP_URL && (
@@ -129,21 +113,75 @@ export function Sidebar() {
 // leaves anyway, which a plain <button>/<ul> covers with better a11y.
 function TransferSection({
   label,
-  items,
+  archived,
+  search,
   activeId,
   muted = false,
 }: {
   label: string;
-  items: TransferListItem[];
+  archived: boolean;
+  search: string;
   activeId: string | undefined;
   muted?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
+  const {
+    data,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useTransfers({ archived, search });
+
+  const listRef = useRef<HTMLUListElement>(null);
+  // Local pending flag: `isFetchingNextPage` takes a render cycle to flip,
+  // so multiple scroll/resize ticks in the same tick would fire duplicate
+  // fetches for the same page.
+  const pendingRef = useRef(false);
+
+  // Fetch the next page when the list is near-bottom OR hasn't filled
+  // its container yet. Re-runs on every relevant state change so we
+  // don't rely on a single observer firing at the exact right moment —
+  // scroll, resize, data arrival, and open-toggle all re-trigger it.
+  useEffect(() => {
+    const ul = listRef.current;
+    if (!ul || !open) return;
+
+    const maybeFetch = () => {
+      if (pendingRef.current || !hasNextPage || isFetchingNextPage) return;
+      const { scrollTop, scrollHeight, clientHeight } = ul;
+      // Keep at least ~2 viewports of un-scrolled rows ahead of the user
+      // so a fast wheel/trackpad flick doesn't run into the blank bottom
+      // before the next page arrives.
+      const lookahead = Math.max(1200, clientHeight * 2);
+      if (scrollHeight - scrollTop - clientHeight < lookahead) {
+        pendingRef.current = true;
+        void fetchNextPage().finally(() => {
+          pendingRef.current = false;
+        });
+      }
+    };
+
+    ul.addEventListener("scroll", maybeFetch, { passive: true });
+    const ro = new ResizeObserver(maybeFetch);
+    ro.observe(ul);
+    maybeFetch();
+
+    return () => {
+      ul.removeEventListener("scroll", maybeFetch);
+      ro.disconnect();
+    };
+  }, [open, hasNextPage, isFetchingNextPage, fetchNextPage, data]);
+
+  const items = data?.pages.flatMap((page) => page.results) ?? [];
   const sectionId = `shell-section-${label.replace(/\s+/g, "-").toLowerCase()}`;
 
   return (
-    <section className="shell-sidebar__section">
+    <section
+      className={`shell-sidebar__section${
+        open ? " shell-sidebar__section--open" : ""
+      }`}
+    >
       <button
         type="button"
         className="shell-sidebar__section-header"
@@ -163,7 +201,7 @@ function TransferSection({
           open ? " shell-sidebar__section-collapse--open" : ""
         }`}
       >
-        <ul id={sectionId} className="shell-sidebar__section-list">
+        <ul ref={listRef} id={sectionId} className="shell-sidebar__section-list">
           {items.map((item) => (
             <li
               key={item.id}

@@ -9,10 +9,7 @@ import {
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import {
-  ArrowUpCircle,
-  ArrowUpDown,
   ArrowUpRight,
-  Checkmark,
   Copy,
   Doc,
   DropdownMenu,
@@ -22,10 +19,9 @@ import {
   Icon,
   Link as LinkIcon,
   Mail,
-  MailCheckFilled,
   useDropdownMenu,
 } from "@gouvfr-lasuite/ui-kit";
-import type { SharingMode, TransferDetail } from "@/features/api/types";
+import type { SharingMode } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import {
@@ -199,10 +195,6 @@ export function TransferForm() {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
-  // Once finalize resolves we pivot the whole form to a success panel (see
-  // TransferSuccess below). Clicking "New transfer" clears this and the
-  // other form state so the user starts fresh on the same route.
-  const [finalized, setFinalized] = useState<TransferDetail | null>(null);
   const expiryMenu = useDropdownMenu();
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
@@ -356,31 +348,16 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
       });
-      setFinalized(result);
+      // Hand off to the dedicated confirm route — the form unmounts, so
+      // the sidebar logo and "New transfer" link work as plain Next.js
+      // navigation back to ``/`` without an in-place pivot hack.
+      router.push(`/confirm/${result.id}`);
     } catch (err) {
       // A cancel is a deliberate user action — stay on the form silently.
       // Other errors already surface via draft.error / per-file state.
       if (err instanceof SubmitCancelledError) return;
     }
   };
-
-  const handleNewTransfer = () => {
-    setFinalized(null);
-    setTitle("");
-    setRecipients([]);
-    setHasValidPending(false);
-    setFileError(null);
-  };
-
-  // The sidebar's "New transfer" link points to `/`. When the user is
-  // already on `/` viewing a success panel, Next.js Link is a no-op and
-  // `finalized` stays set. The Sidebar dispatches this event on click so
-  // we bounce back to the empty form regardless of current route state.
-  useEffect(() => {
-    const handler = () => handleNewTransfer();
-    window.addEventListener("transferts:new-transfer", handler);
-    return () => window.removeEventListener("transferts:new-transfer", handler);
-  }, []);
 
   const expiryOptions = EXPIRY_CHOICES.map((days) => ({
     label: t("{{count}} days", { count: days }),
@@ -398,16 +375,6 @@ export function TransferForm() {
     !hasFiles ||
     anyError ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
-
-  if (finalized) {
-    return (
-      <TransferSuccess
-        transfer={finalized}
-        onNewTransfer={handleNewTransfer}
-        onGoToDetail={() => router.push(`/transfers/${finalized.id}`)}
-      />
-    );
-  }
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
@@ -675,124 +642,3 @@ export function TransferForm() {
   );
 }
 
-function formatExpiry(iso: string): string {
-  // Matches the Figma mock: "25/12/2026 à 00h00". We split on `à` so the
-  // date and time chunks can be wrapped in <strong> separately.
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).replace(":", "h");
-  return `${date}|${time}`;
-}
-
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(1, Math.round(ms / (24 * 60 * 60 * 1000)));
-}
-
-function TransferSuccess({
-  transfer,
-  onNewTransfer,
-  onGoToDetail,
-}: {
-  transfer: TransferDetail;
-  onNewTransfer: () => void;
-  onGoToDetail: () => void;
-}) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-
-  const downloadUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
-
-  const handleCopy = async () => {
-    if (!downloadUrl) return;
-    try {
-      await navigator.clipboard.writeText(downloadUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard may be unavailable on insecure contexts; swallow silently.
-    }
-  };
-
-  const isLink = transfer.sharing_mode === "link";
-  const [expiryDate, expiryTime] = formatExpiry(transfer.expires_at).split("|");
-
-  return (
-    <div className="transfer-success" role="status">
-      <div className="transfer-success__icon" aria-hidden="true">
-        <MailCheckFilled />
-      </div>
-      <h1 className="transfer-success__title">
-        {isLink ? t("Transfer ready") : t("Transfer sent")}
-      </h1>
-      {isLink ? (
-        <>
-          <p className="transfer-success__body">
-            {t("Download link to share:")}
-          </p>
-          <div className="transfer-success__link-box">
-            <Input
-              readOnly
-              hideLabel
-              label={t("Download link")}
-              value={downloadUrl}
-              variant="classic"
-              fullWidth
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <Button
-              type="button"
-              color="neutral"
-              variant="tertiary"
-              icon={copied ? <Checkmark /> : <Copy />}
-              onClick={handleCopy}
-              aria-label={copied ? t("Link copied!") : t("Copy link")}
-              title={copied ? t("Link copied!") : t("Copy link")}
-            />
-          </div>
-          <p className="transfer-success__expiry">
-            {t("This link will expire on")} <strong>{expiryDate}</strong>{" "}
-            {t("at")} <strong>{expiryTime}</strong>
-          </p>
-        </>
-      ) : (
-        <p className="transfer-success__body transfer-success__body--email">
-          {t(
-            "The download email has been sent successfully. Your recipients have",
-          )}{" "}
-          <strong>
-            {t("{{count}} days", { count: daysUntil(transfer.expires_at) })}
-          </strong>{" "}
-          {t("to download your items.")}
-        </p>
-      )}
-
-      <div className="transfer-success__actions">
-        <Button
-          color="neutral"
-          variant="tertiary"
-          icon={<ArrowUpDown />}
-          onClick={onNewTransfer}
-        >
-          {t("Start new transfer")}
-        </Button>
-        <Button
-          color="brand"
-          icon={<ArrowUpCircle />}
-          onClick={onGoToDetail}
-        >
-          {t("View summary")}
-        </Button>
-      </div>
-    </div>
-  );
-}
