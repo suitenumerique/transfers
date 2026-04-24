@@ -3,7 +3,7 @@ import { apiFetch } from "@/features/api/client";
 import type { PaginatedResponse, TransferListItem } from "@/features/api/types";
 
 interface UseTransfersParams {
-  archived: boolean;
+  deactivated: boolean;
   search?: string;
 }
 
@@ -11,9 +11,9 @@ interface UseTransfersParams {
 // run through an entire page in a single tick.
 const PAGE_SIZE = 50;
 
-function buildUrl({ archived, search, page }: UseTransfersParams & { page: number }) {
+function buildUrl({ deactivated, search, page }: UseTransfersParams & { page: number }) {
   const params = new URLSearchParams({
-    archived: String(archived),
+    deactivated: String(deactivated),
     page: String(page),
     page_size: String(PAGE_SIZE),
   });
@@ -31,19 +31,19 @@ function extractNextPage(next: string | null): number | undefined {
   return page ? Number(page) : undefined;
 }
 
-export function useTransfers({ archived, search }: UseTransfersParams) {
+export function useTransfers({ deactivated, search }: UseTransfersParams) {
   return useInfiniteQuery({
-    queryKey: ["transfers", { archived, search: search || "" }],
+    queryKey: ["transfers", { deactivated, search: search || "" }],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       apiFetch<PaginatedResponse<TransferListItem>>(
-        buildUrl({ archived, search, page: pageParam as number }),
+        buildUrl({ deactivated, search, page: pageParam as number }),
       ),
     getNextPageParam: (last) => extractNextPage(last.next),
   });
 }
 
-// Invalidate both the active and archived sections after a mutation.
+// Invalidate both the active and deactivated sections after a mutation.
 // Matching on the root ``["transfers"]`` key catches every param combo.
 export function useInvalidateTransfers() {
   const queryClient = useQueryClient();

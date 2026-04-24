@@ -197,26 +197,26 @@ class TestTransferList:
         assert row["consulted"] is False
         assert row["downloaded"] is False
 
-    def test_list_archived_false_returns_only_active(
+    def test_list_deactivated_false_returns_only_active(
         self, authenticated_client, user
     ):
         active = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
         TransferFactory(owner=user, status=TransferStatus.EXPIRED)
         TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
-        response = authenticated_client.get(f"{API_URL}?archived=false")
+        response = authenticated_client.get(f"{API_URL}?deactivated=false")
         assert response.status_code == 200
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
-    def test_list_archived_true_returns_expired_and_deactivated(
+    def test_list_deactivated_true_returns_expired_and_deactivated(
         self, authenticated_client, user
     ):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
         expired = TransferFactory(owner=user, status=TransferStatus.EXPIRED)
         deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
-        response = authenticated_client.get(f"{API_URL}?archived=true")
+        response = authenticated_client.get(f"{API_URL}?deactivated=true")
         assert response.status_code == 200
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(expired.id), str(deactivated.id)}
