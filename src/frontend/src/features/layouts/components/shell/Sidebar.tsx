@@ -125,13 +125,25 @@ function TransferSection({
   muted?: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
+  // ``null`` = auto: open while loading or once items arrive, collapsed
+  // when the loaded list is empty. Any user click flips this to a
+  // concrete boolean and stops the auto-collapse from kicking back in
+  // (e.g. when they wipe the section to inspect the empty state).
+  const [open, setOpen] = useState<boolean | null>(null);
   const {
     data,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
+    isLoading,
   } = useTransfers({ deactivated, search });
+
+  const items = data?.pages.flatMap((page) => page.results) ?? [];
+  const sectionId = `shell-section-${label.replace(/\s+/g, "-").toLowerCase()}`;
+  // Resolve ``open`` from the user override (if any) or fall back to the
+  // auto rule: open while loading, collapsed when the loaded list is
+  // empty, open otherwise.
+  const effectiveOpen = open ?? (isLoading ? true : items.length > 0);
 
   const listRef = useRef<HTMLUListElement>(null);
   // Local pending flag: `isFetchingNextPage` takes a render cycle to flip,
@@ -145,7 +157,7 @@ function TransferSection({
   // scroll, resize, data arrival, and open-toggle all re-trigger it.
   useEffect(() => {
     const ul = listRef.current;
-    if (!ul || !open) return;
+    if (!ul || !effectiveOpen) return;
 
     const maybeFetch = () => {
       if (pendingRef.current || !hasNextPage || isFetchingNextPage) return;
@@ -171,59 +183,66 @@ function TransferSection({
       ul.removeEventListener("scroll", maybeFetch);
       ro.disconnect();
     };
-  }, [open, hasNextPage, isFetchingNextPage, fetchNextPage, data]);
-
-  const items = data?.pages.flatMap((page) => page.results) ?? [];
-  const sectionId = `shell-section-${label.replace(/\s+/g, "-").toLowerCase()}`;
+  }, [effectiveOpen, hasNextPage, isFetchingNextPage, fetchNextPage, data]);
 
   return (
     <section
-      className={`shell-sidebar__section${
-        open ? " shell-sidebar__section--open" : ""
-      }`}
+      className={`shell-sidebar__section shell-sidebar__section--${
+        deactivated ? "deactivated" : "active"
+      }${effectiveOpen ? " shell-sidebar__section--open" : ""}`}
     >
       <button
         type="button"
         className="shell-sidebar__section-header"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
+        onClick={() => setOpen(!effectiveOpen)}
+        aria-expanded={effectiveOpen}
         aria-controls={sectionId}
       >
         <span>{label}</span>
         <ChevronDown
           className={`shell-sidebar__section-chevron${
-            open ? "" : " shell-sidebar__section-chevron--closed"
+            effectiveOpen ? "" : " shell-sidebar__section-chevron--closed"
           }`}
         />
       </button>
       <div
         className={`shell-sidebar__section-collapse${
-          open ? " shell-sidebar__section-collapse--open" : ""
+          effectiveOpen ? " shell-sidebar__section-collapse--open" : ""
         }`}
       >
         <ul ref={listRef} id={sectionId} className="shell-sidebar__section-list">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className={`shell-sidebar__tree-row${
-                item.id === activeId ? " shell-sidebar__tree-row--active" : ""
-              }`}
-            >
-              <Link
-                href={`/transfers/${item.id}`}
-                className="shell-sidebar__tree-row-link"
-              >
-                <Folder
-                  className={`shell-sidebar__tree-row-icon${
-                    muted ? " shell-sidebar__tree-row-icon--muted" : ""
-                  }`}
-                />
-                <span className="shell-sidebar__tree-row-label">
-                  {item.title || t("Untitled")}
-                </span>
-              </Link>
+          {items.length === 0 && !isLoading ? (
+            <li className="shell-sidebar__empty">
+              {search
+                ? t("No matching transfers")
+                : deactivated
+                  ? t("No deactivated transfers")
+                  : t("No active transfers")}
             </li>
-          ))}
+          ) : (
+            items.map((item) => (
+              <li
+                key={item.id}
+                className={`shell-sidebar__tree-row${
+                  item.id === activeId ? " shell-sidebar__tree-row--active" : ""
+                }`}
+              >
+                <Link
+                  href={`/transfers/${item.id}`}
+                  className="shell-sidebar__tree-row-link"
+                >
+                  <Folder
+                    className={`shell-sidebar__tree-row-icon${
+                      muted ? " shell-sidebar__tree-row-icon--muted" : ""
+                    }`}
+                  />
+                  <span className="shell-sidebar__tree-row-label">
+                    {item.title || t("Untitled")}
+                  </span>
+                </Link>
+              </li>
+            ))
+          )}
         </ul>
       </div>
     </section>
