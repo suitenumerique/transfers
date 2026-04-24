@@ -30,6 +30,7 @@ import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import {
   fileKey,
+  SubmitCancelledError,
   useTransferDraft,
   type DraftFile,
   type DrivePickedItem,
@@ -328,11 +329,21 @@ export function TransferForm() {
   const hasFiles = draft.files.length > 0;
   const currentSize = draft.files.reduce((sum, f) => sum + f.total, 0);
   const anyError = draft.files.some((f) => f.state === "error");
-  const busy = draft.isSubmitting;
+  const awaitingUploads = draft.isAwaitingUploads;
+  const finalizing = draft.isFinalizing;
+  // Metadata inputs / Drive attach / tabs stay locked for the whole
+  // submit flow — `busy` gates those. File-level Delete / Cancel actions
+  // only need to lock during the non-cancellable finalize window so the
+  // user can still back out of an armed auto-create.
+  const busy = awaitingUploads || finalizing;
+  const fileActionsDisabled = finalizing;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hasFiles || anyError || busy) return;
+    // Button is disabled during both phases — the form can still submit
+    // via Enter key, so guard here too.
+    if (busy) return;
+    if (!hasFiles || anyError) return;
 
     if (sharingMode === "email" && recipients.length === 0 && !hasValidPending) {
       return;
@@ -346,8 +357,10 @@ export function TransferForm() {
         recipients: sharingMode === "email" ? recipients : [],
       });
       setFinalized(result);
-    } catch {
-      // Errors surface via draft.error / per-file state; no-op here.
+    } catch (err) {
+      // A cancel is a deliberate user action — stay on the form silently.
+      // Other errors already surface via draft.error / per-file state.
+      if (err instanceof SubmitCancelledError) return;
     }
   };
 
@@ -376,10 +389,14 @@ export function TransferForm() {
   }));
   const currentExpiryLabel = t("{{count}} days", { count: expiresInDays });
 
+  // Submit button stays disabled during both submit phases. To back out
+  // of an armed auto-create, the user clicks Delete/Cancel on a file row
+  // (those stay enabled while awaitingUploads, and their handler disarms
+  // the pending finalize).
   const submitDisabled =
+    busy ||
     !hasFiles ||
     anyError ||
-    busy ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
 
   if (finalized) {
@@ -422,7 +439,7 @@ export function TransferForm() {
               variant="link"
               onPick={handleDrivePick}
               onError={setFileError}
-              disabled={busy}
+              disabled={finalizing}
               maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
             />
           )}
@@ -495,7 +512,7 @@ export function TransferForm() {
                       setFileError(null);
                       void draft.removeFile(df.key);
                     }}
-                    disabled={busy}
+                    disabled={fileActionsDisabled}
                   >
                     {isUploading ? t("Cancel") : t("Delete")}
                   </button>
@@ -536,8 +553,13 @@ export function TransferForm() {
               className={`transfer-form__tab${
                 sharingMode === "email" ? " transfer-form__tab--active" : ""
               }`}
-              onClick={() => setSharingMode("email")}
-              disabled={busy}
+              onClick={() => {
+                setSharingMode("email");
+                // Switching sharing mode is a draft-level change — disarm
+                // any pending auto-finalize so the user re-confirms.
+                draft.cancelSubmit();
+              }}
+              disabled={finalizing}
             >
               <Mail />
               <span>{t("Email")}</span>
@@ -549,8 +571,11 @@ export function TransferForm() {
               className={`transfer-form__tab${
                 sharingMode === "link" ? " transfer-form__tab--active" : ""
               }`}
-              onClick={() => setSharingMode("link")}
-              disabled={busy}
+              onClick={() => {
+                setSharingMode("link");
+                draft.cancelSubmit();
+              }}
+              disabled={finalizing}
             >
               <LinkIcon />
               <span>{t("Link")}</span>
@@ -561,9 +586,15 @@ export function TransferForm() {
             <LabelledBox label={t("Send to")} variant="classic">
               <RecipientInput
                 recipients={recipients}
-                onChange={setRecipients}
+                onChange={(next) => {
+                  setRecipients(next);
+                  // Editing the recipient list while auto-finalize is armed
+                  // means intent has shifted — disarm so the user has to
+                  // explicitly re-send.
+                  draft.cancelSubmit();
+                }}
                 onPendingChange={setHasValidPending}
-                disabled={busy}
+                disabled={finalizing}
               />
             </LabelledBox>
           )}
@@ -571,9 +602,12 @@ export function TransferForm() {
           <Input
             label={t("Title")}
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              draft.cancelSubmit();
+            }}
             placeholder={t("Enter a title")}
-            disabled={busy}
+            disabled={finalizing}
             variant="classic"
             fullWidth
           />
@@ -615,13 +649,17 @@ export function TransferForm() {
               )
             }
           >
-            {busy
+            {finalizing
               ? t("Sending...")
-              : sharingMode === "email"
-                ? hasFiles
-                  ? t("Send {{count}} item", { count: draft.files.length })
-                  : t("Send")
-                : t("Create link")}
+              : awaitingUploads
+                ? sharingMode === "email"
+                  ? t("Sending after uploads finish")
+                  : t("Creating after uploads finish")
+                : sharingMode === "email"
+                  ? hasFiles
+                    ? t("Send {{count}} item", { count: draft.files.length })
+                    : t("Send")
+                  : t("Create link")}
           </Button>
 
           {busy && (

@@ -70,13 +70,35 @@ export interface DrivePickedItem {
 export interface TransferDraftHandle {
   draftId: string | null;
   files: DraftFile[];
-  isSubmitting: boolean;
+  // Two-phase submit state:
+  // - `isAwaitingUploads`: user clicked Send but uploads are still running.
+  //   Auto-finalize is armed but cancellable via `cancelSubmit()` or by
+  //   removing any file.
+  // - `isFinalizing`: uploads are done and the POST /finalize/ is in flight.
+  //   The draft is being turned into a Transfer server-side — no way back.
+  isAwaitingUploads: boolean;
+  isFinalizing: boolean;
   error: string | null;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
   removeFile: (key: string) => void;
   submit: (metadata: FinalizeMetadata) => Promise<TransferDetail>;
+  // Disarm a pending auto-finalize. No-op if the draft isn't waiting on
+  // uploads. Called when the user edits the draft (title / recipients /
+  // file list) while the submit is armed — intent has shifted, the click
+  // on "Send" shouldn't commit the current state.
+  cancelSubmit: () => void;
   abort: () => Promise<void>;
+}
+
+// Sentinel thrown when the user cancels the auto-finalize wait. Callers
+// catch this specifically to distinguish an intentional cancel from a
+// genuine failure (upload error, finalize HTTP failure, etc.).
+export class SubmitCancelledError extends Error {
+  constructor() {
+    super("Submit cancelled");
+    this.name = "SubmitCancelledError";
+  }
 }
 
 interface AddFileResponse {
@@ -116,7 +138,8 @@ export function useTransferDraft(): TransferDraftHandle {
   const queryClient = useQueryClient();
   const [draftId, setDraftId] = useState<string | null>(null);
   const [files, setFiles] = useState<DraftFile[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -129,6 +152,18 @@ export function useTransferDraft(): TransferDraftHandle {
   const draftInitPromiseRef = useRef<Promise<string> | null>(null);
   // The uploader currently pushing chunks, if any.
   const currentUploaderRef = useRef<MultipartUploader | null>(null);
+  // Mirror of `isAwaitingUploads` so `removeFile` can know "is the submit
+  // armed?" synchronously without waiting for the next render.
+  const isAwaitingUploadsRef = useRef(false);
+  // Set to true to signal the polling loop to reject with
+  // SubmitCancelledError on its next tick. Read by the loop, written by
+  // `cancelSubmit()` or by `removeFile()` when the submit is armed.
+  const cancelSubmitRef = useRef(false);
+
+  const setAwaitingUploads = useCallback((v: boolean) => {
+    isAwaitingUploadsRef.current = v;
+    setIsAwaitingUploads(v);
+  }, []);
 
   const writeFiles = useCallback((next: DraftFile[]) => {
     filesRef.current = next;
@@ -452,6 +487,13 @@ export function useTransferDraft(): TransferDraftHandle {
       // Guard against duplicate drops sneaking past the caller's dedupe.
       if (filesRef.current.some((f) => f.key === key)) return;
 
+      // Adding a file while the auto-finalize is armed shifts the user's
+      // intent — disarm so the newly-added file isn't silently folded
+      // into a send they initiated before it existed.
+      if (isAwaitingUploadsRef.current) {
+        cancelSubmitRef.current = true;
+      }
+
       const draftFile: DraftFile = {
         key,
         file,
@@ -479,6 +521,12 @@ export function useTransferDraft(): TransferDraftHandle {
         const key = `drive:${item.url_permalink}`;
         if (filesRef.current.some((f) => f.key === key)) continue;
 
+        // Same reasoning as addFile: a freshly-attached import shouldn't
+        // ride on an auto-finalize armed before it was picked.
+        if (isAwaitingUploadsRef.current) {
+          cancelSubmitRef.current = true;
+        }
+
         const draftFile: DraftFile = {
           key,
           file: null,
@@ -504,6 +552,14 @@ export function useTransferDraft(): TransferDraftHandle {
     async (key: string) => {
       const target = filesRef.current.find((f) => f.key === key);
       if (!target) return;
+
+      // If the user clicked Send and is now modifying the draft (removing a
+      // file / cancelling a live upload), drop the armed auto-finalize —
+      // intent has clearly shifted. The polling loop picks this up on its
+      // next tick and rejects with SubmitCancelledError.
+      if (isAwaitingUploadsRef.current) {
+        cancelSubmitRef.current = true;
+      }
 
       // Stop the uploader if this is the file being pushed right now.
       if (currentUploaderRef.current && target.state === "uploading") {
@@ -547,13 +603,20 @@ export function useTransferDraft(): TransferDraftHandle {
       if (!id) throw new Error("No draft to submit");
       if (filesRef.current.length === 0) throw new Error("No files");
 
-      setIsSubmitting(true);
+      cancelSubmitRef.current = false;
+      setAwaitingUploads(true);
       try {
         // Wait for every file to reach "done". Polling ref state is fine —
         // the UI already shows per-file progress, and the wait is bounded
-        // by the last byte landing in S3.
+        // by the last byte landing in S3. The cancel check comes first so
+        // a user-triggered cancel (re-click Send or Remove-file) unblocks
+        // within one tick.
         await new Promise<void>((resolve, reject) => {
           const tick = () => {
+            if (cancelSubmitRef.current) {
+              reject(new SubmitCancelledError());
+              return;
+            }
             const current = filesRef.current;
             const errored = current.find((f) => f.state === "error");
             if (errored) {
@@ -573,11 +636,15 @@ export function useTransferDraft(): TransferDraftHandle {
           tick();
         });
 
+        // Past the point of no cancel — flip the state so the UI locks
+        // everything for the (short) /finalize/ round-trip.
+        setAwaitingUploads(false);
+        setIsFinalizing(true);
+
         // Metadata is frozen here — the draft held nothing but files, and
         // finalize is the one write that creates the Transfer with its
-        // title / sharing mode / recipients / expiry / sensitive in a
-        // single atomic step. The returned Transfer has a *different* id
-        // from the draft.
+        // title / sharing mode / recipients / expiry in a single atomic
+        // step. The returned Transfer has a *different* id from the draft.
         const finalized = await apiFetch<TransferDetail>(
           `/drafts/${id}/finalize/`,
           {
@@ -590,21 +657,31 @@ export function useTransferDraft(): TransferDraftHandle {
         resetLocal();
         return finalized;
       } finally {
-        setIsSubmitting(false);
+        setAwaitingUploads(false);
+        setIsFinalizing(false);
+        cancelSubmitRef.current = false;
       }
     },
-    [queryClient, resetLocal],
+    [queryClient, resetLocal, setAwaitingUploads],
   );
+
+  const cancelSubmit = useCallback(() => {
+    if (isAwaitingUploadsRef.current) {
+      cancelSubmitRef.current = true;
+    }
+  }, []);
 
   return {
     draftId,
     files,
-    isSubmitting,
+    isAwaitingUploads,
+    isFinalizing,
     error,
     addFile,
     attachFromDrive,
     removeFile,
     submit,
+    cancelSubmit,
     abort: abortDraft,
   };
 }
