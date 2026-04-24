@@ -173,14 +173,31 @@
   }
 
   // Each section: header at the top, scrollable list below. Collapsed
-  // sections take only the header's height; expanded sections share the
-  // remaining tree height equally via ``flex: 1``.
+  // sections take only the header's height. Expanded sections split the
+  // tree asymmetrically:
+  //   - Active (top): shrink-to-content, capped at 50% of the tree so a
+  //     long active list doesn't squeeze the deactivated section out.
+  //     The inner collapse is also content-sized so the section's
+  //     natural height includes the list — without that, the collapse's
+  //     ``flex: 1 1 0`` contributes zero and the section ends up the
+  //     header height only.
+  //   - Deactivated (bottom): grow to fill whatever space the active
+  //     section didn't claim, including the slack when active is short.
   &__section {
     display: flex;
     flex-direction: column;
     min-height: 0;
 
-    &--open {
+    &--active.shell-sidebar__section--open {
+      flex: 0 1 auto;
+      max-height: 50%;
+
+      > .shell-sidebar__section-collapse--open {
+        flex: 0 1 auto;
+      }
+    }
+
+    &--deactivated.shell-sidebar__section--open {
       flex: 1 1 0;
     }
   }
