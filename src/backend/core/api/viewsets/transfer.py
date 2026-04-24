@@ -59,14 +59,14 @@ class TransferViewSet(
         if self.action == "list":
             qs = models.Transfer.objects.filter(owner=self.request.user)
 
-            # ``archived`` bucket — "active" section = status ACTIVE only;
-            # "archived" section = every other status (EXPIRED, DEACTIVATED).
+            # ``deactivated`` bucket — "active" section = status ACTIVE only;
+            # "deactivated" section = every other status (EXPIRED, DEACTIVATED).
             # Omitted → no status filter, for any caller that still wants
             # the full list.
-            archived = self.request.query_params.get("archived")
-            if archived == "true":
+            deactivated = self.request.query_params.get("deactivated")
+            if deactivated == "true":
                 qs = qs.exclude(status=TransferStatus.ACTIVE)
-            elif archived == "false":
+            elif deactivated == "false":
                 qs = qs.filter(status=TransferStatus.ACTIVE)
 
             search = (self.request.query_params.get("search") or "").strip()
