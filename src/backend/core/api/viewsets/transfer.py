@@ -2,13 +2,13 @@
 
 All the draft / upload lifecycle lives on ``TransferDraftViewSet``. Once a
 draft is finalized, the resulting ``Transfer`` row is immutable except for
-``deactivate`` (which transitions it to the DEACTIVATED status and tears
-down S3 objects). Listing / retrieving / inspecting events happen here;
-mutation beyond deactivate does not exist.
+``deactivate`` (which closes the link immediately and schedules the S3
+purge via ``pending_deletion_at`` — the sweep task handles the final
+transition to DEACTIVATED). Listing / retrieving / inspecting events
+happen here; mutation beyond deactivate does not exist.
 """
 
 from django.db.models import Count, Exists, OuterRef, Sum
-from django.utils import timezone
 
 import rest_framework as drf
 from drf_spectacular.utils import extend_schema
@@ -24,7 +24,12 @@ from core.api.serializers import (
 )
 from core.api.utils import log_agent_event
 from core.api.viewsets import Pagination
-from core.enums import SharingMode, TransferEventType, TransferStatus
+from core.enums import (
+    DeactivationReason,
+    SharingMode,
+    TransferEventType,
+    TransferStatus,
+)
 
 
 class TransferViewSet(
@@ -79,9 +84,12 @@ class TransferViewSet(
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
-        """Deactivate a transfer — flips its status to DEACTIVATED and
-        tears down the underlying S3 objects. Only valid on an active
-        transfer.
+        """Deactivate a transfer — closes the link immediately and schedules
+        the S3 purge ``TRANSFER_PURGE_DELAY_HOURS`` later. Mirrors the
+        first-download and expiry flows: the grace window lets recipients'
+        in-flight downloads finish before the bytes disappear. The final
+        ``PENDING_FILE_DELETION → DEACTIVATED`` transition is handled by
+        ``delete_pending_transfer_files_task``.
         """
         transfer = self.get_object()
 
@@ -90,13 +98,11 @@ class TransferViewSet(
                 {"status": "Only active transfers can be deactivated."}
             )
 
-        transfer.delete_s3_objects()
+        transfer.deactivate(DeactivationReason.MANUAL)
 
-        transfer.status = TransferStatus.DEACTIVATED
-        transfer.deactivated_at = timezone.now()
-        transfer.save(update_fields=["status", "deactivated_at", "updated_at"])
-
-        log_agent_event(transfer, TransferEventType.TRANSFER_DEACTIVATED, request)
+        log_agent_event(
+            transfer, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY, request
+        )
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

@@ -15,9 +15,13 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {
-    "expire-transfers": {
-        "task": "core.tasks.expire_transfers_task",
+    "deactivate-expired-transfers": {
+        "task": "core.tasks.deactivate_expired_transfers_task",
         "schedule": 3600.0,  # Every hour
+    },
+    "delete-pending-transfer-files": {
+        "task": "core.tasks.delete_pending_transfer_files_task",
+        "schedule": 3600.0,  # Every hour — up to ~1h of drift on the 6h default
     },
     "cleanup-abandoned-drafts": {
         "task": "core.tasks.cleanup_abandoned_drafts_task",

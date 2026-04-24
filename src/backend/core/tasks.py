@@ -9,7 +9,12 @@ import botocore
 import requests
 from celery import shared_task
 
-from core.enums import ActorType, TransferEventType, TransferStatus
+from core.enums import (
+    ActorType,
+    DeactivationReason,
+    TransferEventType,
+    TransferStatus,
+)
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
 from core.services.email import send_recipient_invitation
@@ -25,41 +30,34 @@ _DRIVE_IMPORT_CHUNK_SIZE = 16 * 1024 * 1024
 
 
 @shared_task
-def expire_transfers_task():
-    """Expire transfers whose expiry date has passed.
+def deactivate_expired_transfers_task():
+    """Deactivate transfers whose expiry date has passed.
 
-    Flips ``status: ACTIVE → EXPIRED``, deletes the underlying S3 files, and
-    emits both ``TRANSFER_EXPIRED`` and ``FILES_DELETED`` audit events.
-    Public access is already gated by ``Transfer.is_accessible`` so the
-    deletion closes the loop atomically.
+    One of three deactivation feeds (alongside manual deactivation and
+    first-download auto-archive). All three go through
+    ``Transfer.deactivate`` and differ only by the ``deactivation_reason``
+    they record — the grace window + actual S3 purge is owned by
+    ``delete_pending_transfer_files_task``.
     """
     now = timezone.now()
-    transfers_to_expire = Transfer.objects.filter(
+    transfers_to_deactivate = Transfer.objects.filter(
         status=TransferStatus.ACTIVE,
         expires_at__lte=now,
-    ).prefetch_related("files")
+    )
 
     count = 0
-    for transfer in transfers_to_expire:
-        transfer.delete_s3_objects()
-
-        transfer.status = TransferStatus.EXPIRED
-        transfer.save(update_fields=["status", "updated_at"])
+    for transfer in transfers_to_deactivate:
+        transfer.deactivate(DeactivationReason.EXPIRED)
 
         TransferEvent.objects.create(
             transfer_id=transfer.id,
-            event_type=TransferEventType.TRANSFER_EXPIRED,
-            actor_type=ActorType.AGENT,
-        )
-        TransferEvent.objects.create(
-            transfer_id=transfer.id,
-            event_type=TransferEventType.FILES_DELETED,
+            event_type=TransferEventType.TRANSFER_DEACTIVATED_AFTER_EXPIRY,
             actor_type=ActorType.AGENT,
         )
         count += 1
 
     if count:
-        logger.info("Expired %d transfer(s).", count)
+        logger.info("Deactivated %d expired transfer(s).", count)
 
 
 @shared_task
@@ -188,6 +186,58 @@ def import_drive_file_task(transfer_file_id):
         if tf.s3_key:
             s3.delete_object(tf.s3_key)
         tf.delete()
+
+
+@shared_task
+def delete_pending_transfer_files_task():
+    """Wipe S3 objects for transfers whose grace period has elapsed.
+
+    Single feed: every row flagged ``PENDING_FILE_DELETION`` with a past
+    ``pending_deletion_at`` — regardless of *why* it got deactivated
+    (manual, expiry, first-download; carried by ``deactivation_reason``).
+    The grace window between "link closed" and "bytes gone" lets
+    recipients' in-flight downloads finish before the bytes disappear.
+    After the wipe the row transitions ``PENDING_FILE_DELETION →
+    DEACTIVATED`` and ``pending_deletion_at`` is null-ified so the sweep
+    is idempotent.
+    """
+    now = timezone.now()
+    to_purge = Transfer.objects.filter(
+        status=TransferStatus.PENDING_FILE_DELETION,
+        pending_deletion_at__lte=now,
+    ).prefetch_related("files")
+
+    count = 0
+    for transfer in to_purge:
+        deleted_files = list(transfer.files.all())
+
+        transfer.delete_s3_objects()
+
+        transfer.status = TransferStatus.DEACTIVATED
+        transfer.deactivated_at = now
+        transfer.pending_deletion_at = None
+        transfer.save(
+            update_fields=[
+                "status",
+                "deactivated_at",
+                "pending_deletion_at",
+                "updated_at",
+            ]
+        )
+
+        TransferEvent.objects.bulk_create(
+            TransferEvent(
+                transfer_id=transfer.id,
+                event_type=TransferEventType.FILE_DELETED,
+                actor_type=ActorType.AGENT,
+                payload={"file_id": str(f.id), "filename": f.filename},
+            )
+            for f in deleted_files
+        )
+        count += 1
+
+    if count:
+        logger.info("Deleted files of %d transfer(s).", count)
 
 
 @shared_task

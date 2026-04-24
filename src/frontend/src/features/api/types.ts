@@ -1,5 +1,12 @@
 export type SharingMode = "email" | "link";
 
+export type TransferStatus =
+  | "active"
+  | "pending_file_deletion"
+  | "deactivated";
+
+export type DeactivationReason = "manual" | "expired" | "first_download";
+
 export interface TransferRecipient {
   id: string;
   email: string;
@@ -9,16 +16,19 @@ export interface TransferRecipient {
 export interface TransferListItem {
   id: string;
   title: string;
-  status: "active" | "expired" | "deactivated";
+  status: TransferStatus;
   sharing_mode: SharingMode;
   sensitive: boolean;
   expires_at: string;
   deactivated_at: string | null;
+  deactivation_reason: DeactivationReason | null;
   created_at: string;
   file_count: number;
   total_size: number;
   consulted: boolean;
   downloaded: boolean;
+  auto_archive_on_download: boolean;
+  pending_deletion_at: string | null;
 }
 
 export interface TransferFile {
@@ -32,16 +42,19 @@ export interface TransferFile {
 export interface TransferDetail {
   id: string;
   title: string;
-  status: "active" | "expired" | "deactivated";
+  status: TransferStatus;
   sharing_mode: SharingMode;
   sensitive: boolean;
   public_token: string | null;
   upload_completed_at: string | null;
   expires_at: string;
   deactivated_at: string | null;
+  deactivation_reason: DeactivationReason | null;
   created_at: string;
   files: TransferFile[];
   recipients: TransferRecipient[];
+  auto_archive_on_download: boolean;
+  pending_deletion_at: string | null;
 }
 
 export interface TransferEvent {
@@ -71,4 +84,5 @@ export interface DownloadTransferFull {
   owner_name: string;
   owner_email: string;
   sharing_mode: SharingMode;
+  auto_archive_on_download: boolean;
 }

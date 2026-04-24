@@ -228,14 +228,28 @@ class TestTransferDeactivate:
         response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
 
         assert response.status_code == 200
-        assert response.data["status"] == "deactivated"
-        assert response.data["deactivated_at"] is not None
-        patched_s3.delete.assert_called()
+        # Deactivate is deferred: status flips to pending_file_deletion, the
+        # actual S3 teardown + final transition to DEACTIVATED happens in
+        # the sweep task.
+        assert response.data["status"] == "pending_file_deletion"
+        assert response.data["pending_deletion_at"] is not None
+        assert response.data["deactivated_at"] is None
+        assert response.data["deactivation_reason"] == "manual"
+        patched_s3.delete.assert_not_called()
 
-        assert_single_event(transfer.id, TransferEventType.TRANSFER_DEACTIVATED)
+        assert_single_event(
+            transfer.id, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY
+        )
 
     def test_deactivate_already_deactivated(self, authenticated_client, transfer):
         transfer.status = TransferStatus.DEACTIVATED
+        transfer.save(update_fields=["status"])
+
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
+        assert response.status_code == 400
+
+    def test_deactivate_already_pending(self, authenticated_client, transfer):
+        transfer.status = TransferStatus.PENDING_FILE_DELETION
         transfer.save(update_fields=["status"])
 
         response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")

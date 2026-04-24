@@ -131,6 +131,9 @@ class TransferListSerializer(serializers.ModelSerializer):
             "total_size",
             "consulted",
             "downloaded",
+            "auto_archive_on_download",
+            "pending_deletion_at",
+            "deactivation_reason",
         ]
         read_only_fields = fields
 
@@ -154,6 +157,9 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "files",
             "recipients",
+            "auto_archive_on_download",
+            "pending_deletion_at",
+            "deactivation_reason",
         ]
         read_only_fields = fields
 
@@ -256,7 +262,7 @@ class DraftFinalizeSerializer(serializers.Serializer):
     """
 
     title = serializers.CharField(
-        max_length=255, required=False, allow_blank=True, default=""
+        max_length=80, required=False, allow_blank=True, default=""
     )
     expires_in_days = serializers.ChoiceField(
         choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
@@ -274,6 +280,10 @@ class DraftFinalizeSerializer(serializers.Serializer):
         default=list,
         max_length=50,
     )
+    # Opt-in: when true, the finalized Transfer deactivates itself (S3
+    # delete + status DEACTIVATED) once every file has been downloaded at
+    # least once.
+    auto_archive_on_download = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -346,6 +356,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "owner_name",
             "owner_email",
             "sharing_mode",
+            "auto_archive_on_download",
         ]
         read_only_fields = fields
 

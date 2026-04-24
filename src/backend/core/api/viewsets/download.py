@@ -8,7 +8,12 @@ from rest_framework.views import APIView
 
 from core import models
 from core.api.serializers import DownloadTransferSerializer
-from core.enums import ActorType, TransferEventType, TransferStatus
+from core.enums import (
+    ActorType,
+    DeactivationReason,
+    TransferEventType,
+    TransferStatus,
+)
 from core.services.s3 import sign_download_url
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
@@ -27,20 +32,33 @@ def _denied_access_response(transfer: models.Transfer) -> Response | None:
     """Return an error Response if the public visitor cannot access the transfer,
     or None if access is allowed.
     """
-    if transfer.status == TransferStatus.DEACTIVATED:
-        return Response(
-            {
-                "detail": "This transfer has been deactivated.",
-                "reason": "deactivated",
-            },
-            status=403,
-        )
-    if transfer.is_expired:
+    if transfer.status == TransferStatus.ACTIVE:
+        # Edge case: deadline just passed but
+        # ``deactivate_expired_transfers_task`` hasn't flipped the row
+        # yet. Still surface "expired" so the recipient gets an accurate
+        # error.
+        if transfer.is_expired:
+            return Response(
+                {"detail": "This transfer has expired.", "reason": "expired"},
+                status=410,
+            )
+        return None
+
+    # Terminal or transitional state — what the visitor sees depends on
+    # why we deactivated the transfer, not on whether the S3 purge has
+    # run.
+    if transfer.deactivation_reason == DeactivationReason.EXPIRED:
         return Response(
             {"detail": "This transfer has expired.", "reason": "expired"},
             status=410,
         )
-    return None
+    return Response(
+        {
+            "detail": "This transfer has been deactivated.",
+            "reason": "deactivated",
+        },
+        status=403,
+    )
 
 
 def _record_visitor_event(transfer, event_type, request, payload=None):
@@ -52,6 +70,27 @@ def _record_visitor_event(transfer, event_type, request, payload=None):
         user_agent=request.META.get("HTTP_USER_AGENT", ""),
         payload=payload or {},
     )
+
+
+def _all_files_downloaded_once(transfer) -> bool:
+    """True iff every file attached to this transfer has at least one
+    FILE_DOWNLOADED event with a matching ``payload['file_id']``.
+
+    Used to gate the auto-archive: the trigger is "recipient has seen every
+    file at least once", not "any single download". The per-event payload
+    already carries ``file_id`` (see ``DownloadFileView.get``), so no schema
+    change is needed — we just count distinct payload keys.
+    """
+    file_ids = {str(f.id) for f in transfer.files.all()}
+    if not file_ids:
+        return False
+    downloaded = set(
+        models.TransferEvent.objects.filter(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.FILE_DOWNLOADED,
+        ).values_list("payload__file_id", flat=True)
+    )
+    return file_ids.issubset(downloaded)
 
 
 class DownloadTransferView(APIView):
@@ -111,6 +150,26 @@ class DownloadFileView(APIView):
                 "filename": transfer_file.filename,
             },
         )
+
+        # Auto-archive check: if this transfer was flagged as one-shot and
+        # every file has now been downloaded at least once, deactivate the
+        # link immediately (status → PENDING_FILE_DELETION) and schedule
+        # the S3 purge for later via ``pending_deletion_at``. The periodic
+        # ``delete_pending_transfer_files_task`` is what actually deletes
+        # the bytes once that deadline has passed — long enough for the
+        # in-flight GET we're about to redirect to to finish, even on a
+        # 20 GiB file and a slow connection.
+        if (
+            transfer.auto_archive_on_download
+            and transfer.status == TransferStatus.ACTIVE
+            and _all_files_downloaded_once(transfer)
+        ):
+            transfer.deactivate(DeactivationReason.FIRST_DOWNLOAD)
+            models.TransferEvent.objects.create(
+                transfer_id=transfer.id,
+                event_type=TransferEventType.TRANSFER_DEACTIVATED_AFTER_FIRST_DOWNLOAD,
+                actor_type=ActorType.AGENT,
+            )
 
         # Redirect the browser straight to S3 so the download bytes never
         # transit through a Django worker. The presigned URL's short expiry
