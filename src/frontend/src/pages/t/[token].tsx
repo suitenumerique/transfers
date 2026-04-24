@@ -11,6 +11,7 @@ import {
 import { ApiError } from "@/features/api/client";
 import { login, useAuth } from "@/features/auth";
 import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
+import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { useConfig } from "@/features/providers/config";
 import { useDownloadTransfer } from "@/features/transfers/api/useDownload";
 import { DownloadView } from "@/features/transfers/components/DownloadView";
@@ -80,6 +81,7 @@ export default function DownloadPage() {
           />
         </Link>
         <div className="download-page__topbar-right">
+          <LanguagePicker size="small" compact />
           <LaGaufreV2
             widgetPath={TERRITORIALE_GAUFRE.widgetPath}
             apiUrl={TERRITORIALE_GAUFRE.apiUrl}
