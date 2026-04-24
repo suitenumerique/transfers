@@ -51,8 +51,28 @@ class TransferViewSet(
             return TransferEventSerializer
         return TransferDetailSerializer
 
+    # Cap search query length to keep ILIKE bounded and guard against a
+    # pathologically long input. Anything beyond this is a client bug.
+    SEARCH_MAX_LENGTH = 100
+
     def get_queryset(self):
         if self.action == "list":
+            qs = models.Transfer.objects.filter(owner=self.request.user)
+
+            # ``archived`` bucket — "active" section = status ACTIVE only;
+            # "archived" section = every other status (EXPIRED, DEACTIVATED).
+            # Omitted → no status filter, for any caller that still wants
+            # the full list.
+            archived = self.request.query_params.get("archived")
+            if archived == "true":
+                qs = qs.exclude(status=TransferStatus.ACTIVE)
+            elif archived == "false":
+                qs = qs.filter(status=TransferStatus.ACTIVE)
+
+            search = (self.request.query_params.get("search") or "").strip()
+            if search:
+                qs = qs.filter(title__icontains=search[: self.SEARCH_MAX_LENGTH])
+
             # Annotate everything the list serializer needs in one query
             # rather than prefetch + N×2 existence checks.
             event_of_type = lambda ev: Exists(
@@ -60,16 +80,12 @@ class TransferViewSet(
                     transfer_id=OuterRef("pk"), event_type=ev
                 )
             )
-            return (
-                models.Transfer.objects.filter(owner=self.request.user)
-                .annotate(
-                    _file_count=Count("files"),
-                    _total_size=Sum("files__size", default=0),
-                    _consulted=event_of_type(TransferEventType.LINK_OPENED),
-                    _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
-                )
-                .order_by("-created_at")
-            )
+            return qs.annotate(
+                _file_count=Count("files"),
+                _total_size=Sum("files__size", default=0),
+                _consulted=event_of_type(TransferEventType.LINK_OPENED),
+                _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
+            ).order_by("-created_at")
         return (
             models.Transfer.objects.filter(owner=self.request.user)
             .prefetch_related("files", "recipients")
