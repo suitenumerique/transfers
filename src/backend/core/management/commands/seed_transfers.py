@@ -23,7 +23,6 @@ from core import models
 from core.enums import SharingMode, TransferStatus
 from core.services.s3 import get_s3_client
 
-
 User = get_user_model()
 fake = Faker()
 

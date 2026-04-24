@@ -117,6 +117,9 @@ extra-standard-library = ["tomllib"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/*" = ["S", "SLF"]
+# Dev-only seed command: ``random`` is fine for placeholder data — security
+# checks (S311) don't apply to fixtures that never reach production.
+"**/management/commands/seed_transfers.py" = ["S311"]
 
 [tool.pytest.ini_options]
 addopts = [
