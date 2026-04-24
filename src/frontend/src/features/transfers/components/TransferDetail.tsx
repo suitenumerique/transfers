@@ -25,7 +25,7 @@ import type { TransferDetail as TransferDetailType } from "@/features/api/types"
 import { formatFileSize } from "@/features/utils/string-helper";
 import { downloadFile } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
-import { useRevokeTransfer } from "../api/useRevokeTransfer";
+import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
 import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
@@ -35,7 +35,7 @@ const EVENT_LABELS: Record<string, string> = {
   email_sent: "Notification email sent",
   link_opened: "Link opened",
   file_downloaded: "File downloaded",
-  transfer_revoked: "Transfer revoked",
+  transfer_deactivated: "Transfer deactivated",
   transfer_expired: "Transfer expired",
   files_deleted: "Files deleted",
 };
@@ -73,11 +73,11 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
-  const revokeTransfer = useRevokeTransfer();
+  const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
   const [recipientsOpen, setRecipientsOpen] = useState(true);
-  const revokeModal = useModal();
+  const deactivateModal = useModal();
   const events = useTransferEvents(transfer.id);
 
   const downloadUrl = transfer.public_token
@@ -104,9 +104,9 @@ export function TransferDetail({
     downloadFile(transfer.public_token, fileId);
   };
 
-  const handleRevokeConfirm = () => {
-    revokeModal.close();
-    revokeTransfer.mutate(transfer.id);
+  const handleDeactivateConfirm = () => {
+    deactivateModal.close();
+    deactivateTransfer.mutate(transfer.id);
   };
 
   return (
@@ -265,8 +265,8 @@ export function TransferDetail({
           <Button
             color="error"
             variant="secondary"
-            onClick={revokeModal.open}
-            disabled={revokeTransfer.isPending}
+            onClick={deactivateModal.open}
+            disabled={deactivateTransfer.isPending}
           >
             {t("Deactivate")}
           </Button>
@@ -324,22 +324,22 @@ export function TransferDetail({
 
       <Modal
         size={ModalSize.SMALL}
-        isOpen={revokeModal.isOpen}
-        onClose={revokeModal.close}
-        title={t("Confirm revoke")}
+        isOpen={deactivateModal.isOpen}
+        onClose={deactivateModal.close}
+        title={t("Confirm deactivate")}
         rightActions={
           <>
             <Button
               color="neutral"
               variant="secondary"
-              onClick={revokeModal.close}
+              onClick={deactivateModal.close}
             >
               {t("Cancel")}
             </Button>
             <Button
               color="error"
-              onClick={handleRevokeConfirm}
-              disabled={revokeTransfer.isPending}
+              onClick={handleDeactivateConfirm}
+              disabled={deactivateTransfer.isPending}
             >
               {t("Deactivate")}
             </Button>

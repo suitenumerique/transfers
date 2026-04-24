@@ -27,9 +27,12 @@ def _denied_access_response(transfer: models.Transfer) -> Response | None:
     """Return an error Response if the public visitor cannot access the transfer,
     or None if access is allowed.
     """
-    if transfer.status == TransferStatus.REVOKED:
+    if transfer.status == TransferStatus.DEACTIVATED:
         return Response(
-            {"detail": "This transfer has been revoked.", "reason": "revoked"},
+            {
+                "detail": "This transfer has been deactivated.",
+                "reason": "deactivated",
+            },
             status=403,
         )
     if transfer.is_expired:

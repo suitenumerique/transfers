@@ -14,7 +14,7 @@ class TransferStatus(models.TextChoices):
 
     ACTIVE = "active", "Active"
     EXPIRED = "expired", "Expired"
-    REVOKED = "revoked", "Revoked"
+    DEACTIVATED = "deactivated", "Deactivated"
 
 
 class TransferEventType(models.TextChoices):
@@ -24,7 +24,7 @@ class TransferEventType(models.TextChoices):
     EMAIL_SENT = "email_sent"
     LINK_OPENED = "link_opened"
     FILE_DOWNLOADED = "file_downloaded"
-    TRANSFER_REVOKED = "transfer_revoked"
+    TRANSFER_DEACTIVATED = "transfer_deactivated"
     TRANSFER_EXPIRED = "transfer_expired"
     FILES_DELETED = "files_deleted"
 

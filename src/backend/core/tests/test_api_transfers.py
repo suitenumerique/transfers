@@ -1,11 +1,11 @@
-"""Tests for the Transfer API endpoints (read-only surface + revoke).
+"""Tests for the Transfer API endpoints (read-only surface + deactivate).
 
 The Transfer model now only holds finalized transfers — every row here
 came into existence through a draft finalize. The upload lifecycle
 (add-file, sign-part, complete-upload, remove-file, abort, finalize)
 lives on ``/api/v1.0/drafts/`` and is covered by ``test_api_drafts.py``.
 
-This file covers the public Transfer surface: list, retrieve, revoke,
+This file covers the public Transfer surface: list, retrieve, deactivate,
 events.
 """
 
@@ -217,33 +217,35 @@ class TestTransferDetail:
 
 
 @pytest.mark.django_db
-class TestTransferRevoke:
+class TestTransferDeactivate:
     def test_unauthenticated(self, api_client, transfer):
-        response = api_client.post(f"{API_URL}{transfer.id}/revoke/")
+        response = api_client.post(f"{API_URL}{transfer.id}/deactivate/")
         assert response.status_code == 401
 
-    def test_revoke(self, patched_s3, authenticated_client, user):
+    def test_deactivate(self, patched_s3, authenticated_client, user):
         transfer = TransferFactory(owner=user)
         TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
-        response = authenticated_client.post(f"{API_URL}{transfer.id}/revoke/")
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
 
         assert response.status_code == 200
-        assert response.data["status"] == "revoked"
-        assert response.data["revoked_at"] is not None
+        assert response.data["status"] == "deactivated"
+        assert response.data["deactivated_at"] is not None
         patched_s3.delete.assert_called()
 
-        assert_single_event(transfer.id, TransferEventType.TRANSFER_REVOKED)
+        assert_single_event(transfer.id, TransferEventType.TRANSFER_DEACTIVATED)
 
-    def test_revoke_already_revoked(self, authenticated_client, transfer):
-        transfer.status = TransferStatus.REVOKED
+    def test_deactivate_already_deactivated(self, authenticated_client, transfer):
+        transfer.status = TransferStatus.DEACTIVATED
         transfer.save(update_fields=["status"])
 
-        response = authenticated_client.post(f"{API_URL}{transfer.id}/revoke/")
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
         assert response.status_code == 400
 
-    def test_revoke_rejects_other_user(self, authenticated_client):
+    def test_deactivate_rejects_other_user(self, authenticated_client):
         other_transfer = TransferFactory()
-        response = authenticated_client.post(f"{API_URL}{other_transfer.id}/revoke/")
+        response = authenticated_client.post(
+            f"{API_URL}{other_transfer.id}/deactivate/"
+        )
         assert response.status_code == 404
 
 

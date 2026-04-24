@@ -15,14 +15,14 @@ import { useConfig } from "@/features/providers/config";
 import { useDownloadTransfer } from "@/features/transfers/api/useDownload";
 import { DownloadView } from "@/features/transfers/components/DownloadView";
 
-type DownloadErrorReason = "expired" | "revoked" | "not_found";
+type DownloadErrorReason = "expired" | "deactivated" | "not_found";
 
 function getErrorReason(error: unknown): DownloadErrorReason {
   if (error instanceof ApiError) {
     const body = error.body as { reason?: string } | undefined;
     if (
       body?.reason === "expired" ||
-      body?.reason === "revoked" ||
+      body?.reason === "deactivated" ||
       body?.reason === "not_found"
     ) {
       return body.reason;
@@ -52,7 +52,7 @@ export default function DownloadPage() {
       const reason = getErrorReason(error);
       const messages: Record<DownloadErrorReason, string> = {
         expired: t("This link has expired. Contact the sender."),
-        revoked: t("This link has been revoked by the sender."),
+        deactivated: t("This link has been deactivated by the sender."),
         not_found: t("This link does not exist."),
       };
       return (
