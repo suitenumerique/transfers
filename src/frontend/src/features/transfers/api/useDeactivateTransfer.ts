@@ -2,12 +2,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
 import type { TransferDetail } from "@/features/api/types";
 
-export function useRevokeTransfer() {
+export function useDeactivateTransfer() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (id: string) =>
-      apiFetch<TransferDetail>(`/transfers/${id}/revoke/`, {
+      apiFetch<TransferDetail>(`/transfers/${id}/deactivate/`, {
         method: "POST",
       }),
     onSuccess: (_data, id) => {

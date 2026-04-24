@@ -35,10 +35,11 @@ class TestDownloadTransferView:
         response = api_client.get(f"{DOWNLOADS_URL}/{t.public_token}/")
         assert response.status_code == 410
 
-    def test_get_revoked_transfer(self, api_client):
-        t = TransferFactory(status=TransferStatus.REVOKED)
+    def test_get_deactivated_transfer(self, api_client):
+        t = TransferFactory(status=TransferStatus.DEACTIVATED)
         response = api_client.get(f"{DOWNLOADS_URL}/{t.public_token}/")
         assert response.status_code == 403
+        assert response.data["reason"] == "deactivated"
 
     def test_get_nonexistent_token(self, api_client):
         response = api_client.get(f"{DOWNLOADS_URL}/nonexistent-token/")

@@ -9,11 +9,11 @@ export interface TransferRecipient {
 export interface TransferListItem {
   id: string;
   title: string;
-  status: "active" | "expired" | "revoked";
+  status: "active" | "expired" | "deactivated";
   sharing_mode: SharingMode;
   sensitive: boolean;
   expires_at: string;
-  revoked_at: string | null;
+  deactivated_at: string | null;
   created_at: string;
   file_count: number;
   total_size: number;
@@ -32,13 +32,13 @@ export interface TransferFile {
 export interface TransferDetail {
   id: string;
   title: string;
-  status: "active" | "expired" | "revoked";
+  status: "active" | "expired" | "deactivated";
   sharing_mode: SharingMode;
   sensitive: boolean;
   public_token: string | null;
   upload_completed_at: string | null;
   expires_at: string;
-  revoked_at: string | null;
+  deactivated_at: string | null;
   created_at: string;
   files: TransferFile[];
   recipients: TransferRecipient[];

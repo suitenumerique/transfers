@@ -182,9 +182,9 @@ class Transfer(BaseModel):
     )
     title = models.CharField(max_length=255, blank=True, default="")
     expires_at = models.DateTimeField()
-    revoked_at = models.DateTimeField(null=True, blank=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
-        max_length=10,
+        max_length=16,
         choices=TransferStatus.choices,
         default=TransferStatus.ACTIVE,
     )
@@ -216,8 +216,8 @@ class Transfer(BaseModel):
         )
 
     @property
-    def is_revoked(self) -> bool:
-        return self.status == TransferStatus.REVOKED
+    def is_deactivated(self) -> bool:
+        return self.status == TransferStatus.DEACTIVATED
 
     @property
     def is_accessible(self) -> bool:
@@ -231,7 +231,7 @@ class Transfer(BaseModel):
 
         Best-effort: failures on an individual file are logged by the S3
         wrapper and swallowed. Used when tearing down a transfer whose
-        bytes are no longer needed (revoke, expiry cleanup).
+        bytes are no longer needed (deactivate, expiry cleanup).
         """
         from core.services import s3
 

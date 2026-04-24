@@ -1,10 +1,10 @@
-"""API ViewSet for Transfer (authenticated agent, read-only + revoke).
+"""API ViewSet for Transfer (authenticated agent, read-only + deactivate).
 
 All the draft / upload lifecycle lives on ``TransferDraftViewSet``. Once a
 draft is finalized, the resulting ``Transfer`` row is immutable except for
-``revoke`` (which transitions it to the REVOKED status and tears down S3
-objects). Listing / retrieving / inspecting events happen here; mutation
-beyond revoke does not exist.
+``deactivate`` (which transitions it to the DEACTIVATED status and tears
+down S3 objects). Listing / retrieving / inspecting events happen here;
+mutation beyond deactivate does not exist.
 """
 
 from django.db.models import Count, Exists, OuterRef, Sum
@@ -32,7 +32,7 @@ class TransferViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Read-only view over finalized transfers plus the ``revoke`` transition.
+    """Read-only view over finalized transfers plus the ``deactivate`` transition.
 
     All the pre-finalize lifecycle (draft creation, file add/remove, upload
     signing, multipart completion, finalize) lives on ``TransferDraftViewSet``
@@ -78,24 +78,25 @@ class TransferViewSet(
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
-    def revoke(self, request, pk=None):
-        """Revoke a transfer — flips its status to REVOKED and tears down
-        the underlying S3 objects. Only valid on an active transfer.
+    def deactivate(self, request, pk=None):
+        """Deactivate a transfer — flips its status to DEACTIVATED and
+        tears down the underlying S3 objects. Only valid on an active
+        transfer.
         """
         transfer = self.get_object()
 
         if transfer.status != TransferStatus.ACTIVE:
             raise drf.exceptions.ValidationError(
-                {"status": "Only active transfers can be revoked."}
+                {"status": "Only active transfers can be deactivated."}
             )
 
         transfer.delete_s3_objects()
 
-        transfer.status = TransferStatus.REVOKED
-        transfer.revoked_at = timezone.now()
-        transfer.save(update_fields=["status", "revoked_at", "updated_at"])
+        transfer.status = TransferStatus.DEACTIVATED
+        transfer.deactivated_at = timezone.now()
+        transfer.save(update_fields=["status", "deactivated_at", "updated_at"])
 
-        log_agent_event(transfer, TransferEventType.TRANSFER_REVOKED, request)
+        log_agent_event(transfer, TransferEventType.TRANSFER_DEACTIVATED, request)
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

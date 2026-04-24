@@ -6,7 +6,7 @@ complete-upload, remove-file, abort, finalize. The ``patched_s3`` fixture
 in ``conftest.py`` mocks out every S3 helper so tests run without object
 storage.
 
-Sibling file ``test_api_transfers.py`` exercises the read-only / revoke
+Sibling file ``test_api_transfers.py`` exercises the read-only / deactivate
 endpoints on the public Transfer surface.
 """
 

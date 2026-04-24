@@ -29,9 +29,9 @@ class TestTransferModel:
         active = TransferFactory(expires_at=timezone.now() + timedelta(days=1))
         assert not active.is_expired
 
-    def test_is_revoked(self):
-        transfer = TransferFactory(status=TransferStatus.REVOKED)
-        assert transfer.is_revoked
+    def test_is_deactivated(self):
+        transfer = TransferFactory(status=TransferStatus.DEACTIVATED)
+        assert transfer.is_deactivated
         assert not transfer.is_accessible
 
     def test_is_accessible(self):
@@ -47,5 +47,5 @@ class TestTransferModel:
         )
         assert not expired.is_accessible
 
-        revoked = TransferFactory(status=TransferStatus.REVOKED)
-        assert not revoked.is_accessible
+        deactivated = TransferFactory(status=TransferStatus.DEACTIVATED)
+        assert not deactivated.is_accessible
