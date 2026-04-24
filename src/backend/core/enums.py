@@ -10,11 +10,30 @@ class UserAbilities(models.TextChoices):
 
 
 class TransferStatus(models.TextChoices):
-    """Status of a transfer."""
+    """Status of a transfer.
+
+    Only three states: ACTIVE (link live), PENDING_FILE_DELETION (link
+    closed, S3 purge scheduled) and DEACTIVATED (terminal — link closed,
+    bytes gone). The *why* of the deactivation is carried by
+    ``DeactivationReason`` on the Transfer row, independent of the state
+    machine.
+    """
 
     ACTIVE = "active", "Active"
-    EXPIRED = "expired", "Expired"
+    PENDING_FILE_DELETION = "pending_file_deletion", "Pending file deletion"
     DEACTIVATED = "deactivated", "Deactivated"
+
+
+class DeactivationReason(models.TextChoices):
+    """Why a transfer was deactivated.
+
+    Populated at the ACTIVE → PENDING_FILE_DELETION transition and carried
+    through to DEACTIVATED. Null while the transfer is still ACTIVE.
+    """
+
+    MANUAL = "manual", "Manually deactivated"
+    EXPIRED = "expired", "Expired"
+    FIRST_DOWNLOAD = "first_download", "Deactivated after first full download"
 
 
 class TransferEventType(models.TextChoices):
@@ -24,9 +43,13 @@ class TransferEventType(models.TextChoices):
     EMAIL_SENT = "email_sent"
     LINK_OPENED = "link_opened"
     FILE_DOWNLOADED = "file_downloaded"
-    TRANSFER_DEACTIVATED = "transfer_deactivated"
-    TRANSFER_EXPIRED = "transfer_expired"
-    FILES_DELETED = "files_deleted"
+    # Deactivation events mirror the three DeactivationReason values.
+    TRANSFER_DEACTIVATED_MANUALLY = "transfer_deactivated_manually"
+    TRANSFER_DEACTIVATED_AFTER_FIRST_DOWNLOAD = (
+        "transfer_deactivated_after_first_download"
+    )
+    TRANSFER_DEACTIVATED_AFTER_EXPIRY = "transfer_deactivated_after_expiry"
+    FILE_DELETED = "file_deleted"
 
 
 class SharingMode(models.TextChoices):

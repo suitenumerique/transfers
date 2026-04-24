@@ -23,6 +23,8 @@ class TestTransferModel:
         assert t1.public_token != t2.public_token
 
     def test_is_expired(self):
+        # Timing-only check: the property depends on expires_at, not on
+        # whatever status the sweep happens to have set yet.
         expired = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))
         assert expired.is_expired
 

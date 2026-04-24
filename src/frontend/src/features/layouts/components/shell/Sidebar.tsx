@@ -22,7 +22,10 @@ export function Sidebar() {
   const config = useConfig();
   const activeId =
     typeof router.query.id === "string" ? router.query.id : undefined;
-  const { data } = useTransfers(1);
+  // Sidebar lists every transfer the user owns so the "Deactivated" section
+  // isn't blind to older terminal ones. 200 matches the API's max_page_size;
+  // past that we'd need infinite scroll, but that's a future-user problem.
+  const { data } = useTransfers(1, 200);
 
   const [query, setQuery] = useState("");
 

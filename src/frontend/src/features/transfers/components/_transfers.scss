@@ -224,6 +224,14 @@
     display: flex;
     align-items: center;
     gap: var(--c--globals--spacings--sm);
+
+    // Keep the status badge on a single line even when the title wraps:
+    // the badge is a fixed-width sibling of a flex-growing h1, so without
+    // nowrap its own label can break across lines.
+    > *:not(h1) {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
   }
 
   // Needs h1 prefix to beat the default .app-content h1 { margin-bottom: 1.5rem }
@@ -579,6 +587,42 @@
     &:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+  }
+}
+
+// One-shot option — aligns the checkbox and its info tooltip trigger inline.
+.transfer-form__auto-archive {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--2xs);
+
+  &-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: 0;
+    background: transparent;
+    border-radius: 50%;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    cursor: help;
+    line-height: 0;
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &:hover,
+    &:focus-visible {
+      color: var(--c--contextuals--content--semantic--neutral--primary);
+      background: rgba(0, 0, 0, 0.04);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--c--theme--colors--primary-500);
+      outline-offset: 1px;
     }
   }
 }
@@ -1249,6 +1293,11 @@
     border: 0;
     border-top: 1px solid var(--c--contextuals--border--surface--primary);
     margin: var(--c--globals--spacings--md) 0;
+  }
+
+  &__auto-archive-alert {
+    margin-bottom: var(--c--globals--spacings--md);
+    text-align: start;
   }
 
   &__link-box {

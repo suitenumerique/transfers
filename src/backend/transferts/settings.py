@@ -166,6 +166,17 @@ class Base(Configuration):
         environ_name="TRANSFER_PRESIGNED_URL_EXPIRY",
         environ_prefix=None,
     )
+    # Grace period between the moment a transfer becomes terminal (expiry
+    # reached, or auto-archive triggered by the last file being downloaded)
+    # and the moment the periodic sweep is allowed to purge the S3 objects.
+    # Covers in-flight downloads still running on the recipient's side — a
+    # 20 GiB file on a slow link can take hours, so the default sits
+    # comfortably above that.
+    TRANSFER_PURGE_DELAY_HOURS = values.PositiveIntegerValue(
+        6,
+        environ_name="TRANSFER_PURGE_DELAY_HOURS",
+        environ_prefix=None,
+    )
 
     # End-user help / documentation URL. Surfaced by the frontend on the
     # sidebar's "?" button as an external link (new tab) AND as the

@@ -2,6 +2,7 @@
 
 import secrets
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import models as auth_models
@@ -15,6 +16,7 @@ from timezone_field import TimeZoneField
 
 from core.enums import (
     ActorType,
+    DeactivationReason,
     SharingMode,
     TransferEventType,
     TransferStatus,
@@ -180,13 +182,22 @@ class Transfer(BaseModel):
         null=True,
         related_name="transfers",
     )
-    title = models.CharField(max_length=255, blank=True, default="")
+    title = models.CharField(max_length=80, blank=True, default="")
     expires_at = models.DateTimeField()
     deactivated_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
-        max_length=16,
+        max_length=24,
         choices=TransferStatus.choices,
         default=TransferStatus.ACTIVE,
+    )
+    # Why the transfer was deactivated. Populated at the ACTIVE →
+    # PENDING_FILE_DELETION transition (one of manual / expired /
+    # first_download) and carried through to DEACTIVATED. Null while ACTIVE.
+    deactivation_reason = models.CharField(
+        max_length=16,
+        choices=DeactivationReason.choices,
+        null=True,
+        blank=True,
     )
     public_token = models.CharField(
         max_length=64,
@@ -201,6 +212,17 @@ class Transfer(BaseModel):
         choices=SharingMode.choices,
         default=SharingMode.LINK,
     )
+    # Opt-in one-shot link: when true, the link is deactivated (status
+    # flipped to PENDING_FILE_DELETION) the moment every file has been
+    # downloaded at least once, and S3 objects are purged later by
+    # ``delete_pending_transfer_files_task``. Defaults to false so the
+    # behaviour stays opt-in.
+    auto_archive_on_download = models.BooleanField(default=False)
+    # Deadline after which the periodic sweep may delete this transfer's S3
+    # objects. Populated at the ACTIVE → PENDING_FILE_DELETION transition,
+    # null otherwise. The gap between the transition and this deadline lets
+    # recipients' in-flight downloads finish before the bytes disappear.
+    pending_deletion_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "core_transfer"
@@ -211,9 +233,13 @@ class Transfer(BaseModel):
 
     @property
     def is_expired(self) -> bool:
-        return (
-            self.status == TransferStatus.EXPIRED or self.expires_at <= timezone.now()
-        )
+        """True iff the transfer's deadline has passed.
+
+        Timing-only check — independent of status. A transfer whose sweep
+        hasn't fired yet is still ``ACTIVE`` with a past ``expires_at``,
+        and should be treated as expired by public-access gates.
+        """
+        return self.expires_at <= timezone.now()
 
     @property
     def is_deactivated(self) -> bool:
@@ -226,12 +252,38 @@ class Transfer(BaseModel):
         # So accessibility only depends on status + expiry.
         return self.status == TransferStatus.ACTIVE and not self.is_expired
 
+    def deactivate(self, reason: DeactivationReason) -> None:
+        """Transition ``ACTIVE → PENDING_FILE_DELETION`` with the given reason.
+
+        Single entry point for the three deactivation flows (manual,
+        expiry sweep, first-full-download auto-archive). Sets
+        ``pending_deletion_at`` to ``now + TRANSFER_PURGE_DELAY_HOURS`` —
+        the periodic sweep then wipes S3 and flips to DEACTIVATED once
+        that deadline has passed. Audit events
+        (``TRANSFER_DEACTIVATED_*``) are the caller's responsibility:
+        they depend on *who* triggered the deactivation, which the model
+        doesn't know.
+        """
+        self.status = TransferStatus.PENDING_FILE_DELETION
+        self.deactivation_reason = reason
+        self.pending_deletion_at = timezone.now() + timedelta(
+            hours=settings.TRANSFER_PURGE_DELAY_HOURS
+        )
+        self.save(
+            update_fields=[
+                "status",
+                "deactivation_reason",
+                "pending_deletion_at",
+                "updated_at",
+            ]
+        )
+
     def delete_s3_objects(self) -> None:
         """Delete every S3 object attached to this transfer.
 
         Best-effort: failures on an individual file are logged by the S3
         wrapper and swallowed. Used when tearing down a transfer whose
-        bytes are no longer needed (deactivate, expiry cleanup).
+        bytes are no longer needed (deactivation cleanup).
         """
         from core.services import s3
 
@@ -362,7 +414,7 @@ class TransferEvent(BaseModel):
     transfer_id = models.UUIDField(db_index=True)
     recipient_id = models.UUIDField(null=True, blank=True, db_index=True)
     event_type = models.CharField(
-        max_length=30,
+        max_length=64,
         choices=TransferEventType.choices,
     )
     actor_type = models.CharField(

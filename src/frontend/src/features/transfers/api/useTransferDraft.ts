@@ -56,6 +56,7 @@ export interface FinalizeMetadata {
   sharing_mode?: SharingMode;
   recipients?: string[];
   sensitive?: boolean;
+  auto_archive_on_download?: boolean;
 }
 
 // Shape of an item returned by the Drive picker after Nathan's fix — the

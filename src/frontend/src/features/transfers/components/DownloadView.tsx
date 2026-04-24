@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Alert,
+  Button,
+  Input,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
 import {
   Checkmark,
   Copy,
@@ -79,6 +84,15 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
       </div>
 
       <hr className="download-view__divider" />
+
+      {transfer.auto_archive_on_download && (
+        <Alert
+          type={VariantType.WARNING}
+          className="download-view__auto-archive-alert"
+        >
+          {t("This link will be automatically deactivated after download.")}
+        </Alert>
+      )}
 
       {/* Email-mode transfers reach the recipient via the notification
           email itself — re-surfacing the URL here invites accidental

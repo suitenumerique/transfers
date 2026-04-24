@@ -4,8 +4,10 @@ import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
+  Checkbox,
   Input,
   LabelledBox,
+  Tooltip,
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import {
@@ -20,6 +22,7 @@ import {
   FileError,
   FolderDrive,
   Icon,
+  Info,
   Link as LinkIcon,
   Mail,
   MailCheckFilled,
@@ -198,6 +201,10 @@ export function TransferForm() {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  // Opt-in: once every file has been downloaded at least once, the backend
+  // auto-deactivates the transfer (status flip + scheduled S3 wipe).
+  // Matches a "one-shot link" intent.
+  const [autoArchiveOnDownload, setAutoArchiveOnDownload] = useState(false);
   // Once finalize resolves we pivot the whole form to a success panel (see
   // TransferSuccess below). Clicking "New transfer" clears this and the
   // other form state so the user starts fresh on the same route.
@@ -344,6 +351,7 @@ export function TransferForm() {
         expires_in_days: expiresInDays,
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
+        auto_archive_on_download: autoArchiveOnDownload,
       });
       setFinalized(result);
     } catch {
@@ -576,6 +584,7 @@ export function TransferForm() {
             disabled={busy}
             variant="classic"
             fullWidth
+            maxLength={80}
           />
 
           <div className="transfer-form__validity">
@@ -599,6 +608,32 @@ export function TransferForm() {
                 <Icon name="keyboard_arrow_down" />
               </button>
             </DropdownMenu>
+          </div>
+
+          <div className="transfer-form__auto-archive">
+            <Checkbox
+              label={t("Deactivate after all files are downloaded")}
+              checked={autoArchiveOnDownload}
+              onChange={(e) =>
+                setAutoArchiveOnDownload(e.currentTarget.checked)
+              }
+              disabled={busy}
+            />
+            <Tooltip
+              content={t(
+                "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.",
+              )}
+              placement="top"
+            >
+              <button
+                type="button"
+                className="transfer-form__auto-archive-help"
+                aria-label={t("More information")}
+                tabIndex={0}
+              >
+                <Info />
+              </button>
+            </Tooltip>
           </div>
 
           <Button
