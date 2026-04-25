@@ -577,6 +577,7 @@ export function TransferForm() {
             disabled={finalizing}
             variant="classic"
             fullWidth
+            maxLength={80}
           />
 
           <div className="transfer-form__validity">
