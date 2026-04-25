@@ -180,7 +180,7 @@ class Transfer(BaseModel):
         null=True,
         related_name="transfers",
     )
-    title = models.CharField(max_length=255, blank=True, default="")
+    title = models.CharField(max_length=80, blank=True, default="")
     expires_at = models.DateTimeField()
     deactivated_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(

@@ -256,7 +256,7 @@ class DraftFinalizeSerializer(serializers.Serializer):
     """
 
     title = serializers.CharField(
-        max_length=255, required=False, allow_blank=True, default=""
+        max_length=80, required=False, allow_blank=True, default=""
     )
     expires_in_days = serializers.ChoiceField(
         choices=[(d, f"{d} jours") for d in settings.TRANSFER_EXPIRY_CHOICES],
