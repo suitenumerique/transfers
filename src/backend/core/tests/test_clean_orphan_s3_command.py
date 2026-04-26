@@ -1,9 +1,9 @@
 """Integration tests — the ``clean_orphan_s3_objects`` management command.
 
 The command is the manual sweep we run when we suspect leaks have crept
-in. It diffs S3 against ``TransferFile.s3_key`` rows and deletes objects
-that no row points to. It does NOT scan in-progress multipart uploads
-today — that gap is documented as ``xfail strict``.
+in. Two passes: (1) diff completed objects against ``TransferFile.s3_key``
+and delete what no row points to; (2) diff in-progress multipart uploads
+against ``TransferFile.upload_id`` and abort what no row points to.
 """
 
 from io import StringIO
@@ -68,20 +68,12 @@ class TestCleanOrphanObjects:
 
 @pytest.mark.django_db
 class TestCleanOrphanMPUs:
-    """Coverage of the *missing* MPU scan — the command's biggest blind
-    spot. The current implementation only iterates completed objects via
-    ``list_objects_v2``, so any in-progress multipart upload that no DB
-    row references (e.g. survivors of a worker crash) stays forever.
-
-    Fix: add a second pass that calls ``list_multipart_uploads``,
-    cross-references against ``TransferFile.objects.exclude(upload_id="")``,
-    and aborts the difference.
+    """Coverage of the second pass: in-progress multipart uploads that no DB
+    row references (e.g. survivors of a worker crash) get aborted under
+    ``--apply``. Symmetric to the object scan, keyed on ``(s3_key, upload_id)``
+    so that two MPUs sharing a key would be handled independently.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="command never lists multipart uploads — orphan MPUs are invisible to it",
-    )
     def test_apply_aborts_orphan_mpus(self, live_s3_bucket):
         bucket = settings.TRANSFERS_BUCKET_NAME
         # An MPU in S3 with no DB row — the kind a crashed worker leaves
