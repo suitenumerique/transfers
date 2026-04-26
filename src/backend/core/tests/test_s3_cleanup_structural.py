@@ -31,19 +31,10 @@ DRAFTS_URL = "/api/v1.0/drafts/"
 class TestRollbackOrphanMPU:
     """``add-file`` (viewsets/draft.py) calls ``s3.create_multipart_upload``
     *inside* its ``transaction.atomic()`` block, then ``tf.save()`` right
-    after. If the save fails, the DB rollback wipes the row but the MPU
-    stays in S3 with no DB pointer — invisible to every cleanup pass that
-    iterates DB rows.
-
-    Fix: wrap the S3 init with a ``transaction.on_commit`` rollback hook
-    that aborts the MPU on save failure, OR move ``create_multipart_upload``
-    out of the atomic block.
+    after. The save is wrapped in a try/except that aborts the freshly-created
+    MPU before re-raising, so the DB rollback can't leave an orphan in S3.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="MPU created in S3 but rolled back from DB — no cleanup path covers this",
-    )
     def test_save_failure_after_mpu_created_leaves_no_orphan(
         self, authenticated_client, live_s3_bucket
     ):

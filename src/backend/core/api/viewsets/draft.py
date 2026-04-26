@@ -180,8 +180,15 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 upload_id = s3.create_multipart_upload(
                     key=transfer_file.s3_key, content_type=data["mime_type"]
                 )
-                transfer_file.upload_id = upload_id
-                transfer_file.save()
+                # The MPU is now live on S3 with no DB pointer. If the save
+                # below blows up the atomic block rolls the row back, but S3
+                # has no way to know — abort it explicitly before re-raising.
+                try:
+                    transfer_file.upload_id = upload_id
+                    transfer_file.save()
+                except Exception:
+                    s3.abort_multipart_upload(transfer_file.s3_key, upload_id)
+                    raise
 
         response_body = {
             "draft_id": str(draft.id),
