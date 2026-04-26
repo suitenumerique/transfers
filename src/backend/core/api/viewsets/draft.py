@@ -6,6 +6,7 @@ action creates a fresh ``Transfer`` with the request body's metadata and
 reparents the draft's ``TransferFile`` rows to it, then deletes the draft.
 """
 
+import logging
 from datetime import timedelta
 
 from django.conf import settings
@@ -34,6 +35,8 @@ from core.api.utils import log_agent_event
 from core.enums import SharingMode, TransferEventType
 from core.services import s3
 from core.tasks import import_drive_file_task
+
+logger = logging.getLogger(__name__)
 
 
 class TransferDraftViewSet(viewsets.GenericViewSet):
@@ -180,14 +183,22 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 upload_id = s3.create_multipart_upload(
                     key=transfer_file.s3_key, content_type=data["mime_type"]
                 )
-                # The MPU is now live on S3 with no DB pointer. If the save
-                # below blows up the atomic block rolls the row back, but S3
-                # has no way to know — abort it explicitly before re-raising.
+                # If the save fails the atomic block rolls the row back, but
+                # S3 keeps the MPU — abort it before re-raising.
                 try:
                     transfer_file.upload_id = upload_id
                     transfer_file.save()
                 except Exception:
-                    s3.abort_multipart_upload(transfer_file.s3_key, upload_id)
+                    # Don't let a S3 error here mask the original exception.
+                    try:
+                        s3.abort_multipart_upload(transfer_file.s3_key, upload_id)
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to abort orphan MPU %s for key %s after "
+                            "rollback",
+                            upload_id,
+                            transfer_file.s3_key,
+                        )
                     raise
 
         response_body = {
@@ -303,9 +314,10 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
     def remove_file(self, request, pk=None):
         """Detach a file from a draft.
 
-        Best-effort S3 cleanup (abort multipart, delete object). If it was
-        the last file, the draft itself is deleted — empty drafts have no
-        reason to exist.
+        S3 cleanup is best-effort: a backend hiccup is not something the
+        user can fix by retrying, so the DB row is always removed and the
+        orphan-sweep is the recovery path. If it was the last file, the
+        draft itself is deleted — empty drafts have no reason to exist.
         """
         draft = self.get_object()
         serializer = self.get_serializer(data=request.data)
@@ -317,11 +329,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         except models.TransferFile.DoesNotExist as exc:
             raise drf.exceptions.NotFound("Transfer file not found.") from exc
 
-        if transfer_file.upload_id:
-            s3.abort_multipart_upload(
-                key=transfer_file.s3_key, upload_id=transfer_file.upload_id
-            )
-        s3.delete_object(transfer_file.s3_key)
+        files = [transfer_file]
+        s3.abort_uploads_for_files(files)
+        s3.delete_objects_for_files(files)
 
         with transaction.atomic():
             transfer_file.delete()
