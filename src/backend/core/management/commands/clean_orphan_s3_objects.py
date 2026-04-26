@@ -6,10 +6,17 @@ Two passes:
   ``TransferFile.upload_id``. MPUs are invisible to the object listing and
   bill storage forever if not aborted; this is what catches survivors of a
   worker crash.
+
+``--min-age`` skips objects/MPUs younger than the cutoff so a scheduled run
+can't race with the brief window in ``add_file`` where an MPU exists on S3
+before its DB row has landed.
 """
+
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 import botocore
 
@@ -37,11 +44,27 @@ class Command(BaseCommand):
             default="",
             help="Restrict scan to objects under this S3 prefix (e.g. 'transfers/').",
         )
+        parser.add_argument(
+            "--min-age",
+            type=int,
+            default=0,
+            help=(
+                "Skip objects/MPUs younger than N hours. Use 24 in scheduled "
+                "runs to avoid racing with in-flight uploads."
+            ),
+        )
 
     def handle(self, *args, **options):
         apply = options["apply"]
         prefix = options["prefix"]
+        min_age_hours = options["min_age"]
         bucket = settings.TRANSFERS_BUCKET_NAME
+
+        cutoff = (
+            timezone.now() - timedelta(hours=min_age_hours)
+            if min_age_hours > 0
+            else None
+        )
 
         known_keys = set(
             TransferFile.objects.exclude(s3_key="").values_list("s3_key", flat=True)
@@ -61,6 +84,8 @@ class Command(BaseCommand):
                 key = obj["Key"]
                 if key in known_keys:
                     continue
+                if cutoff is not None and obj["LastModified"] > cutoff:
+                    continue
                 self.stdout.write(f"orphan: {key} ({obj['Size']} bytes)")
                 batch.append({"Key": key})
                 if apply and len(batch) >= DELETE_BATCH_SIZE:
@@ -73,7 +98,9 @@ class Command(BaseCommand):
         if apply and batch:
             deleted += self._flush(client, bucket, batch)
 
-        mpus_scanned, mpus_aborted = self._scan_mpus(client, bucket, prefix, apply)
+        mpus_scanned, mpus_aborted = self._scan_mpus(
+            client, bucket, prefix, apply, cutoff
+        )
 
         verb = "Deleted" if apply else "Would delete"
         verb_mpu = "Aborted" if apply else "Would abort"
@@ -92,7 +119,7 @@ class Command(BaseCommand):
             self.stdout.write("Dry-run only. Re-run with --apply to delete.")
 
     def _scan_mpus(
-        self, client, bucket: str, prefix: str, apply: bool
+        self, client, bucket: str, prefix: str, apply: bool, cutoff
     ) -> tuple[int, int]:
         """List in-progress multipart uploads, abort the ones with no DB row.
 
@@ -117,6 +144,8 @@ class Command(BaseCommand):
                 key = upload["Key"]
                 upload_id = upload["UploadId"]
                 if (key, upload_id) in known_uploads:
+                    continue
+                if cutoff is not None and upload["Initiated"] > cutoff:
                     continue
                 self.stdout.write(f"orphan MPU: {key} (upload_id={upload_id})")
                 if not apply:

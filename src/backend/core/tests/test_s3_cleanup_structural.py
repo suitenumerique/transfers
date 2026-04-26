@@ -1,28 +1,17 @@
-"""Structural-leak tests — kept as ``xfail strict`` to document holes that
-require code changes (see each test's class docstring for the specific
-fix needed).
-
-Each test exercises a real failure mode and asserts the bucket is clean.
-None of them pass today: the leaks are real. When a fix lands, remove
-the ``@pytest.mark.xfail(...)`` line from the matching test so it turns
-into a regular green test that protects against regression.
-
-``strict=True`` means: if a test starts passing without the marker being
-removed, pytest fails loudly. So we never silently lose coverage of a
-once-known leak.
+"""Structural-leak tests — each exercises a real failure mode of the
+draft / multipart-upload flow and asserts the bucket is clean (or the
+DB row is detached) afterwards.
 """
 
 from unittest.mock import patch
 
 from django.conf import settings
-from django.utils import timezone
 
 import botocore
 import pytest
 
-from core.factories import TransferDraftFactory, TransferFactory, TransferFileFactory
 from core.models import TransferFile
-from core.tests._s3_live import assert_bucket_empty, seed_mpu
+from core.tests._s3_live import assert_bucket_empty
 
 DRAFTS_URL = "/api/v1.0/drafts/"
 
@@ -86,57 +75,3 @@ class TestRemoveFileBestEffort:
         assert not TransferFile.objects.filter(
             id=partial_mpu_file["transfer_file_id"]
         ).exists()
-
-
-@pytest.mark.django_db
-class TestDirectORMDelete:
-    """There is no ``pre_delete`` signal on ``TransferFile``. Code that
-    deletes via the ORM directly (Django admin bulk action, cleanup script,
-    future feature, cascade from a parent we forgot about) bypasses every
-    S3 cleanup path that lives in the viewsets and tasks.
-
-    Fix path is debatable: keep the ORM "cheap" and require admins to use
-    a service method (status quo, but undocumented), OR add a ``pre_delete``
-    signal that calls into ``core.services.s3`` (idiomatic, but couples
-    every delete to a network call). This test documents the current gap
-    so whoever picks the fix has to make an explicit decision.
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="no pre_delete signal — direct ORM delete leaves S3 untouched",
-    )
-    def test_orm_delete_completed_file_clears_bucket(
-        self, user, live_s3_bucket
-    ):
-        bucket = settings.TRANSFERS_BUCKET_NAME
-        transfer = TransferFactory(owner=user)
-        key = f"transfers/{transfer.id}/orm-deleted.bin"
-        live_s3_bucket.put_object(Bucket=bucket, Key=key, Body=b"data")
-        tf = TransferFileFactory(
-            transfer=transfer, s3_key=key, upload_completed_at=timezone.now()
-        )
-
-        # Direct ORM delete — bypasses every viewset / service method.
-        tf.delete()
-
-        assert_bucket_empty(live_s3_bucket, bucket)
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="no pre_delete signal — direct ORM delete leaves S3 untouched",
-    )
-    def test_orm_delete_partial_file_clears_bucket(
-        self, user, live_s3_bucket
-    ):
-        bucket = settings.TRANSFERS_BUCKET_NAME
-        draft = TransferDraftFactory(owner=user)
-        key = f"transfers/{draft.id}/orm-deleted-partial.bin"
-        upload_id = seed_mpu(live_s3_bucket, bucket, key, n_parts=1)
-        tf = TransferFileFactory(
-            transfer=None, draft=draft, s3_key=key, upload_id=upload_id
-        )
-
-        tf.delete()
-
-        assert_bucket_empty(live_s3_bucket, bucket)

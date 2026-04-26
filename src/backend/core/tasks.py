@@ -3,6 +3,7 @@
 import logging
 from datetime import timedelta
 
+from django.core.management import call_command
 from django.utils import timezone
 
 import botocore
@@ -60,6 +61,23 @@ def expire_transfers_task():
 
     if count:
         logger.info("Expired %d transfer(s).", count)
+
+
+@shared_task
+def sweep_orphan_s3_storage_task():
+    """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
+
+    ``--min-age=24`` keeps the sweep clear of the brief orphan window in
+    ``add_file`` (between ``s3.create_multipart_upload`` and ``tf.save()``).
+    In steady state this should report zero — non-zero output is the signal
+    that one of the per-row cleanup paths is leaking.
+    """
+    call_command(
+        "clean_orphan_s3_objects",
+        "--apply",
+        "--min-age",
+        "24",
+    )
 
 
 @shared_task
