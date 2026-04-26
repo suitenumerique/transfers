@@ -79,11 +79,9 @@ def cleanup_abandoned_drafts_task():
 
     count = 0
     for draft in abandoned:
-        for tf in draft.files.all():
-            if tf.upload_id:
-                s3.abort_multipart_upload(tf.s3_key, tf.upload_id)
-            if tf.s3_key:
-                s3.delete_object(tf.s3_key)
+        files = list(draft.files.all())
+        s3.abort_uploads_for_files(files)
+        s3.delete_objects_for_files(files)
         draft.delete()
         count += 1
 
@@ -181,12 +179,22 @@ def import_drive_file_task(transfer_file_id):
         ValueError,
     ):
         logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
+        # Best-effort: a S3 cleanup error must not block tf.delete() — the
+        # frontend's poller relies on the row disappearing to surface the
+        # failure to the user.
         if upload_id:
-            s3.abort_multipart_upload(key=key, upload_id=upload_id)
-        # delete_object is safe on a key that never got fully written — S3
-        # returns 204 on a non-existent key.
+            try:
+                s3.abort_multipart_upload(key=key, upload_id=upload_id)
+            except botocore.exceptions.ClientError:
+                logger.exception(
+                    "Failed to abort MPU %s for key %s", upload_id, key
+                )
+        # delete_object is idempotent on missing keys (S3 returns 204).
         if tf.s3_key:
-            s3.delete_object(tf.s3_key)
+            try:
+                s3.delete_object(tf.s3_key)
+            except botocore.exceptions.ClientError:
+                logger.exception("Failed to delete object %s", tf.s3_key)
         tf.delete()
 
 

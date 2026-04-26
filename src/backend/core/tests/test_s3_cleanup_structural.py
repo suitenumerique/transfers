@@ -61,39 +61,14 @@ class TestRollbackOrphanMPU:
 
 
 @pytest.mark.django_db
-class TestSilentClientErrors:
-    """``s3.abort_multipart_upload`` and ``s3.delete_object`` (services/s3.py)
-    swallow ``ClientError`` after logging. When the underlying abort actually
-    fails (transient S3 hiccup, IAM perm gap, throttling…), the caller
-    proceeds as if cleanup succeeded and the DB row gets dropped — the MPU
-    is now in S3 with no DB pointer.
-
-    This is the scenario that bit us in production with a missing
-    ``s3:AbortMultipartUpload`` IAM permission on Scaleway: the endpoint
-    returned 204, the DB was clean, but every MPU stayed.
-
-    Fix: surface the error (re-raise or expose via a ``raise_on_error``
-    flag) so callers can retry / alert / escalate instead of trusting a
-    silent log line.
+class TestRemoveFileBestEffort:
+    """``remove-file`` is best-effort: an S3 failure must not block the DB
+    detach. The orphan-sweep is the recovery path for any bytes left.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="endpoint returns 204 even when AbortMultipartUpload errored",
-    )
-    def test_abort_failure_surfaces_to_caller(
+    def test_abort_failure_does_not_block_remove_file(
         self, authenticated_client, partial_mpu_file, live_s3_bucket
     ):
-        # Patch ONLY abort_multipart_upload on the real moto client so the
-        # rest of the request hits real S3 for real — what we assert on is
-        # the endpoint's *truthfulness*, not the bucket state.
-        #
-        # The bucket cannot be made clean here: if S3 genuinely refuses the
-        # abort, the bytes stay regardless of what our code does. The bug
-        # is that the endpoint pretends success (204) and the caller gets
-        # no chance to react (retry, alert, escalate). After the fix the
-        # endpoint must surface the failure (5xx / explicit error), which
-        # is what this assertion locks in.
         forced = botocore.exceptions.ClientError(
             {"Error": {"Code": "InternalError", "Message": "transient"}},
             "AbortMultipartUpload",
@@ -107,11 +82,10 @@ class TestSilentClientErrors:
                 format="json",
             )
 
-        # Today: 204 (the bug). After the fix: any non-2xx code lets the
-        # caller distinguish "cleanup confirmed" from "cleanup attempted".
-        assert resp.status_code >= 400, (
-            f"abort failed but endpoint replied {resp.status_code} — silent leak"
-        )
+        assert resp.status_code == 204
+        assert not TransferFile.objects.filter(
+            id=partial_mpu_file["transfer_file_id"]
+        ).exists()
 
 
 @pytest.mark.django_db
