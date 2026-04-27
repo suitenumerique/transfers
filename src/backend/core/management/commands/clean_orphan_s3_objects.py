@@ -47,10 +47,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--min-age",
             type=int,
-            default=0,
+            default=24,
             help=(
-                "Skip objects/MPUs younger than N hours. Use 24 in scheduled "
-                "runs to avoid racing with in-flight uploads."
+                "Skip objects/MPUs younger than N hours (default 24, sized "
+                "to clear in-flight uploads). Pass 0 to ignore age."
             ),
         )
 
