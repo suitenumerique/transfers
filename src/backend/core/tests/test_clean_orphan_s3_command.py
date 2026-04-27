@@ -39,7 +39,8 @@ class TestCleanOrphanObjects:
         )
 
         out = StringIO()
-        call_command("clean_orphan_s3_objects", stdout=out)
+        # --min-age=0 to consider just-seeded fixtures.
+        call_command("clean_orphan_s3_objects", "--min-age", "0", stdout=out)
 
         # Dry-run = nothing actually deleted.
         assert count_objects(live_s3_bucket, bucket) == 2
@@ -56,7 +57,13 @@ class TestCleanOrphanObjects:
             upload_completed_at=timezone.now(),
         )
 
-        call_command("clean_orphan_s3_objects", "--apply", stdout=StringIO())
+        call_command(
+            "clean_orphan_s3_objects",
+            "--apply",
+            "--min-age",
+            "0",
+            stdout=StringIO(),
+        )
 
         remaining = {
             o["Key"]
@@ -80,31 +87,32 @@ class TestCleanOrphanMPUs:
         # behind. The command should detect and abort it.
         seed_mpu(live_s3_bucket, bucket, "transfers/orphan-mpu/x.bin", n_parts=2)
 
-        call_command("clean_orphan_s3_objects", "--apply", stdout=StringIO())
+        call_command(
+            "clean_orphan_s3_objects",
+            "--apply",
+            "--min-age",
+            "0",
+            stdout=StringIO(),
+        )
 
         assert_bucket_empty(live_s3_bucket, bucket)
 
 
 @pytest.mark.django_db
 class TestCleanOrphanMinAge:
-    """``--min-age=H`` skips anything younger than the cutoff so a scheduled
-    sweep can't race with the brief orphan window in ``add_file``.
+    """The default ``--min-age=24`` skips anything younger than the cutoff so
+    a scheduled sweep can't race with the brief orphan window in
+    ``add_file``. Pass ``--min-age 0`` to ignore age entirely.
     """
 
-    def test_min_age_skips_recent_orphan_object(self, live_s3_bucket):
+    def test_default_skips_recent_orphan_object(self, live_s3_bucket):
         bucket = settings.TRANSFERS_BUCKET_NAME
         seed_object(live_s3_bucket, bucket, "transfers/orphan/recent.bin")
 
-        call_command(
-            "clean_orphan_s3_objects",
-            "--apply",
-            "--min-age",
-            "24",
-            stdout=StringIO(),
-        )
+        # No --min-age → default 24h. The just-seeded object's LastModified
+        # is ~now → newer than the cutoff → spared.
+        call_command("clean_orphan_s3_objects", "--apply", stdout=StringIO())
 
-        # The just-seeded object's LastModified is ~now → newer than the
-        # 24h cutoff → spared.
         assert count_objects(live_s3_bucket, bucket) == 1
 
     def test_min_age_skips_recent_orphan_mpu(self, live_s3_bucket):
