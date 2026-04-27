@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
 import {
@@ -323,6 +323,49 @@ export function TransferForm() {
   const anyError = draft.files.some((f) => f.state === "error");
   const awaitingUploads = draft.isAwaitingUploads;
   const finalizing = draft.isFinalizing;
+
+  // Warn before any kind of departure while a draft has files or uploads
+  // in flight. Two separate guards because the events don't overlap:
+  // - beforeunload covers tab close / refresh / cross-origin nav (browser
+  //   shows its own native, non-customisable wording).
+  // - router.events.routeChangeStart covers intra-app navigation (clicking
+  //   another transfer in the sidebar etc.); we get to show a confirm()
+  //   with our own message and abort the navigation if the user declines.
+  const shouldWarnOnLeave = hasFiles || awaitingUploads;
+  useEffect(() => {
+    if (!shouldWarnOnLeave) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy Chrome/Safari needs a return value to trigger the dialog;
+      // modern browsers ignore the string and show their own wording.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [shouldWarnOnLeave]);
+
+  // Lets the routeChangeStart handler skip the confirm during the
+  // post-submit router.push — at that point the draft is already
+  // resetLocal'd on the server, but React hasn't re-rendered to clear
+  // shouldWarnOnLeave yet, so the closure would still trip otherwise.
+  const isSubmittingRef = useRef(false);
+  useEffect(() => {
+    if (!shouldWarnOnLeave) return;
+    const handler = (url: string) => {
+      if (isSubmittingRef.current) return;
+      // Skip the confirm if Next.js is firing a no-op (same path).
+      if (router.asPath === url) return;
+      if (window.confirm(t("Leave this page? Your transfer will be discarded."))) {
+        return;
+      }
+      // Throwing a string is Next.js's documented way to cancel a route
+      // change in flight without bubbling an Error to the console.
+      router.events.emit("routeChangeError");
+      throw "routeChange aborted by user";
+    };
+    router.events.on("routeChangeStart", handler);
+    return () => router.events.off("routeChangeStart", handler);
+  }, [shouldWarnOnLeave, router, t]);
   // Metadata inputs / Drive attach / tabs stay locked for the whole
   // submit flow — `busy` gates those. File-level Delete / Cancel actions
   // only need to lock during the non-cancellable finalize window so the
@@ -348,6 +391,9 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
       });
+      // Suppress the route-change confirm for the imminent push — see the
+      // ref's declaration for why React state alone wouldn't cut it.
+      isSubmittingRef.current = true;
       // Hand off to the dedicated confirm route — the form unmounts, so
       // the sidebar logo and "New transfer" link work as plain Next.js
       // navigation back to ``/`` without an in-place pivot hack.
