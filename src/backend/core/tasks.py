@@ -3,6 +3,7 @@
 import logging
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 import botocore
@@ -96,17 +97,30 @@ def cleanup_abandoned_drafts_task():
     files with it).
     """
     cutoff = timezone.now() - timedelta(hours=24)
-    abandoned = TransferDraft.objects.filter(
-        created_at__lte=cutoff,
-    ).prefetch_related("files")
+    # Snapshot the ids first; we re-fetch each draft under SELECT FOR UPDATE
+    # so a concurrent finalize / abort / add_file blocks instead of racing
+    # us into deleting bytes that just got reparented.
+    abandoned_ids = list(
+        TransferDraft.objects.filter(created_at__lte=cutoff).values_list(
+            "id", flat=True
+        )
+    )
 
     count = 0
-    for draft in abandoned:
-        files = list(draft.files.all())
-        s3.best_effort_abort_multipart_uploads_from_files(files)
-        s3.best_effort_delete_objects_from_files(files)
-        draft.delete()
-        count += 1
+    for draft_id in abandoned_ids:
+        with transaction.atomic():
+            try:
+                draft = TransferDraft.objects.select_for_update().get(
+                    id=draft_id, created_at__lte=cutoff
+                )
+            except TransferDraft.DoesNotExist:
+                # Finalized or aborted between the snapshot and now.
+                continue
+            files = list(draft.files.all())
+            s3.best_effort_abort_multipart_uploads_from_files(files)
+            s3.best_effort_delete_objects_from_files(files)
+            draft.delete()
+            count += 1
 
     if count:
         logger.info("Cleaned up %d abandoned draft(s).", count)
