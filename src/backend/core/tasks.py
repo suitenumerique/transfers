@@ -98,8 +98,8 @@ def cleanup_abandoned_drafts_task():
     count = 0
     for draft in abandoned:
         files = list(draft.files.all())
-        s3.abort_uploads_for_files(files)
-        s3.delete_objects_for_files(files)
+        s3.best_effort_abort_multipart_uploads_from_files(files)
+        s3.best_effort_delete_objects_from_files(files)
         draft.delete()
         count += 1
 
