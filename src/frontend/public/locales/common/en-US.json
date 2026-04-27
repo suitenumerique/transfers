@@ -106,6 +106,7 @@
   "{{count}} file_one": "{{count}} file",
   "{{count}} file_other": "{{count}} files",
   "Create a new transfer": "Create a new transfer",
+  "Leave this page? Your transfer will be discarded.": "Leave this page? Your transfer will be discarded.",
   "Send to": "Send to",
   "File too large: {{name}} ({{size}}). Maximum: {{max}}.": "File too large: {{name}} ({{size}}). Maximum: {{max}}.",
   "Too many files. Maximum: {{max}}.": "Too many files. Maximum: {{max}}.",
