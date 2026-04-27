@@ -261,3 +261,9 @@ def send_recipient_invitations_task(transfer_id):
                 recipient.email,
                 transfer_id,
             )
+
+    # Stamp completion regardless of per-recipient outcome — the frontend
+    # uses this to leave its "sending…" polling state, and a partial failure
+    # is signalled by recipients with email_sent_at IS NULL after the stamp.
+    transfer.notifications_completed_at = timezone.now()
+    transfer.save(update_fields=["notifications_completed_at", "updated_at"])
