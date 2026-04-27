@@ -1,4 +1,9 @@
-import { type PropsWithChildren, useEffect, useState } from "react";
+import {
+  type PropsWithChildren,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { useRouter } from "next/router";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -8,6 +13,12 @@ const MOBILE_QUERY = "(max-width: 768px)";
 
 const isMobileViewport = () =>
   typeof window !== "undefined" && window.matchMedia(MOBILE_QUERY).matches;
+
+// React warns about useLayoutEffect on SSR — we only need it for the initial
+// mobile-collapse so the user doesn't see a flash of the open drawer
+// closing during hydration. Falls back to useEffect on the server (no-op).
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export function ShellLayout({ children }: PropsWithChildren) {
   // ``collapsed`` is double-duty:
@@ -20,8 +31,10 @@ export function ShellLayout({ children }: PropsWithChildren) {
   const router = useRouter();
 
   // Hydrate from localStorage on desktop; mobile always boots closed
-  // (the drawer is a transient action, not a preference).
-  useEffect(() => {
+  // (the drawer is a transient action, not a preference). useLayoutEffect
+  // so the correction happens before the first paint and the user doesn't
+  // see the drawer flash open then closed on a mobile reload.
+  useIsomorphicLayoutEffect(() => {
     if (isMobileViewport()) {
       setCollapsed(true);
       return;
@@ -59,7 +72,7 @@ export function ShellLayout({ children }: PropsWithChildren) {
     <div
       className={`shell-layout${collapsed ? " shell-layout--sidebar-collapsed" : ""}`}
     >
-      <Sidebar />
+      <Sidebar onClose={() => persist(true)} />
       {/* Backdrop — only visible (via CSS) when the mobile drawer is open;
           clicks anywhere outside the sidebar close it. */}
       <div
