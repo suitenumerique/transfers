@@ -191,11 +191,10 @@ def import_drive_file_task(transfer_file_id):
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
         tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
-    except (
-        requests.RequestException,
-        botocore.exceptions.ClientError,
-        ValueError,
-    ):
+    except Exception:
+        # Catch broadly: any failure between create_multipart_upload and the
+        # final save (DB hiccup, S3 error, size mismatch, …) needs the same
+        # cleanup, otherwise the MPU and partial object leak.
         logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
         # Best-effort: a S3 cleanup error must not block tf.delete() — the
         # frontend's poller relies on the row disappearing to surface the

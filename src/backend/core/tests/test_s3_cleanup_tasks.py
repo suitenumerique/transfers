@@ -229,6 +229,40 @@ class TestImportDriveFileTaskLeaks:
         assert not TransferFile.objects.filter(id=tf.id).exists()
         assert_bucket_empty(live_s3_bucket, bucket)
 
+    def test_db_save_failure_after_mpu_created_leaves_no_orphan(
+        self, user, live_s3_bucket
+    ):
+        # The save right after create_multipart_upload (line that persists
+        # s3_key + upload_id) is the analogue of the add_file rollback hole:
+        # a DB hiccup here used to escape the narrow except tuple and leak
+        # the freshly-created MPU.
+        bucket = settings.TRANSFERS_BUCKET_NAME
+        tf = self._make_drive_file(user, declared_size=_DRIVE_IMPORT_CHUNK_SIZE)
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.iter_content.return_value = iter([])
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = False
+
+        original_save = TransferFile.save
+
+        def _raise_on_first_post_mpu_save(self, *args, **kwargs):
+            # The first save after create_multipart_upload sets upload_id;
+            # any later tf.delete()-driven cleanup keeps working.
+            if self.upload_id and self.upload_completed_at is None:
+                raise RuntimeError("simulated DB hiccup post-MPU-create")
+            return original_save(self, *args, **kwargs)
+
+        with (
+            patch("core.tasks.requests.get", return_value=mock_resp),
+            patch.object(TransferFile, "save", _raise_on_first_post_mpu_save),
+        ):
+            import_drive_file_task(str(tf.id))
+
+        assert not TransferFile.objects.filter(id=tf.id).exists()
+        assert_bucket_empty(live_s3_bucket, bucket)
+
 
 @pytest.mark.django_db
 class TestExpireTransfersTask:
