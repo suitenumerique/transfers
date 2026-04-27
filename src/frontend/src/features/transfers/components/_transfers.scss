@@ -163,6 +163,10 @@
     font-weight: 700;
     letter-spacing: -0.3px;
     color: var(--c--contextuals--content--semantic--neutral--primary);
+    // Flex item default `min-width: auto` would let an unbroken title
+    // push the header wider than the viewport on mobile.
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   &__meta {
@@ -1281,6 +1285,7 @@
     font-weight: 700;
     letter-spacing: -0.3px;
     color: var(--c--contextuals--content--semantic--neutral--primary);
+    overflow-wrap: anywhere;
   }
 
   &__meta {
