@@ -120,12 +120,46 @@
     padding:
       var(--c--globals--spacings--sm)
       var(--c--globals--spacings--md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--c--globals--spacings--xs);
   }
 
   &__logo {
     display: inline-flex;
     align-items: center;
     text-decoration: none;
+  }
+
+  // Mobile-only drawer close button — desktop has the topbar burger
+  // already. Hidden by default; surfaced under the same breakpoint that
+  // turns the sidebar into a drawer.
+  &__close {
+    display: none;
+    background: transparent;
+    border: 0;
+    padding: var(--c--globals--spacings--2xs);
+    border-radius: var(--c--components--forms-input--border-radius);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--c--contextuals--background--surface--primary);
+      color: var(--c--contextuals--content--semantic--neutral--primary);
+    }
+
+    > svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+
+    @media (max-width: 768px) {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
   }
 
   &__top {

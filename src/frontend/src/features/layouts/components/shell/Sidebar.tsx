@@ -17,7 +17,7 @@ import { useTransfers } from "@/features/transfers/api/useTransfers";
 import { useDebouncedValue } from "@/features/utils/use-debounced-value";
 import { useConfig } from "@/features/providers/config";
 
-export function Sidebar() {
+export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useTranslation();
   const router = useRouter();
   const config = useConfig();
@@ -41,6 +41,21 @@ export function Sidebar() {
             height={36}
           />
         </Link>
+        {onClose && (
+          // Mobile-only close button — hidden via CSS on desktop where
+          // the sidebar is always visible. The TopBar burger toggles the
+          // same state, but having the affordance from inside the drawer
+          // matches the user's mental model when the drawer is open.
+          <button
+            type="button"
+            className="shell-sidebar__close"
+            onClick={onClose}
+            aria-label={t("Close sidebar")}
+            title={t("Close sidebar")}
+          >
+            <XMark />
+          </button>
+        )}
       </div>
 
       <div className="shell-sidebar__top">
