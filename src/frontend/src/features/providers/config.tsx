@@ -16,6 +16,8 @@ export interface AppConfig {
   TRANSFER_MAX_FILE_SIZE: number;
   TRANSFER_MAX_TOTAL_SIZE: number;
   TRANSFER_MAX_FILES_PER_TRANSFER: number;
+  TRANSFER_EXPIRY_CHOICES: number[];
+  TRANSFER_DEFAULT_EXPIRY_DAYS: number;
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).
   HELP_URL: string;
