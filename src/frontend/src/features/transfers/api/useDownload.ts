@@ -23,3 +23,18 @@ export function downloadFile(token: string, fileId: string): void {
   a.click();
   a.remove();
 }
+
+// Same shape as ``downloadFile`` but uses a hidden iframe rather than an
+// anchor click. Browsers block silent anchor-click downloads after the
+// first when several fire in quick succession (the "site tries to download
+// multiple files" prompt) — iframe loads aren't subject to the same
+// gesture-bound throttling, which makes them the right tool for the
+// "Download all" loop. The iframe is yanked after 5s, by which point the
+// browser has taken over the streaming.
+export function downloadFileInIframe(token: string, fileId: string): void {
+  const iframe = document.createElement("iframe");
+  iframe.style.display = "none";
+  iframe.src = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 5000);
+}
