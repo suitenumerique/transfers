@@ -463,9 +463,14 @@ export function TransferForm() {
           role="status"
           aria-live="polite"
         >
-          <Spinner size="lg" />
+          <div className="transfer-form__sending-icon" aria-hidden="true">
+            <Spinner size="lg" />
+          </div>
+          <h2 className="transfer-form__sending-title">
+            {t("Sending emails")}
+          </h2>
           <p className="transfer-form__sending-text">
-            {t("Sending emails… This usually takes a few seconds.")}
+            {t("This usually takes a few seconds.")}
           </p>
         </div>
       )}
