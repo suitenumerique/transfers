@@ -25,7 +25,8 @@
     overflow: hidden;
 
     .transfer-form,
-    .transfer-success {
+    .transfer-success,
+    .transfer-failed {
       flex: 1;
       min-height: 0;
       display: flex;
@@ -277,6 +278,31 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+  }
+
+  // Per-recipient delivery status icon — pushed to the right edge of the
+  // row so the user can scan a column of ticks/warnings at a glance.
+  &__recipient-status {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+
+    > svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &--sent {
+      color: var(
+        --c--contextuals--content--semantic--success--primary,
+        #18753c
+      );
+    }
+
+    &--failed {
+      color: var(--c--contextuals--content--semantic--error--primary);
+    }
   }
 
   // The list uses the shared `.file-item` rows (same component as the
@@ -633,6 +659,29 @@
   gap: var(--c--globals--spacings--lg);
   position: relative;
 
+  // Shown after a successful email-mode submit while we poll for the
+  // recipient-invitation task to finish. Covers the entire form so the
+  // user can't interact with it during the wait.
+  &__sending-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--c--globals--spacings--md);
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+    border-radius: var(--c--components--forms-input--border-radius);
+  }
+
+  &__sending-text {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--md);
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
   // Two-column layout: files on the left, options on the right. Stacks on
   // narrow viewports; on desktop it fills the form's remaining height so
   // the file list can own internal scrolling.
@@ -925,7 +974,8 @@
 // specificity than a single class, so stacking gap on top creates
 // double-spacing that the mock doesn't have. Explicit margins let each
 // row land at exactly the value the designers drew.
-.transfer-success {
+.transfer-success,
+.transfer-failed {
   align-items: center;
   justify-content: center;
   text-align: center;
@@ -933,7 +983,9 @@
   max-width: 480px;
   margin: 0 auto;
   width: 100%;
+}
 
+.transfer-success {
   &__icon {
     color: var(
       --c--contextuals--content--semantic--success--primary,
@@ -1015,6 +1067,44 @@
       color: var(--c--contextuals--content--semantic--neutral--primary);
       font-weight: 600;
     }
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--c--globals--spacings--md);
+  }
+}
+
+// Mirrors .transfer-success but with the error palette — used on the
+// /confirm-failed/<id> page when the recipient-invitation task didn't
+// reach every recipient.
+.transfer-failed {
+  &__icon {
+    color: var(--c--contextuals--content--semantic--error--primary);
+    margin-bottom: var(--c--globals--spacings--md);
+
+    > svg {
+      width: 48px;
+      height: 48px;
+    }
+  }
+
+  &__title {
+    margin: 0 0 var(--c--globals--spacings--2xs);
+    font-size: var(--c--globals--font--sizes--lg, 1.125rem);
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
+  &__body {
+    margin: 0 0 var(--c--globals--spacings--md);
+    max-width: 340px;
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    line-height: 1.5;
   }
 
   &__actions {

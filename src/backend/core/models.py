@@ -201,6 +201,13 @@ class Transfer(BaseModel):
         choices=SharingMode.choices,
         default=SharingMode.LINK,
     )
+    notifications_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when ``send_recipient_invitations_task`` has run "
+        "through every recipient (whether their delivery succeeded or not). "
+        "The frontend polls this to know when to leave the 'sending…' state.",
+    )
 
     class Meta:
         db_table = "core_transfer"

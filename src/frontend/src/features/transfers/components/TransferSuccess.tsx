@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   Checkmark,
   Copy,
+  Link as LinkIcon,
   MailCheckFilled,
 } from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail } from "@/features/api/types";
@@ -63,7 +64,7 @@ export function TransferSuccess({
   return (
     <div className="transfer-success" role="status">
       <div className="transfer-success__icon" aria-hidden="true">
-        <MailCheckFilled />
+        {isLink ? <LinkIcon /> : <MailCheckFilled />}
       </div>
       <h1 className="transfer-success__title">
         {isLink ? t("Transfer ready") : t("Transfer sent")}

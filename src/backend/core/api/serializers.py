@@ -152,6 +152,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "expires_at",
             "deactivated_at",
             "created_at",
+            "notifications_completed_at",
             "files",
             "recipients",
         ]
