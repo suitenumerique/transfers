@@ -87,6 +87,11 @@ export function TransferDetail({
   const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
   const days = daysUntil(transfer.expires_at);
   const isActive = transfer.status === "active";
+  // Only recipients whose first send failed (or never happened) can be
+  // retried — backend resend task filters on email_sent_at IS NULL.
+  const hasPendingRecipients = transfer.recipients.some(
+    (r) => r.email_sent_at === null,
+  );
 
   const copyLink = async () => {
     if (!downloadUrl) return;
@@ -243,17 +248,16 @@ export function TransferDetail({
             >
               {copied ? t("Link copied!") : t("Copy link")}
             </Button>
-          ) : (
-            // Email mode: triggers the backend resend task — re-emails the
-            // shared HTML notification template to every recipient.
+          ) : hasPendingRecipients ? (
+            // Email mode: retries the backend resend task, which only
+            // re-emails recipients whose first send failed (email_sent_at
+            // is NULL). Hidden entirely when nothing is pending — there's
+            // nothing meaningful to do.
             <Button
               color="brand"
               icon={<ArrowUpRight />}
               onClick={() => resendTransfer.mutate(transfer.id)}
-              disabled={
-                transfer.recipients.length === 0 ||
-                resendTransfer.isPending
-              }
+              disabled={resendTransfer.isPending}
             >
               {resendTransfer.isPending
                 ? t("Sending...")
@@ -261,7 +265,7 @@ export function TransferDetail({
                   ? t("Sent!")
                   : t("Resend")}
             </Button>
-          )}
+          ) : null}
           <Button
             color="error"
             variant="secondary"

@@ -120,13 +120,10 @@ class TransferViewSet(
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
     def resend(self, request, pk=None):
-        """Re-send the recipient invitation emails for an email-mode
-        transfer. No-op on link-mode transfers (no recipients).
-
-        Stamps `email_sent_at` back to NULL on each recipient before
-        delegating to the existing celery task — the task only emails
-        recipients with `email_sent_at IS NULL`, so a reset is the most
-        precise trigger.
+        """Retry failed recipient invitation emails for an email-mode
+        transfer. The task only emails recipients with
+        ``email_sent_at IS NULL``, so calling it again is the natural retry
+        path — a successful first send leaves nothing to do.
         """
         from core.tasks import send_recipient_invitations_task
 
@@ -141,7 +138,6 @@ class TransferViewSet(
                 {"sharing_mode": "Resend only applies to email-mode transfers."}
             )
 
-        transfer.recipients.update(email_sent_at=None)
         send_recipient_invitations_task.delay(str(transfer.id))
 
         serializer = TransferDetailSerializer(transfer)
