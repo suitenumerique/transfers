@@ -40,6 +40,10 @@ export interface TransferDetail {
   expires_at: string;
   deactivated_at: string | null;
   created_at: string;
+  // Set by the recipient-invitation task once it has iterated every
+  // recipient (whether their delivery succeeded or not). Used to leave the
+  // form's "sending…" polling state.
+  notifications_completed_at: string | null;
   files: TransferFile[];
   recipients: TransferRecipient[];
 }

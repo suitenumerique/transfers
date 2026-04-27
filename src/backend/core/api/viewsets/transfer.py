@@ -124,6 +124,9 @@ class TransferViewSet(
         transfer. The task only emails recipients with
         ``email_sent_at IS NULL``, so calling it again is the natural retry
         path — a successful first send leaves nothing to do.
+
+        ``notifications_completed_at`` is cleared so the frontend can poll
+        until the task stamps it again, signalling the retry has finished.
         """
         from core.tasks import send_recipient_invitations_task
 
@@ -138,6 +141,8 @@ class TransferViewSet(
                 {"sharing_mode": "Resend only applies to email-mode transfers."}
             )
 
+        transfer.notifications_completed_at = None
+        transfer.save(update_fields=["notifications_completed_at", "updated_at"])
         send_recipient_invitations_task.delay(str(transfer.id))
 
         serializer = TransferDetailSerializer(transfer)

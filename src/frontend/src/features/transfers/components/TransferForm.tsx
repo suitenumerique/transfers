@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -19,9 +20,11 @@ import {
   Icon,
   Link as LinkIcon,
   Mail,
+  Spinner,
   useDropdownMenu,
 } from "@gouvfr-lasuite/ui-kit";
-import type { SharingMode } from "@/features/api/types";
+import { apiFetch } from "@/features/api/client";
+import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import {
@@ -195,6 +198,13 @@ export function TransferForm() {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  // Set after a successful email-mode submit. While set, the form is
+  // overlaid and the recipient-invitation task is polled until it stamps
+  // ``notifications_completed_at`` — at which point we navigate to the
+  // success or partial-failure confirmation page.
+  const [pendingTransferId, setPendingTransferId] = useState<string | null>(
+    null,
+  );
   const expiryMenu = useDropdownMenu();
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
@@ -205,6 +215,26 @@ export function TransferForm() {
       void draft.abort();
     };
   }, []);
+
+  // Poll the freshly-finalized transfer every 2s while we're waiting for
+  // the recipient-invitation task to stamp ``notifications_completed_at``.
+  // Disabled (no fetch) when ``pendingTransferId`` is null.
+  const pollQuery = useQuery<TransferDetail>({
+    queryKey: ["transfer-poll", pendingTransferId],
+    queryFn: () => apiFetch<TransferDetail>(`/transfers/${pendingTransferId}/`),
+    enabled: pendingTransferId !== null,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    const data = pollQuery.data;
+    if (!data?.notifications_completed_at) return;
+    isSubmittingRef.current = true;
+    const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
+    router.push(
+      hasFailures ? `/confirm-failed/${data.id}` : `/confirm/${data.id}`,
+    );
+  }, [pollQuery.data, router]);
 
   const handleFilesChange = (incoming: File[]) => {
     setFileError(null);
@@ -391,13 +421,16 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
       });
-      // Suppress the route-change confirm for the imminent push — see the
-      // ref's declaration for why React state alone wouldn't cut it.
-      isSubmittingRef.current = true;
-      // Hand off to the dedicated confirm route — the form unmounts, so
-      // the sidebar logo and "New transfer" link work as plain Next.js
-      // navigation back to ``/`` without an in-place pivot hack.
-      router.push(`/confirm/${result.id}`);
+      if (result.sharing_mode === "link") {
+        // Link mode: nothing to wait for — go straight to the confirm page.
+        // Suppress the route-change confirm; see the ref's declaration.
+        isSubmittingRef.current = true;
+        router.push(`/confirm/${result.id}`);
+      } else {
+        // Email mode: enter polling state. The pollQuery effect will navigate
+        // once the recipient-invitation task is done (success or partial fail).
+        setPendingTransferId(result.id);
+      }
     } catch (err) {
       // A cancel is a deliberate user action — stay on the form silently.
       // Other errors already surface via draft.error / per-file state.
@@ -424,6 +457,18 @@ export function TransferForm() {
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
+      {pendingTransferId !== null && (
+        <div
+          className="transfer-form__sending-overlay"
+          role="status"
+          aria-live="polite"
+        >
+          <Spinner size="lg" />
+          <p className="transfer-form__sending-text">
+            {t("Sending emails… This usually takes a few seconds.")}
+          </p>
+        </div>
+      )}
       <div className="transfer-form__grid">
         <section
           className="transfer-form__files-col"
