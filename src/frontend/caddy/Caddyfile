@@ -12,27 +12,31 @@
 		respond /__lbheartbeat__ 200
 		respond /__lbheartbeat__/ 200
 
+		# X-Forwarded-For is propagated as-is from Scalingo's edge router so
+		# the backend sees the real client IP. Setting {remote_host} here
+		# would overwrite it with the internal HAProxy peer (a 10.0.0.x
+		# address) and the audit log would lose the user's IP.
 		reverse_proxy /__heartbeat__/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
 		# Django backend proxy
 		reverse_proxy /api/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
 		redir /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/ 301
 
 		reverse_proxy /{$DJANGO_ADMIN_URL:admin}/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
 		reverse_proxy /static/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
 		# Next.js static export routes
