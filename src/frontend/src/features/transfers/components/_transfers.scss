@@ -178,17 +178,32 @@
     opacity: 0.5;
   }
 
-  // Shareable URL input + adjacent copy button (same pattern as the form
-  // success panel — gives us a real Cunningham Input with an icon-only
-  // neutral-tertiary button alongside, instead of a hand-rolled pill).
+  // Shareable URL input + copy button rendered as a single bordered
+  // container (same shape as the .file-item rows in the file list), so the
+  // copy affordance reads as part of the URL, not a separate widget.
   &__link-box {
     display: flex;
     align-items: center;
     gap: var(--c--globals--spacings--xs);
+    padding:
+      var(--c--globals--spacings--xs)
+      var(--c--globals--spacings--sm);
+    background: var(--c--contextuals--background--surface--primary);
+    border: 1px solid var(--c--contextuals--border--surface--primary);
+    border-radius: var(--c--components--forms-input--border-radius);
 
     > .c__field {
       flex: 1;
       min-width: 0;
+
+      // Strip the Cunningham Input's own bordered wrapper — the link-box
+      // owns the visual chrome now.
+      .c__input__wrapper {
+        border: 0;
+        background: transparent;
+        padding-inline: 0;
+        height: auto;
+      }
     }
 
     > .c__button {
@@ -643,8 +658,8 @@
     min-height: 0;
   }
 
-  // Left column packs "Your items" title + dropzone + file list tightly;
-  // right column needs more breathing room between its form fields.
+  // Left column packs "Create a new transfer" title + dropzone + file list
+  // tightly; right column needs more breathing room between its form fields.
   &__files-col {
     gap: var(--c--globals--spacings--xs);
   }
@@ -950,26 +965,36 @@
     margin-bottom: var(--c--globals--spacings--md);
   }
 
-  // Shareable URL input + adjacent copy button. Both are ui-kit primitives
-  // (Cunningham Input + Button) so the visual styling follows the rest of
-  // the form. The row lays them out side-by-side; the Input's own border
-  // and radius stay as-is — no glued-pill treatment.
+  // Shareable URL input + copy button rendered as a single bordered
+  // container (same shape as the .file-item rows), so the copy affordance
+  // reads as part of the URL, not a separate widget.
   &__link-box {
     display: flex;
     align-items: center;
     gap: var(--c--globals--spacings--xs);
     width: 100%;
     margin-bottom: var(--c--globals--spacings--sm);
+    padding:
+      var(--c--globals--spacings--xs)
+      var(--c--globals--spacings--sm);
+    background: var(--c--contextuals--background--surface--primary);
+    border: 1px solid var(--c--contextuals--border--surface--primary);
+    border-radius: var(--c--components--forms-input--border-radius);
 
-    // Cunningham Input renders a wrapper .c__field; let it own the row's
-    // flex space so the text ellipsises instead of pushing the button out.
     > .c__field {
       flex: 1;
       min-width: 0;
+
+      // Strip the Cunningham Input's own bordered wrapper — the link-box
+      // owns the visual chrome now.
+      .c__input__wrapper {
+        border: 0;
+        background: transparent;
+        padding-inline: 0;
+        height: auto;
+      }
     }
 
-    // The copy button is a Cunningham tertiary icon-only — prevent it from
-    // shrinking along with the input.
     > .c__button {
       flex-shrink: 0;
     }

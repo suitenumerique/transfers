@@ -73,7 +73,7 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
             : t("Expired")}
         </span>
         <span className="download-view__meta-sep">·</span>
-        <span>{t("{{count}} item", { count: transfer.files.length })}</span>
+        <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="download-view__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
       </div>

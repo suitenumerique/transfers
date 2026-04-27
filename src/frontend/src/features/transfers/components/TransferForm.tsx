@@ -381,13 +381,13 @@ export function TransferForm() {
       <div className="transfer-form__grid">
         <section
           className="transfer-form__files-col"
-          aria-label={t("Your items")}
+          aria-label={t("Create a new transfer")}
         >
           <header className="transfer-form__files-header">
             <h1 className="transfer-form__files-title">
               {hasFiles
-                ? t("{{count}} item", { count: draft.files.length })
-                : t("Your items")}
+                ? t("{{count}} file", { count: draft.files.length })
+                : t("Create a new transfer")}
             </h1>
             {hasFiles && (
               <StorageGauge
@@ -625,7 +625,7 @@ export function TransferForm() {
                   : t("Creating after uploads finish")
                 : sharingMode === "email"
                   ? hasFiles
-                    ? t("Send {{count}} item", { count: draft.files.length })
+                    ? t("Send {{count}} file", { count: draft.files.length })
                     : t("Send")
                   : t("Create link")}
           </Button>

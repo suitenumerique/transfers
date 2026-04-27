@@ -135,12 +135,12 @@ export function TransferDetail({
             : t("Expired")}
         </span>
         <span className="transfer-detail__meta-sep">·</span>
-        <span>{t("{{count}} item", { count: transfer.files.length })}</span>
+        <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
       </div>
 
-      {isPublicLink && downloadUrl && (
+      {downloadUrl && (
         <div className="transfer-detail__link-box">
           <Input
             readOnly
