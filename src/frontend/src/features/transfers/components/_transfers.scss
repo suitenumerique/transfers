@@ -301,6 +301,12 @@
     > .c__button {
       width: 100%;
       justify-content: center;
+
+      // When the resend CTA is hidden (all emails landed), let Deactivate
+      // span the full row instead of leaving an empty column beside it.
+      &:only-child {
+        grid-column: 1 / -1;
+      }
     }
   }
 

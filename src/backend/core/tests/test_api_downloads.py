@@ -1,4 +1,5 @@
-"""Tests for the download API endpoints (no auth)."""
+"""Tests for the download API endpoints (no auth required, but recognised
+when present so an authenticated owner doesn't pollute the activity log)."""
 
 import uuid
 from datetime import timedelta
@@ -9,7 +10,8 @@ from django.utils import timezone
 import pytest
 
 from core.enums import TransferEventType, TransferStatus
-from core.factories import TransferFactory, TransferFileFactory
+from core.factories import TransferFactory, TransferFileFactory, UserFactory
+from core.models import TransferEvent
 from core.tests.conftest import assert_single_event
 
 DOWNLOADS_URL = "/api/v1.0/downloads"
@@ -45,6 +47,31 @@ class TestDownloadTransferView:
         response = api_client.get(f"{DOWNLOADS_URL}/nonexistent-token/")
         assert response.status_code == 404
 
+    def test_owner_view_skips_link_opened_event(
+        self, authenticated_client, transfer_with_file
+    ):
+        # The owner's own visits aren't recipient signal — should not pollute
+        # the audit log.
+        response = authenticated_client.get(
+            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/"
+        )
+        assert response.status_code == 200
+        assert (
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
+            == 0
+        )
+
+    def test_authenticated_non_owner_view_logs_link_opened_event(
+        self, api_client, transfer_with_file
+    ):
+        # A registered user who isn't the owner is still a recipient — log it.
+        api_client.force_authenticate(user=UserFactory())
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/"
+        )
+        assert response.status_code == 200
+        assert_single_event(transfer_with_file.id, TransferEventType.LINK_OPENED)
+
 
 @pytest.mark.django_db
 class TestDownloadFileView:
@@ -78,3 +105,34 @@ class TestDownloadFileView:
             f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/"
         )
         assert response.status_code == 410
+
+    @patch("core.api.viewsets.download.sign_download_url")
+    def test_owner_download_skips_file_downloaded_event(
+        self, mock_sign, authenticated_client, transfer_with_file
+    ):
+        mock_sign.return_value = "https://s3.example.com/signed-get-url"
+        tf = transfer_with_file.files.first()
+
+        response = authenticated_client.get(
+            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/files/{tf.id}/download/"
+        )
+        assert response.status_code == 302
+        # Owner self-download → no audit event.
+        assert (
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
+            == 0
+        )
+
+    @patch("core.api.viewsets.download.sign_download_url")
+    def test_authenticated_non_owner_download_logs_file_downloaded_event(
+        self, mock_sign, api_client, transfer_with_file
+    ):
+        mock_sign.return_value = "https://s3.example.com/signed-get-url"
+        tf = transfer_with_file.files.first()
+        api_client.force_authenticate(user=UserFactory())
+
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/files/{tf.id}/download/"
+        )
+        assert response.status_code == 302
+        assert_single_event(transfer_with_file.id, TransferEventType.FILE_DOWNLOADED)
