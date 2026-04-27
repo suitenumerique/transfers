@@ -67,8 +67,6 @@ function StorageGauge({
   );
 }
 
-const EXPIRY_CHOICES = [7, 30, 90];
-
 // Small 16px spinner used as the submit button's `icon` while the form
 // waits for uploads to finish + finalize to return. Inherits currentColor
 // so it shows white on the filled brand button.
@@ -190,7 +188,9 @@ export function TransferForm() {
   const draft = useTransferDraft();
 
   const [title, setTitle] = useState("");
-  const [expiresInDays, setExpiresInDays] = useState<number>(30);
+  const [expiresInDays, setExpiresInDays] = useState<number>(
+    config.TRANSFER_DEFAULT_EXPIRY_DAYS,
+  );
   const [sharingMode, setSharingMode] = useState<SharingMode>("email");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
@@ -405,7 +405,7 @@ export function TransferForm() {
     }
   };
 
-  const expiryOptions = EXPIRY_CHOICES.map((days) => ({
+  const expiryOptions = config.TRANSFER_EXPIRY_CHOICES.map((days) => ({
     label: t("{{count}} days", { count: days }),
     value: String(days),
     callback: () => setExpiresInDays(days),

@@ -121,12 +121,12 @@ class Base(Configuration):
         "transferts", environ_name="TRANSFERS_BUCKET_NAME", environ_prefix=None
     )
     TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
-        30, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
+        1, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
     )
     # Comma-separated list of days (e.g. "7,30,90") offered as expiry options
     # in the UI. Must include TRANSFER_DEFAULT_EXPIRY_DAYS.
     TRANSFER_EXPIRY_CHOICES = values.ListValue(
-        [7, 30, 90],
+        [1, 7, 30],
         environ_name="TRANSFER_EXPIRY_CHOICES",
         environ_prefix=None,
         converter=int,
