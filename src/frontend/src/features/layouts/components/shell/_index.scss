@@ -5,6 +5,24 @@
   overflow: hidden;
   background: var(--c--contextuals--background--surface--tertiary);
 
+  // Mobile drawer backdrop. Hidden by default; the @media block below
+  // surfaces it when the sidebar is open on a small viewport.
+  &__backdrop {
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    // Drawer is open whenever the sidebar isn't collapsed.
+    &:not(.shell-layout--sidebar-collapsed) > .shell-layout__backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 99;
+      cursor: pointer;
+    }
+  }
+
   &__main {
     flex: 1;
     min-width: 0;
@@ -70,6 +88,28 @@
   .shell-layout--sidebar-collapsed & {
     width: 0;
     border-right-color: transparent;
+  }
+
+  // On mobile, swap the desktop "width-shrink" collapse for a slide-out
+  // drawer: the sidebar floats above the content and slides off-screen
+  // when collapsed. Width stays at --sidebar-width so the inner column
+  // doesn't reflow while sliding.
+  @media (max-width: 768px) {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(0);
+    transition:
+      transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+      border-right-color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    .shell-layout--sidebar-collapsed & {
+      width: var(--sidebar-width);
+      transform: translateX(-100%);
+      border-right-color: var(--c--contextuals--border--surface--primary);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

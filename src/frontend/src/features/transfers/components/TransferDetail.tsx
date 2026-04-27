@@ -199,6 +199,7 @@ export function TransferDetail({
           {/* Link stays visible on deactivated transfers for reference,
               but copying is disabled — the URL no longer resolves. */}
           <Button
+            size="small"
             color="neutral"
             variant="tertiary"
             icon={copied ? <Checkmark /> : <Copy />}
