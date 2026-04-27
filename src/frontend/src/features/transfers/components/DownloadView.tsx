@@ -97,6 +97,7 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
             onFocus={(e) => e.currentTarget.select()}
           />
           <Button
+            size="small"
             color="neutral"
             variant="tertiary"
             icon={copied ? <Checkmark /> : <Copy />}

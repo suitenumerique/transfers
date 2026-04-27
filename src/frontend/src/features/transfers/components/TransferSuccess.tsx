@@ -86,6 +86,7 @@ export function TransferSuccess({
             />
             <Button
               type="button"
+              size="small"
               color="neutral"
               variant="tertiary"
               icon={copied ? <Checkmark /> : <Copy />}

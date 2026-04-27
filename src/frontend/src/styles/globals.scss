@@ -69,13 +69,21 @@ body {
   // Cap the authenticated home narrower than the default app-content so the
   // two-column form stays readable at a glance on wide viewports. ``.home``
   // is also a flex column so the upload section inside can grow to fill
-  // the remaining viewport height.
+  // the remaining viewport height. On mobile we swap height for
+  // min-height so short children (success / failed panels) still get the
+  // viewport-tall centering, while long children (form) push past it and
+  // let the shell's __content take over scrolling.
   &.home {
     max-width: 1200px;
     height: 100%;
     min-height: 0;
     display: flex;
     flex-direction: column;
+
+    @media (max-width: 768px) {
+      height: auto;
+      min-height: 100%;
+    }
   }
 }
 

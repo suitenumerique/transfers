@@ -49,6 +49,16 @@
     margin: 0 0 var(--c--globals--spacings--sm);
     flex-shrink: 0;
   }
+
+  // Mobile: keep the flex chain so short panels (success / failed) stay
+  // vertically centered, but let the upload section spill its overflow so
+  // a tall form can grow past the viewport — the shell's __content takes
+  // over scrolling once .home grows beyond its min-height: 100%.
+  @media (max-width: 768px) {
+    &__upload {
+      overflow: visible;
+    }
+  }
 }
 
 // Landing page (unauthenticated)
@@ -661,7 +671,9 @@
 
   // Shown after a successful email-mode submit while we poll for the
   // recipient-invitation task to finish. Covers the entire form so the
-  // user can't interact with it during the wait.
+  // user can't interact with it during the wait. Same icon → title →
+  // subtitle stack as transfer-success / transfer-failed so the pre/post
+  // confirmation pages feel like one continuous flow.
   &__sending-overlay {
     position: absolute;
     inset: 0;
@@ -669,17 +681,32 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: var(--c--globals--spacings--md);
+    padding: var(--c--globals--spacings--xl);
     background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(2px);
     z-index: 10;
     border-radius: var(--c--components--forms-input--border-radius);
   }
 
+  &__sending-icon {
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    margin-bottom: var(--c--globals--spacings--md);
+  }
+
+  &__sending-title {
+    margin: 0 0 var(--c--globals--spacings--2xs);
+    font-size: var(--c--globals--font--sizes--lg, 1.125rem);
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
   &__sending-text {
     margin: 0;
-    font-size: var(--c--globals--font--sizes--md);
-    color: var(--c--contextuals--content--semantic--neutral--primary);
+    max-width: 360px;
+    text-align: center;
+    font-size: var(--c--globals--font--sizes--sm);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
   // Two-column layout: files on the left, options on the right. Stacks on
@@ -1289,15 +1316,33 @@
     margin: var(--c--globals--spacings--md) 0;
   }
 
+  // Same single-bordered container as transfer-detail / transfer-success
+  // link boxes — the copy affordance reads as part of the URL row, not a
+  // separate widget alongside it.
   &__link-box {
     display: flex;
     align-items: center;
     gap: var(--c--globals--spacings--xs);
     width: 100%;
+    padding:
+      var(--c--globals--spacings--xs)
+      var(--c--globals--spacings--sm);
+    background: var(--c--contextuals--background--surface--primary);
+    border: 1px solid var(--c--contextuals--border--surface--primary);
+    border-radius: var(--c--components--forms-input--border-radius);
 
     > .c__field {
       flex: 1;
       min-width: 0;
+
+      // Strip the Cunningham Input's own bordered wrapper — the link-box
+      // owns the visual chrome now.
+      .c__input__wrapper {
+        border: 0;
+        background: transparent;
+        padding-inline: 0;
+        height: auto;
+      }
     }
 
     > .c__button {
