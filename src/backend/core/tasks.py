@@ -3,7 +3,6 @@
 import logging
 from datetime import timedelta
 
-from django.core.management import call_command
 from django.utils import timezone
 
 import botocore
@@ -14,6 +13,7 @@ from core.enums import ActorType, TransferEventType, TransferStatus
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
 from core.services.email import send_recipient_invitation
+from core.services.s3_sweep import run_orphan_sweep
 
 logger = logging.getLogger(__name__)
 
@@ -67,17 +67,22 @@ def expire_transfers_task():
 def sweep_orphan_s3_storage_task():
     """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
 
-    ``--min-age=24`` keeps the sweep clear of the brief orphan window in
-    ``add_file`` (between ``s3.create_multipart_upload`` and ``tf.save()``).
-    In steady state this should report zero — non-zero output is the signal
-    that one of the per-row cleanup paths is leaking.
+    Should report zero in steady state — non-zero counts are the signal
+    that one of the per-row paths is leaking.
     """
-    call_command(
-        "clean_orphan_s3_objects",
-        "--apply",
-        "--min-age",
-        "24",
+    result = run_orphan_sweep(
+        apply=True,
+        min_age_hours=24,
+        write=lambda msg: logger.info("orphan-sweep: %s", msg),
+        write_error=lambda msg: logger.error("orphan-sweep: %s", msg),
     )
+    if result["objects_deleted"] or result["mpus_aborted"]:
+        logger.warning(
+            "orphan-sweep cleaned %d object(s) and %d MPU(s) — investigate "
+            "which per-row path leaked",
+            result["objects_deleted"],
+            result["mpus_aborted"],
+        )
 
 
 @shared_task
