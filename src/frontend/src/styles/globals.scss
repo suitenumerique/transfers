@@ -88,6 +88,19 @@ body {
 }
 
 
+// LaGaufreV2 forces a hardcoded "La Suite Numérique" wordmark as
+// headerLogo (the prop is overwritten after the spread in ui-kit
+// 0.20.1's init call). The dropdown's #header is display:none on
+// desktop but flips to display:flex below 480px, so the wrong logo
+// only surfaces on mobile. Hide the button entirely there — same call
+// as suitenumerique/messages, which doesn't render the gaufre on
+// mobile at all.
+@media (max-width: 768px) {
+  .lagaufre-button {
+    display: none !important;
+  }
+}
+
 // Cunningham tweaks
 .c__datagrid__table__container > table tbody tr:not(:last-child) {
   border-bottom: 1px solid var(--c--contextuals--border--surface--primary);
