@@ -235,7 +235,7 @@ class Transfer(BaseModel):
         """
         from core.services import s3
 
-        s3.delete_objects_for_files(self.files.all())
+        s3.best_effort_delete_objects_from_files(self.files.all())
 
 
 class TransferRecipient(BaseModel):

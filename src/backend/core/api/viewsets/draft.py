@@ -268,7 +268,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             )
         except botocore.exceptions.ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code", "Unknown")
-            s3.abort_uploads_for_files(draft.files.all())
+            s3.best_effort_abort_multipart_uploads_from_files(draft.files.all())
             draft.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -285,8 +285,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         actual_size = s3.head_object_size(transfer_file.s3_key)
         if actual_size != transfer_file.size:
             files = list(draft.files.all())
-            s3.abort_uploads_for_files(files)
-            s3.delete_objects_for_files(files)
+            s3.best_effort_abort_multipart_uploads_from_files(files)
+            s3.best_effort_delete_objects_from_files(files)
             draft.delete()
             raise drf.exceptions.ValidationError(
                 {
@@ -330,8 +330,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             raise drf.exceptions.NotFound("Transfer file not found.") from exc
 
         files = [transfer_file]
-        s3.abort_uploads_for_files(files)
-        s3.delete_objects_for_files(files)
+        s3.best_effort_abort_multipart_uploads_from_files(files)
+        s3.best_effort_delete_objects_from_files(files)
 
         with transaction.atomic():
             transfer_file.delete()
@@ -351,8 +351,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         """
         draft = self.get_object()
         files = list(draft.files.all())
-        s3.abort_uploads_for_files(files)
-        s3.delete_objects_for_files(files)
+        s3.best_effort_abort_multipart_uploads_from_files(files)
+        s3.best_effort_delete_objects_from_files(files)
         draft.delete()
         return drf.response.Response(status=204)
 
