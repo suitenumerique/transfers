@@ -1,40 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/pages/api-reference/create-next-app).
+# Transferts frontend
 
-## Getting Started
+Next.js Pages Router app served as a static export through Caddy. Uses
+[Cunningham](https://github.com/numerique-gouv/cunningham) for the
+component kit, [TanStack Query](https://tanstack.com/query) for server
+state, and [i18next](https://www.i18next.com/) for translations.
 
-First, run the development server:
+## Layout
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+src/
+├── pages/                  # Next.js Pages Router
+│   ├── index.tsx           # Home — new transfer form
+│   ├── transfers/[id].tsx  # Transfer detail (owner view)
+│   ├── t/[token].tsx       # Public download page (recipient view)
+│   ├── confirm/            # Post-finalize confirmation flow
+│   └── confirm-failed/     # Email-mode partial-failure landing
+├── features/
+│   ├── api/                # Shared API client (apiFetch, ApiError, types)
+│   ├── transfers/
+│   │   ├── api/            # TanStack Query hooks against the backend
+│   │   ├── components/     # TransferForm, TransferDetail, FileDropZone, …
+│   │   └── upload/         # Multipart-upload state machine (browser-side)
+│   ├── auth/               # ProConnect session bridge
+│   ├── config/             # Frontend runtime config from /api/config/
+│   ├── i18n/               # i18next setup
+│   ├── layouts/            # Shell, Sidebar, TopBar
+│   ├── providers/          # React Query client, Cunningham theme, …
+│   ├── ui/                 # Shared components (modals, toasts, …)
+│   └── utils/              # Misc helpers (debounced value, error mapping, …)
+├── styles/                 # Global SCSS + Cunningham generated tokens
+└── caddy/Caddyfile         # Reverse proxy config (XFF propagation, SPA fallbacks)
 ```
 
-Open [http://localhost:8900](http://localhost:8900) with your browser to see the result.
+## Translations
 
-You can start editing the page by modifying `pages/index.tsx`. The page auto-updates as you edit the file.
+Strings are extracted with `i18next-cli` (`npm run i18n:extract`) into
+`public/locales/<namespace>/<lang>.json` — currently a single `common`
+namespace with English (`en-US`) and French (`fr-FR`).
 
-[API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) can be accessed on [http://localhost:3000/api/hello](http://localhost:3000/api/hello). This endpoint can be edited in `pages/api/hello.ts`.
+## Caddy
 
-The `pages/api` directory is mapped to `/api/*`. Files in this directory are treated as [API routes](https://nextjs.org/docs/pages/building-your-application/routing/api-routes) instead of React pages.
+The static export is served by Caddy in production, which also reverse-
+proxies `/api/*`, `/admin/*`, `/static/*`, and `/__heartbeat__/*` to
+the Django backend. The `Caddyfile` propagates `X-Forwarded-For` from
+Scalingo's edge router as-is (do **not** use `{remote_host}` — see the
+comment in `caddy/Caddyfile`).
 
-This project uses [`next/font`](https://nextjs.org/docs/pages/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Further reading
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn-pages-router) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/pages/building-your-application/deploying) for more details.
+- [`../../README.md`](../../README.md) — project setup, La Suite
+  Drive integration, environment variables.
+- [`../../docs/S3.md`](../../docs/S3.md) — backend storage model
+  (relevant if you change anything in `features/transfers/upload/`).
