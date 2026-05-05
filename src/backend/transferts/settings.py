@@ -499,6 +499,19 @@ class Base(Configuration):
         },
     }
 
+    # Entitlements
+    ENTITLEMENTS_BACKEND = values.Value(
+        "core.entitlements.backends.static.StaticEntitlementsBackend",
+        environ_name="ENTITLEMENTS_BACKEND",
+        environ_prefix=None,
+    )
+
+    ENTITLEMENTS_BACKEND_PARAMETERS = values.DictValue(
+        {},
+        environ_name="ENTITLEMENTS_BACKEND_PARAMETERS",
+        environ_prefix=None,
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

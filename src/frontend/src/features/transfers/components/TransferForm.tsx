@@ -226,6 +226,31 @@ export function TransferForm() {
     refetchInterval: 2000,
   });
 
+  type EntitlementsPayload = Record<string, unknown>;
+
+  const fetchEntitlements = () =>
+    apiFetch<EntitlementsPayload>("/entitlements/");
+
+  const entitlementsQuery = useQuery<EntitlementsPayload>({
+    queryKey: ["entitlements"],
+    queryFn: fetchEntitlements,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    if (entitlementsQuery.data) {
+      // eslint-disable-next-line no-console
+      console.log("[entitlements]", entitlementsQuery.data);
+    }
+  }, [entitlementsQuery.data]);
+
+  useEffect(() => {
+    if (entitlementsQuery.error) {
+      // eslint-disable-next-line no-console
+      console.error("[entitlements] failed", entitlementsQuery.error);
+    }
+  }, [entitlementsQuery.error]);
+
   useEffect(() => {
     const data = pollQuery.data;
     if (!data?.notifications_completed_at) return;
