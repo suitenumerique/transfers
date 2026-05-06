@@ -34,6 +34,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         }
         for claim in self.oidc_claims:
             value = user.claims.get(claim)
+            print(claim, value);
             if value is not None:
                 params[claim] = value
 
@@ -44,6 +45,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
             timeout=10,
         )
         response.raise_for_status()
+        print(params)
         return response.json()
 
     def get_entitlements(self, user):

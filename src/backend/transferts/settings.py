@@ -631,6 +631,15 @@ class Development(Base):
     def __init__(self):
         super().__init__()
         self.INSTALLED_APPS += ["django_extensions", "drf_spectacular_sidecar"]
+        if getattr(self, "DEV_AUTH_BYPASS", False):
+            auth_mw = "django.contrib.auth.middleware.AuthenticationMiddleware"
+            dev_claims_mw = "core.authentication.dev_claims_middleware.DevAuthClaimsMiddleware"
+            if dev_claims_mw not in self.MIDDLEWARE:
+                try:
+                    idx = self.MIDDLEWARE.index(auth_mw)
+                    self.MIDDLEWARE.insert(idx + 1, dev_claims_mw)
+                except ValueError:
+                    self.MIDDLEWARE.append(dev_claims_mw)
 
 
 class DevelopmentMinimal(Development):

@@ -12,6 +12,7 @@ from django.http import Http404, HttpResponseRedirect
 from django.views.generic import View
 
 _DEFAULT_BYPASS_EMAIL = "dev@transferts.local"
+_DEV_CLAIMS_SESSION_KEY = "dev_oidc_claims"
 
 
 class DevLoginView(View):
@@ -54,4 +55,18 @@ class DevLoginView(View):
             user,
             backend="django.contrib.auth.backends.ModelBackend",
         )
+
+        # Persist minimal OIDC-like claims in the session so downstream
+        # services (e.g. entitlements) that expect `request.user.claims`
+        # can work during dev-bypass flows.
+        oidc_claims = (
+            getattr(settings, "ENTITLEMENTS_BACKEND_PARAMETERS", {}).get("oidc_claims", [])
+            or []
+        )
+        claims = {}
+        for claim in oidc_claims:
+            raw_value = request.GET.get(claim)
+            if raw_value is not None and str(raw_value).strip() != "":
+                claims[claim] = raw_value
+        request.session[_DEV_CLAIMS_SESSION_KEY] = claims
         return HttpResponseRedirect(next_url)
