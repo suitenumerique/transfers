@@ -1,7 +1,4 @@
 import type { ReactElement } from "react";
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "@/features/api/client";
 import { useAuth } from "@/features/auth";
 import { MainLayout } from "@/features/layouts/components/main/MainLayout";
 import { HomeLanding } from "@/features/transfers/components/HomeLanding";
@@ -11,52 +8,82 @@ import { Alert, VariantType } from "@gouvfr-lasuite/cunningham-react";
 
 import type { NextPageWithLayout } from "./_app";
 
-const HomePage: NextPageWithLayout = () => {
+type EntitlementsPayload = {
+  can_access?: { result?: boolean };
+  can_upload?: { result?: boolean };
+} | null;
+
+type HomePageProps = {
+  entitlements: EntitlementsPayload;
+  entitlementsStatus: number | null;
+};
+
+function getApiOriginServerSide() {
+  // Server-side: prefer a dedicated internal origin when provided.
+  if (process.env.API_SERVER_ORIGIN) return process.env.API_SERVER_ORIGIN;
+
+  const publicOrigin = process.env.NEXT_PUBLIC_API_ORIGIN;
+  if (publicOrigin?.includes("localhost")) return "http://backend-dev:8000";
+
+  return publicOrigin || "";
+}
+
+export async function getServerSideProps(ctx: {
+  req: { headers: { cookie?: string } };
+}) {
+  const apiOrigin = getApiOriginServerSide();
+
+  let entitlements: EntitlementsPayload = null;
+  let entitlementsStatus: number | null = null;
+
+  if (apiOrigin) {
+    try {
+      const apiEntitlements = await fetch(`${apiOrigin}/api/v1.0/entitlements/`, {
+        headers: {
+          cookie: ctx.req.headers.cookie ?? "",
+        },
+      });
+
+      entitlementsStatus = apiEntitlements.status;
+      if (apiEntitlements.ok) {
+        entitlements = (await apiEntitlements.json()) as EntitlementsPayload;
+      }
+    } catch {
+      entitlementsStatus = 0;
+      entitlements = null;
+    }
+  }
+
+  return {
+    props: {
+      entitlements,
+      entitlementsStatus,
+    } satisfies HomePageProps,
+  };
+}
+
+const HomePage: NextPageWithLayout<HomePageProps> = ({
+  entitlements,
+  entitlementsStatus,
+}) => {
   const { user } = useAuth();
 
   if (!user) {
     return <HomeLanding />;
   }
 
-  type EntitlementsPayload = Record<string, unknown>;
-  const fetchEntitlements = () => apiFetch<EntitlementsPayload>("/entitlements/");
-
-  const entitlementsQuery = useQuery<EntitlementsPayload>({
-    queryKey: ["entitlements"],
-    queryFn: fetchEntitlements,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  useEffect(() => {
-    if (entitlementsQuery.data) {
-      // eslint-disable-next-line no-console
-      console.log("[entitlements]", entitlementsQuery.data);
-    }
-  }, [entitlementsQuery.data]);
-
-  useEffect(() => {
-    if (entitlementsQuery.error) {
-      // eslint-disable-next-line no-console
-      console.error("[entitlements] failed", entitlementsQuery.error);
-    }
-  }, [entitlementsQuery.error]);
-
-  const data = entitlementsQuery.data as
-    | {
-        can_access?: { result?: boolean };
-        can_upload?: { result?: boolean };
-      }
-    | undefined;
-
-  const canAccess = data?.can_access?.result === true;
-  const canUpload = data?.can_upload?.result === true;
+  const canAccess = entitlements?.can_access?.result === true;
+  const canUpload = entitlements?.can_upload?.result === true;
   const canUseFormUpload = canAccess && canUpload;
+
+  const hasEntitlements = entitlementsStatus === 200 && entitlements !== null;
+  const entitlementsFailed = entitlementsStatus !== 200;
 
   return (
     <div className="app-content home">
       <div className="home__grid">
         <section className="home__upload">
-          {entitlementsQuery.isError && (
+          {entitlementsFailed && (
             <Alert type={VariantType.ERROR}>
               <div>
                 <p>Impossible de récupérer vos habilitations.</p>
@@ -64,8 +91,8 @@ const HomePage: NextPageWithLayout = () => {
               </div>
             </Alert>
           )}
-          {entitlementsQuery.isSuccess && canUseFormUpload && <TransferForm />}
-          {entitlementsQuery.isSuccess && !canUseFormUpload && (
+          {hasEntitlements && canUseFormUpload && <TransferForm />}
+          {hasEntitlements && !canUseFormUpload && (
             <Alert type={VariantType.ERROR}>
               <div>
                 <p>Vous n'avez pas les permissions nécessaires pour uploader des fichiers.</p>

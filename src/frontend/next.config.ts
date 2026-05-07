@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "export",
+  output: process.env.NEXT_OUTPUT === "export" ? "export" : undefined,
   reactStrictMode: false,
   images: {
     unoptimized: true,

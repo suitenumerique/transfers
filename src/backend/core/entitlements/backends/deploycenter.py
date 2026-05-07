@@ -46,6 +46,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         )
         response.raise_for_status()
         print(params)
+        print(response.json())
         return response.json()
 
     def get_entitlements(self, user):
