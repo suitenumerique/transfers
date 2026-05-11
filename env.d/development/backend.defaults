@@ -42,19 +42,18 @@ TRANSFER_MAX_TOTAL_SIZE=21474836480
 
 OIDC_CREATE_USER=True
 
-# OIDC endpoints — public URLs for ProConnect (AgentConnect integration
-# env). Safe to commit; the sensitive parts (client id + secret) stay in
-# backend.local. These are also required at boot: mozilla-django-oidc
-# validates `OIDC_RP_SIGN_ALGO=RS256` needs either JWKS or a key, else
-# it raises ImproperlyConfigured and the app never starts (including on
-# CI where .local is empty).
-OIDC_OP_JWKS_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/jwks
-OIDC_OP_AUTHORIZATION_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/authorize
-OIDC_OP_TOKEN_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/token
-OIDC_OP_USER_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/userinfo
-OIDC_OP_LOGOUT_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/session/end
-# OIDC_RP_CLIENT_ID=          # set in backend.local
-# OIDC_RP_CLIENT_SECRET=      # set in backend.local
+# OIDC — local Keycloak (same stack idea as the Drive repo: kc_postgresql,
+# keycloak, nginx reverse-proxy). Compose wires `nginx-oidc` for calls from
+# Django inside Docker; the browser uses localhost:8908 for the auth UI.
+# To use ProConnect / AgentConnect instead, override these variables in
+# `env.d/development/backend.local`.
+OIDC_OP_JWKS_ENDPOINT=http://nginx-oidc:8908/realms/transferts/protocol/openid-connect/certs
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8908/realms/transferts/protocol/openid-connect/auth
+OIDC_OP_TOKEN_ENDPOINT=http://nginx-oidc:8908/realms/transferts/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://nginx-oidc:8908/realms/transferts/protocol/openid-connect/userinfo
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8908/realms/transferts/protocol/openid-connect/logout
+OIDC_RP_CLIENT_ID=transferts
+OIDC_RP_CLIENT_SECRET=ThisIsAnExampleKeyForDevPurposeOnly
 OIDC_RP_SIGN_ALGO=RS256
 OIDC_RP_SCOPES="openid email"
 
@@ -62,8 +61,15 @@ LOGIN_REDIRECT_URL=http://localhost:8900
 LOGIN_REDIRECT_URL_FAILURE=http://localhost:8900
 LOGOUT_REDIRECT_URL=http://localhost:8900
 
-OIDC_REDIRECT_ALLOWED_HOSTS=["http://localhost:8900"]
+OIDC_REDIRECT_ALLOWED_HOSTS=["localhost:8908","localhost:8900"]
 OIDC_AUTH_REQUEST_EXTRA_PARAMS={"acr_values": "eidas1"}
+
+# OIDC userinfo claim names persisted on ``User.claims`` (JSON). Use the same
+# names as in ``ENTITLEMENTS_BACKEND_PARAMETERS`` → ``oidc_claims`` when using
+# DeployCenter (e.g. ``["siret"]``). Keycloak must expose those claims in userinfo.
+# If DeployCenter still requires ``siret`` but OIDC does not send it, add
+# ``"claim_defaults": {"siret": "..."}`` inside ENTITLEMENTS_BACKEND_PARAMETERS.
+OIDC_STORE_CLAIMS=[]
 
 # Drive integration — leave blank to hide the "Attach from Drive" button.
 # Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)

@@ -53,6 +53,8 @@ bootstrap: ## Prepare the project for local development
 	@echo "║  • Frontend: http://localhost:8900                                           ║"
 	@echo "║  • API:      http://localhost:8901                                           ║"
 	@echo "║  • Admin:    http://localhost:8901/admin                                     ║"
+	@echo "║  • OIDC/Keycloak (via nginx): http://localhost:8908                          ║"
+	@echo "║  • Keycloak admin UI:         http://localhost:8909                           ║"
 	@echo "╚══════════════════════════════════════════════════════════════════════════════╝"
 	@echo "$(RESET)"
 	@$(MAKE) update

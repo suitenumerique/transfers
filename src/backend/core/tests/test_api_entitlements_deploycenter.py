@@ -11,7 +11,7 @@ import responses
 from rest_framework.test import APIClient
 
 from core.factories import UserFactory
-from core.entitlements import get_entitlements_backend
+from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
 from core.entitlements.backends.deploycenter import DeployCenterEntitlementsBackend
 
 pytestmark = pytest.mark.django_db
@@ -22,6 +22,11 @@ ENTITLEMENTS_BACKEND_PARAMETERS = {
     "api_key": "test-api-key",
     "service_id": 8,
     "oidc_claims": ["siret"],
+}
+
+ENTITLEMENTS_PARAMETERS_WITH_CLAIM_DEFAULTS = {
+    **ENTITLEMENTS_BACKEND_PARAMETERS,
+    "claim_defaults": {"siret": "21140001500015"},
 }
 
 
@@ -257,6 +262,46 @@ def test_api_entitlements_deploycenter_get_entitlements_cache():
     }
     # Verify that the request was not made again.
     assert len(responses.calls) == 1
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_PARAMETERS_WITH_CLAIM_DEFAULTS,
+)
+@responses.activate
+def test_api_entitlements_deploycenter_siret_from_claim_defaults():
+    """When User.claims has no siret, claim_defaults still satisfies DeployCenter."""
+    responses.add(
+        responses.GET,
+        ENTITLEMENTS_URL,
+        json={
+            "entitlements": {
+                "can_access": True,
+                "can_upload": True,
+            }
+        },
+        status=200,
+    )
+
+    client = APIClient()
+    user = UserFactory()
+    user.claims = {}
+    client.force_authenticate(user)
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert len(responses.calls) == 1
+    parsed = urllib.parse.urlparse(responses.calls[0].request.url)
+    q = urllib.parse.parse_qs(parsed.query)
+    assert q["siret"] == ["21140001500015"]
+
+
+def test_deploycenter_fetch_entitlements_missing_siret_raises():
+    """Without siret in claims or claim_defaults, fetch_entitlements fails fast."""
+    backend = DeployCenterEntitlementsBackend(**ENTITLEMENTS_BACKEND_PARAMETERS)
+    user = UserFactory()
+    user.claims = {}
+    with pytest.raises(EntitlementsUnavailableError, match="siret"):
+        backend.fetch_entitlements(user)
 
 
 def test_api_entitlements_deploycenter_missing_base_url_parameter():

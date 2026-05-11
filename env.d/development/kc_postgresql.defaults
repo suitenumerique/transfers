@@ -1,0 +1,4 @@
+# PostgreSQL for the local Keycloak container (mirrors Drive compose layout).
+POSTGRES_DB=keycloak
+POSTGRES_USER=transferts
+POSTGRES_PASSWORD=pass

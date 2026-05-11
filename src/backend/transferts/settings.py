@@ -450,6 +450,11 @@ class Base(Configuration):
         environ_name="OIDC_USERINFO_FULLNAME_FIELDS",
         environ_prefix=None,
     )
+    OIDC_STORE_CLAIMS = values.ListValue(
+        default=[],
+        environ_name="OIDC_STORE_CLAIMS",
+        environ_prefix=None,
+    )
     ALLOW_LOGOUT_GET_METHOD = values.BooleanValue(
         default=True, environ_name="ALLOW_LOGOUT_GET_METHOD", environ_prefix=None
     )
@@ -580,7 +585,16 @@ class Development(Base):
     CSRF_TRUSTED_ORIGINS = ["http://localhost:8900", "http://localhost:8901"]
     DEBUG = True
 
+    # OIDC (mozilla-django-oidc / lasuite) stores ``state`` / nonce under
+    # ``request.session["oidc_states"]``. With ``SESSION_ENGINE=cache`` and
+    # Redis, concurrent ``/authenticate/`` requests or cache quirks can drop
+    # or overwrite that payload before Keycloak redirects back — leading to
+    # ``SuspiciousOperation: OIDC callback state not found in session``. DB
+    # sessions avoid that class of failures in local dev.
+    SESSION_ENGINE = "django.contrib.sessions.backends.db"
+
     SESSION_COOKIE_NAME = "transferts_sessionid"
+    SESSION_COOKIE_SAMESITE = "Lax"
 
     # Dev-only switch: mount a GET endpoint that hands back a session
     # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined

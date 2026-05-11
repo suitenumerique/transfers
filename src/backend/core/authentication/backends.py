@@ -2,12 +2,14 @@
 
 import logging
 
+from django.conf import settings
 from django.core.exceptions import SuspiciousOperation
 
 from lasuite.oidc_login.backends import (
     OIDCAuthenticationBackend as LaSuiteOIDCAuthenticationBackend,
 )
 
+from core.authentication import UserCannotAccessApp
 from core.entitlements import get_entitlements_backend
 from core.models import DuplicateEmailError, User
 
@@ -51,17 +53,28 @@ class OIDCAuthenticationBackend(LaSuiteOIDCAuthenticationBackend):
         elif self.get_settings("OIDC_CREATE_USER", True):
             user = self.create_user(claims)
             _user_created = True
+        else:
+            raise SuspiciousOperation(
+                "User not found and OIDC user creation is disabled."
+            )
 
         entitlement_backend = get_entitlements_backend()
-        result = self.entitlement_backend.can_access(user)
-         if not result["result"]:
-            raise UserCannotAccessApp(result.get("message", "User does not have access to the app"))
+        result = entitlement_backend.can_access(user)
+        if not result["result"]:
+            raise UserCannotAccessApp(
+                result.get("message", "User does not have access to the app")
+            )
         return user
 
     def get_extra_claims(self, user_info):
         """Get extra claims from user info."""
+        claims_to_store = {
+            claim: user_info.get(claim)
+            for claim in getattr(settings, "OIDC_STORE_CLAIMS", [])
+        }
         return {
             "full_name": self.compute_full_name(user_info),
+            "claims": claims_to_store,
         }
 
     def get_existing_user(self, sub, email):
