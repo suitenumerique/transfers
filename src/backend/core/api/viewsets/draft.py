@@ -21,7 +21,7 @@ from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 
 from core import models
-from core.api.permissions import IsAuthenticated
+from core.api.permissions import DraftUploadEntitlementPermission, IsAuthenticated
 from core.api.serializers import (
     DraftAddFileSerializer,
     DraftCompleteUploadSerializer,
@@ -45,7 +45,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
     metadata, never surfaces in listings, and dies at abort or finalize.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, DraftUploadEntitlementPermission]
     queryset = models.TransferDraft.objects.all()
 
     def get_queryset(self):
