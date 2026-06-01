@@ -20,8 +20,8 @@ from django.utils import timezone
 import pytest
 from botocore.exceptions import ClientError
 
-from core.enums import TransferEventType
 from core.entitlements import get_entitlements_backend
+from core.enums import TransferEventType
 from core.factories import (
     TransferDraftFactory,
     TransferFactory,
@@ -1104,22 +1104,21 @@ class TestImportDriveFileTask:
 
 @pytest.mark.django_db
 class TestDraftUploadEntitlement:
-    """Draft multipart endpoints require ``can_upload`` from the entitlements backend."""
+    """Draft multipart endpoints require ``can_access`` from the entitlements backend."""
 
     @staticmethod
-    def _no_upload_entitlements():
+    def _no_access_entitlements():
         return override_settings(
             ENTITLEMENTS_BACKEND="core.entitlements.backends.static.StaticEntitlementsBackend",
             ENTITLEMENTS_BACKEND_PARAMETERS={
                 "entitlements": {
-                    "can_access": {"result": True},
-                    "can_upload": {"result": False, "reason": "not_activated"},
+                    "can_access": {"result": False, "message": "access_denied"},
                 },
             },
         )
 
-    def test_add_file_returns_403_when_can_upload_false(self, authenticated_client):
-        with self._no_upload_entitlements():
+    def test_add_file_returns_403_when_can_access_false(self, authenticated_client):
+        with self._no_access_entitlements():
             get_entitlements_backend.cache_clear()
             try:
                 resp = authenticated_client.post(
@@ -1128,13 +1127,11 @@ class TestDraftUploadEntitlement:
                     format="json",
                 )
                 assert resp.status_code == 403, resp.data
-                payload = str(resp.data)
-                assert "not_activated" in payload
-                assert "upload" in payload.lower()
+                assert "access_denied" in str(resp.data)
             finally:
                 get_entitlements_backend.cache_clear()
 
-    def test_sign_part_returns_403_when_can_upload_false(self, authenticated_client, user):
+    def test_sign_part_returns_403_when_can_access_false(self, authenticated_client, user):
         draft = TransferDraftFactory(owner=user)
         transfer_file = TransferFileFactory(
             draft=draft,
@@ -1144,7 +1141,7 @@ class TestDraftUploadEntitlement:
             upload_id="mpu-test",
             upload_completed_at=None,
         )
-        with self._no_upload_entitlements():
+        with self._no_access_entitlements():
             get_entitlements_backend.cache_clear()
             try:
                 resp = authenticated_client.post(
@@ -1159,7 +1156,7 @@ class TestDraftUploadEntitlement:
             finally:
                 get_entitlements_backend.cache_clear()
 
-    def test_complete_upload_returns_403_when_can_upload_false(
+    def test_complete_upload_returns_403_when_can_access_false(
         self, authenticated_client, user
     ):
         draft = TransferDraftFactory(owner=user)
@@ -1171,7 +1168,7 @@ class TestDraftUploadEntitlement:
             upload_id="mpu-test",
             upload_completed_at=None,
         )
-        with self._no_upload_entitlements():
+        with self._no_access_entitlements():
             get_entitlements_backend.cache_clear()
             try:
                 resp = authenticated_client.post(

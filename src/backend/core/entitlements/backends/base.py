@@ -12,12 +12,6 @@ class EntitlementsBackend(ABC):
         Check if a user can access app.
         """
 
-    @abstractmethod
-    def can_upload(self, user):
-        """
-        Check if a user can upload a file.
-        """
-
     def get_context(self, user):  # pylint: disable=unused-argument
         """Get context for a user."""
         return {}

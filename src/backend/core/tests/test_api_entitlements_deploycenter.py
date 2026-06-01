@@ -57,7 +57,7 @@ def test_api_entitlements_deploycenter_get_entitlements_anonymous():
 )
 @responses.activate
 def test_api_entitlements_deploycenter_get_entitlements_both_true():
-    """Authenticated users should get entitlements when both can_access and can_upload are True."""
+    """Authenticated users should get entitlements when can_access is True."""
     responses.add(
         responses.GET,
         ENTITLEMENTS_URL,
@@ -80,64 +80,8 @@ def test_api_entitlements_deploycenter_get_entitlements_both_true():
         "can_access": {
             "result": True,
         },
-        "can_upload": {
-            "result": True,
-            "reason": None,
-        },
         "context": {
             "organization": None,
-            "operator": None,
-            "potentialOperators": None,
-        },
-    }
-    assert len(responses.calls) == 1
-    assert responses.calls[0].request.url.startswith(ENTITLEMENTS_URL)
-    assert "siret" in responses.calls[0].request.url
-    assert f"account_email={urllib.parse.quote(user.email)}" in responses.calls[0].request.url
-    assert "account_type=user" in responses.calls[0].request.url
-    assert "service_id=8" in responses.calls[0].request.url
-    assert responses.calls[0].request.headers["X-Service-Auth"] == (
-        f"Bearer {ENTITLEMENTS_BACKEND_PARAMETERS['api_key']}"
-    )
-
-
-@override_settings(
-    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
-    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_BACKEND_PARAMETERS,
-)
-@responses.activate
-def test_api_entitlements_deploycenter_get_entitlements_can_upload_false():
-    """Authenticated users should get correct entitlements when can_upload is False."""
-    responses.add(
-        responses.GET,
-        ENTITLEMENTS_URL,
-        json={
-            "entitlements": {
-                "can_access": True,
-                "can_upload": False,
-                "can_upload_reason": "not_activated",
-            },
-            "organization": "ACME",
-        },
-        status=200,
-    )
-
-    client = APIClient()
-    user = UserFactory()
-    user.claims = {"siret": "12345678901234"}
-    client.force_authenticate(user)
-    response = client.get("/api/v1.0/entitlements/")
-    assert response.status_code == 200
-    assert response.json() == {
-        "can_access": {
-            "result": True,
-        },
-        "can_upload": {
-            "result": False,
-            "reason": "not_activated",
-        },
-        "context": {
-            "organization": "ACME",
             "operator": None,
             "potentialOperators": None,
         },
@@ -181,10 +125,6 @@ def test_api_entitlements_deploycenter_get_entitlements_can_access_false():
     assert response.json() == {
         "can_access": {
             "result": False,
-        },
-        "can_upload": {
-            "result": True,
-            "reason": None,
         },
         "context": {
             "organization": None,
@@ -232,10 +172,6 @@ def test_api_entitlements_deploycenter_get_entitlements_cache():
         "can_access": {
             "result": True,
         },
-        "can_upload": {
-            "result": True,
-            "reason": None,
-        },
         "context": {
             "organization": None,
             "operator": None,
@@ -249,10 +185,6 @@ def test_api_entitlements_deploycenter_get_entitlements_cache():
     assert response.json() == {
         "can_access": {
             "result": True,
-        },
-        "can_upload": {
-            "result": True,
-            "reason": None,
         },
         "context": {
             "organization": None,

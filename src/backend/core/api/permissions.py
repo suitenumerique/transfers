@@ -14,27 +14,27 @@ class IsAuthenticated(permissions.BasePermission):
 
 
 def enforce_upload_entitlement(user):
-    """Raise ``PermissionDenied`` unless the entitlements backend allows upload.
+    """Raise ``PermissionDenied`` unless the user may access the app (upload gate).
 
-    Centralises the ``can_upload`` check used by draft endpoints that create
-    or advance a browser-side multipart upload. Callers should rely on this
-    helper (or :class:`DraftUploadEntitlementPermission`) instead of
-    duplicating backend lookups.
+    Draft upload endpoints call ``get_entitlements_backend().can_access`` so
+    the check stays aligned with login and ``GET /entitlements/``. Use this
+    helper (or :class:`DraftUploadEntitlementPermission`) rather than
+    duplicating backend lookups in view code.
     """
     if not user.is_authenticated:
         raise PermissionDenied("Authentication required.")
-    payload = get_entitlements_backend().can_upload(user)
+    payload = get_entitlements_backend().can_access(user)
     if payload.get("result") is True:
         return
     detail = {"detail": "You do not have permission to upload files."}
-    reason = payload.get("reason")
+    reason = payload.get("reason") or payload.get("message")
     if reason:
         detail["reason"] = reason
     raise PermissionDenied(detail=detail)
 
 
 class DraftUploadEntitlementPermission(permissions.BasePermission):
-    """Require ``can_upload`` for draft actions that perform multipart upload work."""
+    """Require ``can_access`` before draft actions that perform multipart upload work."""
 
     _UPLOAD_ACTIONS = frozenset({"add_file", "sign_part", "complete_upload"})
 

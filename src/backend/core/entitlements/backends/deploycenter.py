@@ -52,7 +52,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         """
         params = {
             "service_id": self.service_id,
-            "account_type": "user",
+            "account_type": "email",
             "account_id": str(user.pk),
             "account_email": user.email or "",
         }
@@ -118,14 +118,6 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         for attribute in attributes_whitelist:
             context[attribute] = entitlements.get(attribute)
         return context
-
-    def can_upload(self, user):
-        """Check if a user can upload a file."""
-        entitlements = self.get_entitlements(user)
-        return {
-            "result": entitlements.get("entitlements", {}).get("can_upload", False),
-            "reason": entitlements.get("entitlements", {}).get("can_upload_reason", None),
-        }
 
     def can_access(self, user):
         """Check if a user can access the app."""

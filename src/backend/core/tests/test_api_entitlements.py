@@ -41,9 +41,6 @@ def test_api_entitlements_get_entitlements_authenticated():
         "can_access": {
             "result": True,
         },
-        "can_upload": {
-            "result": True,
-        },
         "context": {},
     }
 
@@ -53,7 +50,6 @@ def test_api_entitlements_static_backend_reads_from_parameters(settings):
     settings.ENTITLEMENTS_BACKEND_PARAMETERS = {
         "entitlements": {
             "can_access": {"result": False, "message": "Access denied for testing"},
-            "can_upload": {"result": False, "message": "Upload denied for testing"},
         },
     }
     get_entitlements_backend.cache_clear()
@@ -66,7 +62,6 @@ def test_api_entitlements_static_backend_reads_from_parameters(settings):
     assert response.status_code == 200
     assert response.json() == {
         "can_access": {"result": False, "message": "Access denied for testing"},
-        "can_upload": {"result": False, "message": "Upload denied for testing"},
         "context": {},
     }
 
@@ -91,9 +86,6 @@ def test_api_entitlements_get_entitlements_entitlements_backend_returns_falsy():
             "can_access": {
                 "result": False,
                 "message": "You do not have access to the app",
-            },
-            "can_upload": {
-                "result": True,
             },
             "context": {},
         }

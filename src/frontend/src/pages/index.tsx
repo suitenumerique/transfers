@@ -10,7 +10,6 @@ import type { NextPageWithLayout } from "./_app";
 
 type EntitlementsPayload = {
   can_access?: { result?: boolean };
-  can_upload?: { result?: boolean };
 } | null;
 
 type HomePageProps = {
@@ -73,8 +72,6 @@ const HomePage: NextPageWithLayout<HomePageProps> = ({
   }
 
   const canAccess = entitlements?.can_access?.result === true;
-  const canUpload = entitlements?.can_upload?.result === true;
-  const canUseFormUpload = canAccess && canUpload;
 
   const hasEntitlements = entitlementsStatus === 200 && entitlements !== null;
   const entitlementsFailed = entitlementsStatus !== 200;
@@ -83,7 +80,7 @@ const HomePage: NextPageWithLayout<HomePageProps> = ({
     <div className="app-content home">
       <div className="home__grid">
         <section className="home__upload">
-          {entitlementsFailed && (
+         {entitlementsFailed && (
             <Alert type={VariantType.ERROR}>
               <div>
                 <p>Impossible de récupérer vos habilitations.</p>
@@ -91,12 +88,12 @@ const HomePage: NextPageWithLayout<HomePageProps> = ({
               </div>
             </Alert>
           )}
-          {hasEntitlements && canUseFormUpload && <TransferForm />}
-          {hasEntitlements && !canUseFormUpload && (
+          {hasEntitlements && canAccess && <TransferForm />}
+          {hasEntitlements && !canAccess && (
             <Alert type={VariantType.ERROR}>
               <div>
-                <p>Vous n'avez pas les permissions nécessaires pour uploader des fichiers.</p>
-                <p>Merci de contacter <strong>Lysiane</strong> pour plus d'informations.</p>
+                <p>Vous n&apos;avez pas les permissions nécessaires pour accéder à cette application.</p>
+                <p>Merci de contacter <strong>Lysiane</strong> pour plus d&apos;informations.</p>
               </div>
             </Alert>
           )}
