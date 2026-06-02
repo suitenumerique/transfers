@@ -197,6 +197,42 @@ class TestTransferList:
         assert row["consulted"] is False
         assert row["downloaded"] is False
 
+    def test_list_deactivated_false_returns_only_active(
+        self, authenticated_client, user
+    ):
+        active = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
+        TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
+
+        response = authenticated_client.get(f"{API_URL}?deactivated=false")
+        assert response.status_code == 200
+        ids = {row["id"] for row in response.data["results"]}
+        assert ids == {str(active.id)}
+
+    def test_list_deactivated_true_returns_expired_and_deactivated(
+        self, authenticated_client, user
+    ):
+        TransferFactory(owner=user, status=TransferStatus.ACTIVE)
+        expired = TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
+
+        response = authenticated_client.get(f"{API_URL}?deactivated=true")
+        assert response.status_code == 200
+        ids = {row["id"] for row in response.data["results"]}
+        assert ids == {str(expired.id), str(deactivated.id)}
+
+    def test_list_search_matches_title_case_insensitive(
+        self, authenticated_client, user
+    ):
+        match_lower = TransferFactory(owner=user, title="quarterly report q4")
+        match_upper = TransferFactory(owner=user, title="MY QUARTERLY BUDGET")
+        TransferFactory(owner=user, title="something else entirely")
+
+        response = authenticated_client.get(f"{API_URL}?search=quarterly")
+        assert response.status_code == 200
+        ids = {row["id"] for row in response.data["results"]}
+        assert ids == {str(match_lower.id), str(match_upper.id)}
+
 
 @pytest.mark.django_db
 class TestTransferDetail:

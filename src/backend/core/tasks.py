@@ -3,6 +3,7 @@
 import logging
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 import botocore
@@ -18,6 +19,7 @@ from core.enums import (
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
 from core.services.email import send_recipient_invitation
+from core.services.s3_sweep import run_orphan_sweep
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,28 @@ def deactivate_expired_transfers_task():
 
 
 @shared_task
+def sweep_orphan_s3_storage_task():
+    """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
+
+    Should report zero in steady state — non-zero counts are the signal
+    that one of the per-row paths is leaking.
+    """
+    result = run_orphan_sweep(
+        apply=True,
+        min_age_hours=24,
+        write=lambda msg: logger.info("orphan-sweep: %s", msg),
+        write_error=lambda msg: logger.error("orphan-sweep: %s", msg),
+    )
+    if result["objects_deleted"] or result["mpus_aborted"]:
+        logger.warning(
+            "orphan-sweep cleaned %d object(s) and %d MPU(s) — investigate "
+            "which per-row path leaked",
+            result["objects_deleted"],
+            result["mpus_aborted"],
+        )
+
+
+@shared_task
 def cleanup_abandoned_drafts_task():
     """Clean up drafts whose user never pressed "Create link".
 
@@ -71,19 +95,30 @@ def cleanup_abandoned_drafts_task():
     files with it).
     """
     cutoff = timezone.now() - timedelta(hours=24)
-    abandoned = TransferDraft.objects.filter(
-        created_at__lte=cutoff,
-    ).prefetch_related("files")
+    # Snapshot the ids first; we re-fetch each draft under SELECT FOR UPDATE
+    # so a concurrent finalize / abort / add_file blocks instead of racing
+    # us into deleting bytes that just got reparented.
+    abandoned_ids = list(
+        TransferDraft.objects.filter(created_at__lte=cutoff).values_list(
+            "id", flat=True
+        )
+    )
 
     count = 0
-    for draft in abandoned:
-        for tf in draft.files.all():
-            if tf.upload_id:
-                s3.abort_multipart_upload(tf.s3_key, tf.upload_id)
-            if tf.s3_key:
-                s3.delete_object(tf.s3_key)
-        draft.delete()
-        count += 1
+    for draft_id in abandoned_ids:
+        with transaction.atomic():
+            try:
+                draft = TransferDraft.objects.select_for_update().get(
+                    id=draft_id, created_at__lte=cutoff
+                )
+            except TransferDraft.DoesNotExist:
+                # Finalized or aborted between the snapshot and now.
+                continue
+            files = list(draft.files.all())
+            s3.best_effort_abort_multipart_uploads_from_files(files)
+            s3.best_effort_delete_objects_from_files(files)
+            draft.delete()
+            count += 1
 
     if count:
         logger.info("Cleaned up %d abandoned draft(s).", count)
@@ -173,18 +208,27 @@ def import_drive_file_task(transfer_file_id):
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
         tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
-    except (
-        requests.RequestException,
-        botocore.exceptions.ClientError,
-        ValueError,
-    ):
+    except Exception:
+        # Catch broadly: any failure between create_multipart_upload and the
+        # final save (DB hiccup, S3 error, size mismatch, …) needs the same
+        # cleanup, otherwise the MPU and partial object leak.
         logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
+        # Best-effort: a S3 cleanup error must not block tf.delete() — the
+        # frontend's poller relies on the row disappearing to surface the
+        # failure to the user.
         if upload_id:
-            s3.abort_multipart_upload(key=key, upload_id=upload_id)
-        # delete_object is safe on a key that never got fully written — S3
-        # returns 204 on a non-existent key.
+            try:
+                s3.abort_multipart_upload(key=key, upload_id=upload_id)
+            except botocore.exceptions.ClientError:
+                logger.exception(
+                    "Failed to abort MPU %s for key %s", upload_id, key
+                )
+        # delete_object is idempotent on missing keys (S3 returns 204).
         if tf.s3_key:
-            s3.delete_object(tf.s3_key)
+            try:
+                s3.delete_object(tf.s3_key)
+            except botocore.exceptions.ClientError:
+                logger.exception("Failed to delete object %s", tf.s3_key)
         tf.delete()
 
 
@@ -267,3 +311,9 @@ def send_recipient_invitations_task(transfer_id):
                 recipient.email,
                 transfer_id,
             )
+
+    # Stamp completion regardless of per-recipient outcome — the frontend
+    # uses this to leave its "sending…" polling state, and a partial failure
+    # is signalled by recipients with email_sent_at IS NULL after the stamp.
+    transfer.notifications_completed_at = timezone.now()
+    transfer.save(update_fields=["notifications_completed_at", "updated_at"])

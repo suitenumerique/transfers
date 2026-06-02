@@ -6,6 +6,7 @@ action creates a fresh ``Transfer`` with the request body's metadata and
 reparents the draft's ``TransferFile`` rows to it, then deletes the draft.
 """
 
+import logging
 from datetime import timedelta
 
 from django.conf import settings
@@ -34,6 +35,8 @@ from core.api.utils import log_agent_event
 from core.enums import SharingMode, TransferEventType
 from core.services import s3
 from core.tasks import import_drive_file_task
+
+logger = logging.getLogger(__name__)
 
 
 class TransferDraftViewSet(viewsets.GenericViewSet):
@@ -86,6 +89,15 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             )
         return tf
 
+    def _get_locked_draft(self, pk):
+        """Like ``get_object`` but takes a row-level lock; must be called
+        inside an ``atomic`` block so concurrent mutating ops on the same
+        draft serialize."""
+        try:
+            return self.get_queryset().select_for_update().get(pk=pk)
+        except models.TransferDraft.DoesNotExist as exc:
+            raise drf.exceptions.NotFound("Draft not found.") from exc
+
     @extend_schema(
         request=DraftAddFileSerializer,
         responses={
@@ -124,10 +136,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # (and per-file ≤ total by invariant).
                 draft = models.TransferDraft.objects.create(owner=request.user)
             else:
-                try:
-                    draft = self.get_queryset().get(id=draft_id)
-                except models.TransferDraft.DoesNotExist as exc:
-                    raise drf.exceptions.NotFound("Draft not found.") from exc
+                draft = self._get_locked_draft(draft_id)
 
                 # Cumulative guards against drip-feed bypass: the serializer
                 # only sees one file at a time, so totals are recomputed from
@@ -180,8 +189,23 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 upload_id = s3.create_multipart_upload(
                     key=transfer_file.s3_key, content_type=data["mime_type"]
                 )
-                transfer_file.upload_id = upload_id
-                transfer_file.save()
+                # If the save fails the atomic block rolls the row back, but
+                # S3 keeps the MPU — abort it before re-raising.
+                try:
+                    transfer_file.upload_id = upload_id
+                    transfer_file.save()
+                except Exception:
+                    # Don't let a S3 error here mask the original exception.
+                    try:
+                        s3.abort_multipart_upload(transfer_file.s3_key, upload_id)
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to abort orphan MPU %s for key %s after "
+                            "rollback",
+                            upload_id,
+                            transfer_file.s3_key,
+                        )
+                    raise
 
         response_body = {
             "draft_id": str(draft.id),
@@ -235,57 +259,64 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         best-effort abort all in-progress multipart uploads and nuke the
         draft (matches the all-or-nothing semantics of the old abort-upload).
         """
-        draft = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        transfer_file = self._get_pending_file(draft, data["transfer_file_id"])
+        # Stash any failure detail and raise *outside* the atomic block, so
+        # the cleanup it performs (draft.delete()) actually commits.
+        error_detail = None
 
-        try:
-            s3.complete_multipart_upload(
-                key=transfer_file.s3_key,
-                upload_id=transfer_file.upload_id,
-                parts=data["parts"],
-            )
-        except botocore.exceptions.ClientError as exc:
-            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
-            s3.abort_uploads_for_files(draft.files.all())
-            draft.delete()
-            raise drf.exceptions.ValidationError(
-                {
+        with transaction.atomic():
+            draft = self._get_locked_draft(pk)
+            transfer_file = self._get_pending_file(draft, data["transfer_file_id"])
+
+            try:
+                s3.complete_multipart_upload(
+                    key=transfer_file.s3_key,
+                    upload_id=transfer_file.upload_id,
+                    parts=data["parts"],
+                )
+            except botocore.exceptions.ClientError as exc:
+                error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+                s3.best_effort_abort_multipart_uploads_from_files(draft.files.all())
+                draft.delete()
+                error_detail = {
                     "parts": (
                         f"S3 rejected the multipart upload completion "
                         f"({error_code}). The draft has been aborted, "
                         f"please restart it from scratch."
                     )
                 }
-            ) from exc
-
-        # Verify landed-size matches the declared one. See viewsets/transfer.py
-        # history for the rationale; same guard applies here.
-        actual_size = s3.head_object_size(transfer_file.s3_key)
-        if actual_size != transfer_file.size:
-            files = list(draft.files.all())
-            s3.abort_uploads_for_files(files)
-            s3.delete_objects_for_files(files)
-            draft.delete()
-            raise drf.exceptions.ValidationError(
-                {
-                    "parts": (
-                        f"Uploaded file size ({actual_size} bytes) does not "
-                        f"match the declared size ({transfer_file.size} "
-                        f"bytes). The draft has been aborted."
+            else:
+                # Verify landed-size matches the declared one. See
+                # viewsets/transfer.py history for the rationale; same guard.
+                actual_size = s3.head_object_size(transfer_file.s3_key)
+                if actual_size != transfer_file.size:
+                    files = list(draft.files.all())
+                    s3.best_effort_abort_multipart_uploads_from_files(files)
+                    s3.best_effort_delete_objects_from_files(files)
+                    draft.delete()
+                    error_detail = {
+                        "parts": (
+                            f"Uploaded file size ({actual_size} bytes) does not "
+                            f"match the declared size ({transfer_file.size} "
+                            f"bytes). The draft has been aborted."
+                        )
+                    }
+                else:
+                    transfer_file.upload_completed_at = timezone.now()
+                    transfer_file.upload_id = ""
+                    transfer_file.save(
+                        update_fields=[
+                            "upload_completed_at",
+                            "upload_id",
+                            "updated_at",
+                        ]
                     )
-                }
-            )
 
-        transfer_file.upload_completed_at = timezone.now()
-        transfer_file.upload_id = ""
-        transfer_file.save(
-            update_fields=["upload_completed_at", "upload_id", "updated_at"]
-        )
-
+        if error_detail is not None:
+            raise drf.exceptions.ValidationError(error_detail)
         return drf.response.Response(status=204)
 
     @extend_schema(
@@ -296,30 +327,28 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
     def remove_file(self, request, pk=None):
         """Detach a file from a draft.
 
-        Best-effort S3 cleanup (abort multipart, delete object). If it was
-        the last file, the draft itself is deleted — empty drafts have no
-        reason to exist.
+        S3 cleanup is best-effort: a backend hiccup is not something the
+        user can fix by retrying, so the DB row is always removed and the
+        orphan-sweep is the recovery path. If it was the last file, the
+        draft itself is deleted — empty drafts have no reason to exist.
         """
-        draft = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            transfer_file = draft.files.get(
-                id=serializer.validated_data["transfer_file_id"]
-            )
-        except models.TransferFile.DoesNotExist as exc:
-            raise drf.exceptions.NotFound("Transfer file not found.") from exc
-
-        if transfer_file.upload_id:
-            s3.abort_multipart_upload(
-                key=transfer_file.s3_key, upload_id=transfer_file.upload_id
-            )
-        s3.delete_object(transfer_file.s3_key)
 
         with transaction.atomic():
+            draft = self._get_locked_draft(pk)
+            try:
+                transfer_file = draft.files.get(
+                    id=serializer.validated_data["transfer_file_id"]
+                )
+            except models.TransferFile.DoesNotExist as exc:
+                raise drf.exceptions.NotFound("Transfer file not found.") from exc
+
+            files = [transfer_file]
+            s3.best_effort_abort_multipart_uploads_from_files(files)
+            s3.best_effort_delete_objects_from_files(files)
+
             transfer_file.delete()
-            # Fresh query bypasses any prefetched-cache staleness from
-            # get_object() (which was unlikely here but cheap to guarantee).
             if not models.TransferFile.objects.filter(draft=draft).exists():
                 draft.delete()
 
@@ -332,11 +361,12 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         deletes every object already landed, deletes the draft + its files
         via cascade. All-or-nothing; safe to call on a half-uploaded draft.
         """
-        draft = self.get_object()
-        files = list(draft.files.all())
-        s3.abort_uploads_for_files(files)
-        s3.delete_objects_for_files(files)
-        draft.delete()
+        with transaction.atomic():
+            draft = self._get_locked_draft(pk)
+            files = list(draft.files.all())
+            s3.best_effort_abort_multipart_uploads_from_files(files)
+            s3.best_effort_delete_objects_from_files(files)
+            draft.delete()
         return drf.response.Response(status=204)
 
     @extend_schema(
@@ -357,29 +387,30 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         Refuses to finalize a draft whose files haven't all completed their
         multipart upload (``upload_completed_at IS NULL`` on a per-file basis).
         """
-        draft = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         metadata = serializer.validated_data
 
-        files = list(draft.files.all())
-        if not files:
-            raise drf.exceptions.ValidationError(
-                {"files": "Draft has no files to finalize."}
-            )
-        pending = [str(f.id) for f in files if f.upload_completed_at is None]
-        if pending:
-            raise drf.exceptions.ValidationError(
-                {
-                    "files": (
-                        "Cannot finalize: some files have not completed "
-                        "their upload yet."
-                    ),
-                    "pending_file_ids": pending,
-                }
-            )
-
         with transaction.atomic():
+            draft = self._get_locked_draft(pk)
+
+            files = list(draft.files.all())
+            if not files:
+                raise drf.exceptions.ValidationError(
+                    {"files": "Draft has no files to finalize."}
+                )
+            pending = [str(f.id) for f in files if f.upload_completed_at is None]
+            if pending:
+                raise drf.exceptions.ValidationError(
+                    {
+                        "files": (
+                            "Cannot finalize: some files have not completed "
+                            "their upload yet."
+                        ),
+                        "pending_file_ids": pending,
+                    }
+                )
+
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,
                 title=metadata["title"],

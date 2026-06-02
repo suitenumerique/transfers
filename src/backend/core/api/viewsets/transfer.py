@@ -56,8 +56,28 @@ class TransferViewSet(
             return TransferEventSerializer
         return TransferDetailSerializer
 
+    # Cap search query length to keep ILIKE bounded and guard against a
+    # pathologically long input. Anything beyond this is a client bug.
+    SEARCH_MAX_LENGTH = 100
+
     def get_queryset(self):
         if self.action == "list":
+            qs = models.Transfer.objects.filter(owner=self.request.user)
+
+            # ``deactivated`` bucket — "active" section = status ACTIVE only;
+            # "deactivated" section = every other status (EXPIRED, DEACTIVATED).
+            # Omitted → no status filter, for any caller that still wants
+            # the full list.
+            deactivated = self.request.query_params.get("deactivated")
+            if deactivated == "true":
+                qs = qs.exclude(status=TransferStatus.ACTIVE)
+            elif deactivated == "false":
+                qs = qs.filter(status=TransferStatus.ACTIVE)
+
+            search = (self.request.query_params.get("search") or "").strip()
+            if search:
+                qs = qs.filter(title__icontains=search[: self.SEARCH_MAX_LENGTH])
+
             # Annotate everything the list serializer needs in one query
             # rather than prefetch + N×2 existence checks.
             event_of_type = lambda ev: Exists(
@@ -65,16 +85,12 @@ class TransferViewSet(
                     transfer_id=OuterRef("pk"), event_type=ev
                 )
             )
-            return (
-                models.Transfer.objects.filter(owner=self.request.user)
-                .annotate(
-                    _file_count=Count("files"),
-                    _total_size=Sum("files__size", default=0),
-                    _consulted=event_of_type(TransferEventType.LINK_OPENED),
-                    _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
-                )
-                .order_by("-created_at")
-            )
+            return qs.annotate(
+                _file_count=Count("files"),
+                _total_size=Sum("files__size", default=0),
+                _consulted=event_of_type(TransferEventType.LINK_OPENED),
+                _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
+            ).order_by("-created_at")
         return (
             models.Transfer.objects.filter(owner=self.request.user)
             .prefetch_related("files", "recipients")
@@ -110,13 +126,13 @@ class TransferViewSet(
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
     def resend(self, request, pk=None):
-        """Re-send the recipient invitation emails for an email-mode
-        transfer. No-op on link-mode transfers (no recipients).
+        """Retry failed recipient invitation emails for an email-mode
+        transfer. The task only emails recipients with
+        ``email_sent_at IS NULL``, so calling it again is the natural retry
+        path — a successful first send leaves nothing to do.
 
-        Stamps `email_sent_at` back to NULL on each recipient before
-        delegating to the existing celery task — the task only emails
-        recipients with `email_sent_at IS NULL`, so a reset is the most
-        precise trigger.
+        ``notifications_completed_at`` is cleared so the frontend can poll
+        until the task stamps it again, signalling the retry has finished.
         """
         from core.tasks import send_recipient_invitations_task
 
@@ -131,7 +147,8 @@ class TransferViewSet(
                 {"sharing_mode": "Resend only applies to email-mode transfers."}
             )
 
-        transfer.recipients.update(email_sent_at=None)
+        transfer.notifications_completed_at = None
+        transfer.save(update_fields=["notifications_completed_at", "updated_at"])
         send_recipient_invitations_task.delay(str(transfer.id))
 
         serializer = TransferDetailSerializer(transfer)

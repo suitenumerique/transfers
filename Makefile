@@ -182,6 +182,11 @@ superuser: ## Create an admin superuser with password "admin"
 	@$(MANAGE_DB) createsuperuser --email admin@admin.local --password admin
 .PHONY: superuser
 
+seed-transfers: ## Seed the DB with placeholder transfers + files (local dev only)
+	@echo "$(BOLD)Seeding transfers (this needs the stack to be running)$(RESET)"
+	@$(COMPOSE_EXEC_APP) python manage.py seed_transfers $(ARGS)
+.PHONY: seed-transfers
+
 shell-back: ## open a shell in the backend container
 	@$(COMPOSE) run --rm --build backend-dev /bin/bash
 .PHONY: shell-back

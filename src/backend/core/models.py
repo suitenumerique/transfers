@@ -223,6 +223,13 @@ class Transfer(BaseModel):
     # null otherwise. The gap between the transition and this deadline lets
     # recipients' in-flight downloads finish before the bytes disappear.
     pending_deletion_at = models.DateTimeField(null=True, blank=True)
+    notifications_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when ``send_recipient_invitations_task`` has run "
+        "through every recipient (whether their delivery succeeded or not). "
+        "The frontend polls this to know when to leave the 'sending…' state.",
+    )
 
     class Meta:
         db_table = "core_transfer"
@@ -287,7 +294,7 @@ class Transfer(BaseModel):
         """
         from core.services import s3
 
-        s3.delete_objects_for_files(self.files.all())
+        s3.best_effort_delete_objects_from_files(self.files.all())
 
 
 class TransferRecipient(BaseModel):

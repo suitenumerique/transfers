@@ -1,4 +1,14 @@
-"""S3 client factory and multipart upload helpers for the transferts bucket."""
+"""S3 client factory and multipart upload helpers for the transferts bucket.
+
+Two-tier helper API:
+
+- Bare ``abort_multipart_upload`` / ``delete_object`` raise ``ClientError`` —
+  use them when the caller needs to surface or react to a failure.
+- ``best_effort_abort_multipart_uploads_from_files`` /
+  ``best_effort_delete_objects_from_files`` iterate over ``TransferFile``
+  rows and swallow ``ClientError`` per item — use them when one bad file
+  must not stop the sweep.
+"""
 
 import logging
 from functools import cache
@@ -138,30 +148,23 @@ def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> No
 
 
 def abort_multipart_upload(key: str, upload_id: str) -> None:
-    """Abort a multipart upload in progress. Safe to call on an unknown upload:
-    errors are logged and swallowed so callers can use this as a best-effort
-    cleanup helper."""
+    """Abort a multipart upload. Raises ``ClientError`` on failure — for
+    best-effort sweeps over many files, use
+    ``best_effort_abort_multipart_uploads_from_files``."""
     client = get_s3_client()
-    try:
-        client.abort_multipart_upload(
-            Bucket=settings.TRANSFERS_BUCKET_NAME,
-            Key=key,
-            UploadId=upload_id,
-        )
-    except botocore.exceptions.ClientError:
-        logger.exception(
-            "Failed to abort multipart upload %s for key %s", upload_id, key
-        )
+    client.abort_multipart_upload(
+        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Key=key,
+        UploadId=upload_id,
+    )
 
 
 def delete_object(key: str) -> None:
-    """Delete a single object from the transfers bucket. Errors are logged
-    and swallowed (best-effort cleanup)."""
+    """Delete a single object. Raises ``ClientError`` on failure — for
+    best-effort sweeps over many files, use
+    ``best_effort_delete_objects_from_files``."""
     client = get_s3_client()
-    try:
-        client.delete_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
-    except botocore.exceptions.ClientError:
-        logger.exception("Failed to delete S3 object %s", key)
+    client.delete_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
 
 
 def head_object_size(key: str) -> int:
@@ -171,23 +174,31 @@ def head_object_size(key: str) -> int:
     return int(response["ContentLength"])
 
 
-def abort_uploads_for_files(files) -> None:
-    """Best-effort abort of every in-progress multipart upload across ``files``.
-
-    Iterable of ``TransferFile`` rows (queryset or list). Files without an
-    ``upload_id`` are skipped. Individual S3 failures are logged and swallowed
-    by ``abort_multipart_upload``."""
+def best_effort_abort_multipart_uploads_from_files(files) -> None:
+    """Best-effort abort across ``files`` (queryset or list of ``TransferFile``).
+    Files without ``upload_id`` are skipped; per-file ``ClientError`` is logged
+    and swallowed so one bad MPU does not abort the sweep."""
     for tf in files:
-        if tf.upload_id:
+        if not tf.upload_id:
+            continue
+        try:
             abort_multipart_upload(tf.s3_key, tf.upload_id)
+        except botocore.exceptions.ClientError:
+            logger.exception(
+                "Failed to abort multipart upload %s for key %s",
+                tf.upload_id,
+                tf.s3_key,
+            )
 
 
-def delete_objects_for_files(files) -> None:
-    """Best-effort delete of every S3 object backing ``files``.
-
-    Iterable of ``TransferFile`` rows (queryset or list). Files without an
-    ``s3_key`` are skipped. Individual S3 failures are logged and swallowed
-    by ``delete_object``."""
+def best_effort_delete_objects_from_files(files) -> None:
+    """Best-effort delete across ``files`` (queryset or list of ``TransferFile``).
+    Files without ``s3_key`` are skipped; per-file ``ClientError`` is logged
+    and swallowed."""
     for tf in files:
-        if tf.s3_key:
+        if not tf.s3_key:
+            continue
+        try:
             delete_object(tf.s3_key)
+        except botocore.exceptions.ClientError:
+            logger.exception("Failed to delete S3 object %s", tf.s3_key)

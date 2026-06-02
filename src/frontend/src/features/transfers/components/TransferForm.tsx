@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -11,10 +12,7 @@ import {
   VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
 import {
-  ArrowUpCircle,
-  ArrowUpDown,
   ArrowUpRight,
-  Checkmark,
   Copy,
   Doc,
   DropdownMenu,
@@ -25,14 +23,16 @@ import {
   Info,
   Link as LinkIcon,
   Mail,
-  MailCheckFilled,
+  Spinner,
   useDropdownMenu,
 } from "@gouvfr-lasuite/ui-kit";
+import { apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import {
   fileKey,
+  SubmitCancelledError,
   useTransferDraft,
   type DraftFile,
   type DrivePickedItem,
@@ -72,8 +72,6 @@ function StorageGauge({
     </div>
   );
 }
-
-const EXPIRY_CHOICES = [7, 30, 90];
 
 // Small 16px spinner used as the submit button's `icon` while the form
 // waits for uploads to finish + finalize to return. Inherits currentColor
@@ -196,7 +194,9 @@ export function TransferForm() {
   const draft = useTransferDraft();
 
   const [title, setTitle] = useState("");
-  const [expiresInDays, setExpiresInDays] = useState<number>(30);
+  const [expiresInDays, setExpiresInDays] = useState<number>(
+    config.TRANSFER_DEFAULT_EXPIRY_DAYS,
+  );
   const [sharingMode, setSharingMode] = useState<SharingMode>("email");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [hasValidPending, setHasValidPending] = useState(false);
@@ -205,10 +205,13 @@ export function TransferForm() {
   // auto-deactivates the transfer (status flip + scheduled S3 wipe).
   // Matches a "one-shot link" intent.
   const [autoArchiveOnDownload, setAutoArchiveOnDownload] = useState(false);
-  // Once finalize resolves we pivot the whole form to a success panel (see
-  // TransferSuccess below). Clicking "New transfer" clears this and the
-  // other form state so the user starts fresh on the same route.
-  const [finalized, setFinalized] = useState<TransferDetail | null>(null);
+  // Set after a successful email-mode submit. While set, the form is
+  // overlaid and the recipient-invitation task is polled until it stamps
+  // ``notifications_completed_at`` — at which point we navigate to the
+  // success or partial-failure confirmation page.
+  const [pendingTransferId, setPendingTransferId] = useState<string | null>(
+    null,
+  );
   const expiryMenu = useDropdownMenu();
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
@@ -219,6 +222,26 @@ export function TransferForm() {
       void draft.abort();
     };
   }, []);
+
+  // Poll the freshly-finalized transfer every 2s while we're waiting for
+  // the recipient-invitation task to stamp ``notifications_completed_at``.
+  // Disabled (no fetch) when ``pendingTransferId`` is null.
+  const pollQuery = useQuery<TransferDetail>({
+    queryKey: ["transfer-poll", pendingTransferId],
+    queryFn: () => apiFetch<TransferDetail>(`/transfers/${pendingTransferId}/`),
+    enabled: pendingTransferId !== null,
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    const data = pollQuery.data;
+    if (!data?.notifications_completed_at) return;
+    isSubmittingRef.current = true;
+    const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
+    router.push(
+      hasFailures ? `/confirm-failed/${data.id}` : `/confirm/${data.id}`,
+    );
+  }, [pollQuery.data, router]);
 
   const handleFilesChange = (incoming: File[]) => {
     setFileError(null);
@@ -335,11 +358,64 @@ export function TransferForm() {
   const hasFiles = draft.files.length > 0;
   const currentSize = draft.files.reduce((sum, f) => sum + f.total, 0);
   const anyError = draft.files.some((f) => f.state === "error");
-  const busy = draft.isSubmitting;
+  const awaitingUploads = draft.isAwaitingUploads;
+  const finalizing = draft.isFinalizing;
+
+  // Warn before any kind of departure while a draft has files or uploads
+  // in flight. Two separate guards because the events don't overlap:
+  // - beforeunload covers tab close / refresh / cross-origin nav (browser
+  //   shows its own native, non-customisable wording).
+  // - router.events.routeChangeStart covers intra-app navigation (clicking
+  //   another transfer in the sidebar etc.); we get to show a confirm()
+  //   with our own message and abort the navigation if the user declines.
+  const shouldWarnOnLeave = hasFiles || awaitingUploads;
+  useEffect(() => {
+    if (!shouldWarnOnLeave) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy Chrome/Safari needs a return value to trigger the dialog;
+      // modern browsers ignore the string and show their own wording.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [shouldWarnOnLeave]);
+
+  // Lets the routeChangeStart handler skip the confirm during the
+  // post-submit router.push — at that point the draft is already
+  // resetLocal'd on the server, but React hasn't re-rendered to clear
+  // shouldWarnOnLeave yet, so the closure would still trip otherwise.
+  const isSubmittingRef = useRef(false);
+  useEffect(() => {
+    if (!shouldWarnOnLeave) return;
+    const handler = (url: string) => {
+      if (isSubmittingRef.current) return;
+      // Skip the confirm if Next.js is firing a no-op (same path).
+      if (router.asPath === url) return;
+      if (window.confirm(t("Leave this page? Your transfer will be discarded."))) {
+        return;
+      }
+      // Throwing a string is Next.js's documented way to cancel a route
+      // change in flight without bubbling an Error to the console.
+      router.events.emit("routeChangeError");
+      throw "routeChange aborted by user";
+    };
+    router.events.on("routeChangeStart", handler);
+    return () => router.events.off("routeChangeStart", handler);
+  }, [shouldWarnOnLeave, router, t]);
+  // Metadata inputs / Drive attach / tabs stay locked for the whole
+  // submit flow — `busy` gates those. File-level Delete / Cancel actions
+  // only need to lock during the non-cancellable finalize window so the
+  // user can still back out of an armed auto-create.
+  const busy = awaitingUploads || finalizing;
+  const fileActionsDisabled = finalizing;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hasFiles || anyError || busy) return;
+    // Button is disabled during both phases — the form can still submit
+    // via Enter key, so guard here too.
+    if (busy) return;
+    if (!hasFiles || anyError) return;
 
     if (sharingMode === "email" && recipients.length === 0 && !hasValidPending) {
       return;
@@ -353,65 +429,69 @@ export function TransferForm() {
         recipients: sharingMode === "email" ? recipients : [],
         auto_archive_on_download: autoArchiveOnDownload,
       });
-      setFinalized(result);
-    } catch {
-      // Errors surface via draft.error / per-file state; no-op here.
+      if (result.sharing_mode === "link") {
+        // Link mode: nothing to wait for — go straight to the confirm page.
+        // Suppress the route-change confirm; see the ref's declaration.
+        isSubmittingRef.current = true;
+        router.push(`/confirm/${result.id}`);
+      } else {
+        // Email mode: enter polling state. The pollQuery effect will navigate
+        // once the recipient-invitation task is done (success or partial fail).
+        setPendingTransferId(result.id);
+      }
+    } catch (err) {
+      // A cancel is a deliberate user action — stay on the form silently.
+      // Other errors already surface via draft.error / per-file state.
+      if (err instanceof SubmitCancelledError) return;
     }
   };
 
-  const handleNewTransfer = () => {
-    setFinalized(null);
-    setTitle("");
-    setRecipients([]);
-    setHasValidPending(false);
-    setFileError(null);
-  };
-
-  // The sidebar's "New transfer" link points to `/`. When the user is
-  // already on `/` viewing a success panel, Next.js Link is a no-op and
-  // `finalized` stays set. The Sidebar dispatches this event on click so
-  // we bounce back to the empty form regardless of current route state.
-  useEffect(() => {
-    const handler = () => handleNewTransfer();
-    window.addEventListener("transferts:new-transfer", handler);
-    return () => window.removeEventListener("transferts:new-transfer", handler);
-  }, []);
-
-  const expiryOptions = EXPIRY_CHOICES.map((days) => ({
+  const expiryOptions = config.TRANSFER_EXPIRY_CHOICES.map((days) => ({
     label: t("{{count}} days", { count: days }),
     value: String(days),
     callback: () => setExpiresInDays(days),
   }));
   const currentExpiryLabel = t("{{count}} days", { count: expiresInDays });
 
+  // Submit button stays disabled during both submit phases. To back out
+  // of an armed auto-create, the user clicks Delete/Cancel on a file row
+  // (those stay enabled while awaitingUploads, and their handler disarms
+  // the pending finalize).
   const submitDisabled =
+    busy ||
     !hasFiles ||
     anyError ||
-    busy ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
-
-  if (finalized) {
-    return (
-      <TransferSuccess
-        transfer={finalized}
-        onNewTransfer={handleNewTransfer}
-        onGoToDetail={() => router.push(`/transfers/${finalized.id}`)}
-      />
-    );
-  }
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
+      {pendingTransferId !== null && (
+        <div
+          className="transfer-form__sending-overlay"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="transfer-form__sending-icon" aria-hidden="true">
+            <Spinner size="lg" />
+          </div>
+          <h2 className="transfer-form__sending-title">
+            {t("Sending emails")}
+          </h2>
+          <p className="transfer-form__sending-text">
+            {t("This usually takes a few seconds.")}
+          </p>
+        </div>
+      )}
       <div className="transfer-form__grid">
         <section
           className="transfer-form__files-col"
-          aria-label={t("Your items")}
+          aria-label={t("Create a new transfer")}
         >
           <header className="transfer-form__files-header">
             <h1 className="transfer-form__files-title">
               {hasFiles
-                ? t("{{count}} item", { count: draft.files.length })
-                : t("Your items")}
+                ? t("{{count}} file", { count: draft.files.length })
+                : t("Create a new transfer")}
             </h1>
             {hasFiles && (
               <StorageGauge
@@ -430,7 +510,7 @@ export function TransferForm() {
               variant="link"
               onPick={handleDrivePick}
               onError={setFileError}
-              disabled={busy}
+              disabled={finalizing}
               maxFileSize={config.TRANSFER_MAX_FILE_SIZE}
             />
           )}
@@ -503,7 +583,7 @@ export function TransferForm() {
                       setFileError(null);
                       void draft.removeFile(df.key);
                     }}
-                    disabled={busy}
+                    disabled={fileActionsDisabled}
                   >
                     {isUploading ? t("Cancel") : t("Delete")}
                   </button>
@@ -544,8 +624,13 @@ export function TransferForm() {
               className={`transfer-form__tab${
                 sharingMode === "email" ? " transfer-form__tab--active" : ""
               }`}
-              onClick={() => setSharingMode("email")}
-              disabled={busy}
+              onClick={() => {
+                setSharingMode("email");
+                // Switching sharing mode is a draft-level change — disarm
+                // any pending auto-finalize so the user re-confirms.
+                draft.cancelSubmit();
+              }}
+              disabled={finalizing}
             >
               <Mail />
               <span>{t("Email")}</span>
@@ -557,8 +642,11 @@ export function TransferForm() {
               className={`transfer-form__tab${
                 sharingMode === "link" ? " transfer-form__tab--active" : ""
               }`}
-              onClick={() => setSharingMode("link")}
-              disabled={busy}
+              onClick={() => {
+                setSharingMode("link");
+                draft.cancelSubmit();
+              }}
+              disabled={finalizing}
             >
               <LinkIcon />
               <span>{t("Link")}</span>
@@ -569,9 +657,15 @@ export function TransferForm() {
             <LabelledBox label={t("Send to")} variant="classic">
               <RecipientInput
                 recipients={recipients}
-                onChange={setRecipients}
+                onChange={(next) => {
+                  setRecipients(next);
+                  // Editing the recipient list while auto-finalize is armed
+                  // means intent has shifted — disarm so the user has to
+                  // explicitly re-send.
+                  draft.cancelSubmit();
+                }}
                 onPendingChange={setHasValidPending}
-                disabled={busy}
+                disabled={finalizing}
               />
             </LabelledBox>
           )}
@@ -579,9 +673,12 @@ export function TransferForm() {
           <Input
             label={t("Title")}
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              draft.cancelSubmit();
+            }}
             placeholder={t("Enter a title")}
-            disabled={busy}
+            disabled={finalizing}
             variant="classic"
             fullWidth
             maxLength={80}
@@ -650,13 +747,17 @@ export function TransferForm() {
               )
             }
           >
-            {busy
+            {finalizing
               ? t("Sending...")
-              : sharingMode === "email"
-                ? hasFiles
-                  ? t("Send {{count}} item", { count: draft.files.length })
-                  : t("Send")
-                : t("Create link")}
+              : awaitingUploads
+                ? sharingMode === "email"
+                  ? t("Sending after uploads finish")
+                  : t("Creating after uploads finish")
+                : sharingMode === "email"
+                  ? hasFiles
+                    ? t("Send {{count}} file", { count: draft.files.length })
+                    : t("Send")
+                  : t("Create link")}
           </Button>
 
           {busy && (
@@ -672,124 +773,3 @@ export function TransferForm() {
   );
 }
 
-function formatExpiry(iso: string): string {
-  // Matches the Figma mock: "25/12/2026 à 00h00". We split on `à` so the
-  // date and time chunks can be wrapped in <strong> separately.
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).replace(":", "h");
-  return `${date}|${time}`;
-}
-
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(1, Math.round(ms / (24 * 60 * 60 * 1000)));
-}
-
-function TransferSuccess({
-  transfer,
-  onNewTransfer,
-  onGoToDetail,
-}: {
-  transfer: TransferDetail;
-  onNewTransfer: () => void;
-  onGoToDetail: () => void;
-}) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-
-  const downloadUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
-
-  const handleCopy = async () => {
-    if (!downloadUrl) return;
-    try {
-      await navigator.clipboard.writeText(downloadUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard may be unavailable on insecure contexts; swallow silently.
-    }
-  };
-
-  const isLink = transfer.sharing_mode === "link";
-  const [expiryDate, expiryTime] = formatExpiry(transfer.expires_at).split("|");
-
-  return (
-    <div className="transfer-success" role="status">
-      <div className="transfer-success__icon" aria-hidden="true">
-        <MailCheckFilled />
-      </div>
-      <h1 className="transfer-success__title">
-        {isLink ? t("Transfer ready") : t("Transfer sent")}
-      </h1>
-      {isLink ? (
-        <>
-          <p className="transfer-success__body">
-            {t("Download link to share:")}
-          </p>
-          <div className="transfer-success__link-box">
-            <Input
-              readOnly
-              hideLabel
-              label={t("Download link")}
-              value={downloadUrl}
-              variant="classic"
-              fullWidth
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <Button
-              type="button"
-              color="neutral"
-              variant="tertiary"
-              icon={copied ? <Checkmark /> : <Copy />}
-              onClick={handleCopy}
-              aria-label={copied ? t("Link copied!") : t("Copy link")}
-              title={copied ? t("Link copied!") : t("Copy link")}
-            />
-          </div>
-          <p className="transfer-success__expiry">
-            {t("This link will expire on")} <strong>{expiryDate}</strong>{" "}
-            {t("at")} <strong>{expiryTime}</strong>
-          </p>
-        </>
-      ) : (
-        <p className="transfer-success__body transfer-success__body--email">
-          {t(
-            "The download email has been sent successfully. Your recipients have",
-          )}{" "}
-          <strong>
-            {t("{{count}} days", { count: daysUntil(transfer.expires_at) })}
-          </strong>{" "}
-          {t("to download your items.")}
-        </p>
-      )}
-
-      <div className="transfer-success__actions">
-        <Button
-          color="neutral"
-          variant="tertiary"
-          icon={<ArrowUpDown />}
-          onClick={onNewTransfer}
-        >
-          {t("Start new transfer")}
-        </Button>
-        <Button
-          color="brand"
-          icon={<ArrowUpCircle />}
-          onClick={onGoToDetail}
-        >
-          {t("View summary")}
-        </Button>
-      </div>
-    </div>
-  );
-}

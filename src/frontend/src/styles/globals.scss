@@ -69,16 +69,37 @@ body {
   // Cap the authenticated home narrower than the default app-content so the
   // two-column form stays readable at a glance on wide viewports. ``.home``
   // is also a flex column so the upload section inside can grow to fill
-  // the remaining viewport height.
+  // the remaining viewport height. On mobile we swap height for
+  // min-height so short children (success / failed panels) still get the
+  // viewport-tall centering, while long children (form) push past it and
+  // let the shell's __content take over scrolling.
   &.home {
     max-width: 1200px;
     height: 100%;
     min-height: 0;
     display: flex;
     flex-direction: column;
+
+    @media (max-width: 768px) {
+      height: auto;
+      min-height: 100%;
+    }
   }
 }
 
+
+// LaGaufreV2 forces a hardcoded "La Suite Numérique" wordmark as
+// headerLogo (the prop is overwritten after the spread in ui-kit
+// 0.20.1's init call). The dropdown's #header is display:none on
+// desktop but flips to display:flex below 480px, so the wrong logo
+// only surfaces on mobile. Hide the button entirely there — same call
+// as suitenumerique/messages, which doesn't render the gaufre on
+// mobile at all.
+@media (max-width: 768px) {
+  .lagaufre-button {
+    display: none !important;
+  }
+}
 
 // Cunningham tweaks
 .c__datagrid__table__container > table tbody tr:not(:last-child) {
@@ -108,6 +129,71 @@ body {
   display: inline-block;
   width: 100%;
   text-align: center;
+}
+
+// Cunningham's --small modal is 300px which feels cramped on desktop for a
+// confirmation dialog with side-by-side buttons. Bump it for breathing
+// room without going all the way to --medium (600px). The mobile override
+// below clamps it to viewport-minus-margin.
+.c__modal--small {
+  width: 440px;
+}
+
+// Cunningham's modal mobile rules kick in at 576px, but our app treats
+// anything below 768px as mobile. Bridge the gap so the close button
+// doesn't poke outside the modal and the footer wraps cleanly on common
+// phone-landscape / small-tablet viewports.
+@media (max-width: 768px) {
+  .c__modal {
+    max-width: calc(100vw - 2rem);
+  }
+
+  // Reset the desktop "anchor sticky outside the modal" close behaviour.
+  .c__modal__close {
+    position: static;
+    height: auto;
+    flex-shrink: 0;
+  }
+  .c__modal__close .c__button {
+    position: static;
+    right: 0;
+    top: 0;
+  }
+
+  // Bring the modal's text content + footer in from the modal edges with
+  // a consistent horizontal breathing room — Cunningham's defaults are
+  // tight on phones, especially on the title (which only sets
+  // ``padding-right`` for the close button, leaving no left inset).
+  .c__modal__title,
+  .c__modal__content,
+  .c__modal__scroller {
+    padding-left: var(--c--globals--spacings--md);
+    padding-right: var(--c--globals--spacings--md);
+  }
+
+  // Stack footer actions vertically with breathing room. Cunningham's
+  // default mobile rule strips ``padding-bottom`` and uses a tight gap;
+  // restore both so the action buttons don't feel pinched against the
+  // modal edge. The top inset is shorter than the sides/bottom so the
+  // text → buttons gap stays tight.
+  .c__modal__footer {
+    flex-direction: column;
+    gap: var(--c--globals--spacings--md);
+    padding:
+      var(--c--globals--spacings--xs)
+      var(--c--globals--spacings--md)
+      var(--c--globals--spacings--md);
+  }
+  .c__modal__footer__left,
+  .c__modal__footer__right {
+    flex-direction: column;
+    width: 100%;
+    gap: var(--c--globals--spacings--sm);
+  }
+  .c__modal__footer .c__button {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 

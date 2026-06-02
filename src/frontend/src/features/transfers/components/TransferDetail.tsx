@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   Input,
@@ -20,6 +21,7 @@ import {
   Perso,
   Spinner,
   UserAvatar,
+  Warning,
 } from "@gouvfr-lasuite/ui-kit";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
@@ -82,12 +84,50 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
   const [recipientsOpen, setRecipientsOpen] = useState(true);
+  // True between hitting the resend endpoint and the recipient-invitation
+  // task stamping ``notifications_completed_at`` again. Drives the button
+  // spinner and triggers a poll of the transfer query so per-recipient
+  // statuses refresh in place when the retry lands.
+  const [isAwaitingRetry, setIsAwaitingRetry] = useState(false);
+  // Snapshots the ``notifications_completed_at`` value at click time so
+  // the completion effect waits for a *new* timestamp (not just non-null);
+  // otherwise the still-cached previous timestamp would resolve the wait
+  // before the task has even re-run.
+  const seenCompletionRef = useRef<string | null>(null);
   const deactivateModal = useModal();
   const events = useTransferEvents(transfer.id);
+
+  // Refresh the parent's useTransfer query every 2s while a retry is in
+  // flight; the prop will update with the new recipient statuses.
+  useEffect(() => {
+    if (!isAwaitingRetry) return;
+    const id = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["transfers", transfer.id] });
+    }, 2000);
+    return () => clearInterval(id);
+  }, [isAwaitingRetry, queryClient, transfer.id]);
+
+  // Detect when the polled data shows the retry done.
+  useEffect(() => {
+    if (!isAwaitingRetry) return;
+    const current = transfer.notifications_completed_at;
+    if (current !== null && current !== seenCompletionRef.current) {
+      setIsAwaitingRetry(false);
+    }
+  }, [transfer.notifications_completed_at, isAwaitingRetry]);
+
+  const handleResend = () => {
+    seenCompletionRef.current = transfer.notifications_completed_at;
+    resendTransfer.mutate(transfer.id, {
+      onSuccess: () => setIsAwaitingRetry(true),
+    });
+  };
+  const isRetrying = resendTransfer.isPending || isAwaitingRetry;
 
   const downloadUrl = transfer.public_token
     ? `${window.location.origin}/t/${transfer.public_token}`
@@ -95,6 +135,11 @@ export function TransferDetail({
   const isPublicLink = transfer.sharing_mode === "link";
   const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
   const isActive = transfer.status === "active";
+  // Only recipients whose first send failed (or never happened) can be
+  // retried — backend resend task filters on email_sent_at IS NULL.
+  const hasPendingRecipients = transfer.recipients.some(
+    (r) => r.email_sent_at === null,
+  );
 
   // Meta summary: single line, single reason. For non-active transfers the
   // "why is it dead" signal replaces the raw expiry countdown (which is
@@ -157,7 +202,7 @@ export function TransferDetail({
         <span className="transfer-detail__meta-sep">·</span>
         <span>{metaReason}</span>
         <span className="transfer-detail__meta-sep">·</span>
-        <span>{t("{{count}} item", { count: transfer.files.length })}</span>
+        <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
         {transfer.auto_archive_on_download && isActive && (
@@ -170,7 +215,7 @@ export function TransferDetail({
         )}
       </div>
 
-      {isPublicLink && downloadUrl && (
+      {downloadUrl && (
         <div className="transfer-detail__link-box">
           <Input
             readOnly
@@ -184,6 +229,7 @@ export function TransferDetail({
           {/* Link stays visible on deactivated transfers for reference,
               but copying is disabled — the URL no longer resolves. */}
           <Button
+            size="small"
             color="neutral"
             variant="tertiary"
             icon={copied ? <Checkmark /> : <Copy />}
@@ -220,6 +266,7 @@ export function TransferDetail({
             <ul className="transfer-detail__recipients-list">
               {transfer.recipients.map((r) => {
                 const name = displayNameFromEmail(r.email);
+                const sent = r.email_sent_at !== null;
                 return (
                   <li key={r.id} className="transfer-detail__recipient-row">
                     <UserAvatar fullName={name} size="small" />
@@ -228,6 +275,17 @@ export function TransferDetail({
                     </span>
                     <span className="transfer-detail__recipient-email">
                       &lt;{r.email}&gt;
+                    </span>
+                    <span
+                      className={`transfer-detail__recipient-status${
+                        sent
+                          ? " transfer-detail__recipient-status--sent"
+                          : " transfer-detail__recipient-status--failed"
+                      }`}
+                      title={sent ? t("Email sent") : t("Email not sent")}
+                      aria-label={sent ? t("Email sent") : t("Email not sent")}
+                    >
+                      {sent ? <Checkmark /> : <Warning />}
                     </span>
                   </li>
                 );
@@ -273,25 +331,22 @@ export function TransferDetail({
             >
               {copied ? t("Link copied!") : t("Copy link")}
             </Button>
-          ) : (
-            // Email mode: triggers the backend resend task — re-emails the
-            // shared HTML notification template to every recipient.
+          ) : hasPendingRecipients ? (
+            // Email mode: retries the backend resend task, which only
+            // re-emails recipients whose first send failed (email_sent_at
+            // is NULL). Hidden entirely when nothing is pending — there's
+            // nothing meaningful to do. The spinner stays on through the
+            // POST + the polling window until the task stamps
+            // ``notifications_completed_at`` again.
             <Button
               color="brand"
-              icon={<ArrowUpRight />}
-              onClick={() => resendTransfer.mutate(transfer.id)}
-              disabled={
-                transfer.recipients.length === 0 ||
-                resendTransfer.isPending
-              }
+              icon={isRetrying ? <Spinner size="sm" /> : <ArrowUpRight />}
+              onClick={handleResend}
+              disabled={isRetrying}
             >
-              {resendTransfer.isPending
-                ? t("Sending...")
-                : resendTransfer.isSuccess
-                  ? t("Sent!")
-                  : t("Resend")}
+              {isRetrying ? t("Sending...") : t("Retry sending")}
             </Button>
-          )}
+          ) : null}
           <Button
             color="error"
             variant="secondary"

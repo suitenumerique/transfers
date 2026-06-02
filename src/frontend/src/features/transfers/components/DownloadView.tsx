@@ -15,7 +15,7 @@ import {
 } from "@gouvfr-lasuite/ui-kit";
 import type { DownloadTransferFull } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
-import { downloadFile } from "../api/useDownload";
+import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import { FileItem } from "./FileItem";
 
 interface DownloadViewProps {
@@ -49,14 +49,15 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
   };
 
   // "Tout télécharger" — there's no server-side zip endpoint yet, so we
-  // fan out one presigned download per file. Browsers throttle parallel
-  // downloads from the same origin and pop a permission prompt on the
-  // 2nd+ download in many setups; spacing them by ~250 ms gives the user
-  // time to accept the prompt without losing the rest. A real bulk-zip
-  // endpoint would replace this entirely.
+  // fan out one presigned download per file. Iframes (rather than anchor
+  // clicks) sidestep the browser's user-gesture throttling that silently
+  // drops the 2nd+ download when several fire in close succession. The
+  // 800ms stagger still leaves time for the "allow multiple downloads"
+  // prompt the first time it appears. A real bulk-zip endpoint would
+  // replace this entirely.
   const downloadAll = () => {
     transfer.files.forEach((file, i) => {
-      setTimeout(() => downloadFile(token, file.id), i * 250);
+      setTimeout(() => downloadFileInIframe(token, file.id), i * 800);
     });
   };
 
@@ -78,7 +79,7 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
             : t("Expired")}
         </span>
         <span className="download-view__meta-sep">·</span>
-        <span>{t("{{count}} item", { count: transfer.files.length })}</span>
+        <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="download-view__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
       </div>
@@ -110,6 +111,7 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
             onFocus={(e) => e.currentTarget.select()}
           />
           <Button
+            size="small"
             color="neutral"
             variant="tertiary"
             icon={copied ? <Checkmark /> : <Copy />}

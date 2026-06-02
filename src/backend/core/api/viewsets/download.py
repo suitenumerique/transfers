@@ -1,4 +1,10 @@
-"""API views for the download page (no authentication required)."""
+"""API views for the download page.
+
+Permission is ``AllowAny`` (visitors don't need an account) but the global
+authentication classes still run so that an authenticated agent visiting
+their own transfer is recognised — those self-views are skipped from the
+recipient activity log.
+"""
 
 from django.http import HttpResponseRedirect
 
@@ -62,6 +68,14 @@ def _denied_access_response(transfer: models.Transfer) -> Response | None:
 
 
 def _record_visitor_event(transfer, event_type, request, payload=None):
+    # Skip the event when an authenticated agent is visiting/downloading
+    # their own transfer — recipient activity is the audit signal here,
+    # owner self-checks aren't.
+    if (
+        request.user.is_authenticated
+        and request.user.id == transfer.owner_id
+    ):
+        return
     models.TransferEvent.objects.create(
         transfer_id=transfer.id,
         event_type=event_type,
@@ -97,7 +111,6 @@ class DownloadTransferView(APIView):
     """Get transfer info for the download page."""
 
     permission_classes = [AllowAny]
-    authentication_classes = []
 
     def get(self, request, public_token):
         transfer = _fetch_transfer_by_token(public_token)
@@ -117,7 +130,6 @@ class DownloadFileView(APIView):
     """Download a single file from a transfer."""
 
     permission_classes = [AllowAny]
-    authentication_classes = []
 
     def get(self, request, public_token, file_id):
         transfer = _fetch_transfer_by_token(public_token)

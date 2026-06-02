@@ -5,6 +5,24 @@
   overflow: hidden;
   background: var(--c--contextuals--background--surface--tertiary);
 
+  // Mobile drawer backdrop. Hidden by default; the @media block below
+  // surfaces it when the sidebar is open on a small viewport.
+  &__backdrop {
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    // Drawer is open whenever the sidebar isn't collapsed.
+    &:not(.shell-layout--sidebar-collapsed) > .shell-layout__backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 99;
+      cursor: pointer;
+    }
+  }
+
   &__main {
     flex: 1;
     min-width: 0;
@@ -49,7 +67,10 @@
   flex-direction: column;
   background: var(--c--contextuals--background--surface--tertiary);
   border-right: 1px solid var(--c--contextuals--border--surface--primary);
-  overflow: hidden auto;
+  // Each section manages its own vertical scroll via
+  // ``.shell-sidebar__section-list``; the sidebar itself never scrolls
+  // so the search + footer always stay in view.
+  overflow: hidden;
   // Animate the drawer collapse. width + border shrink together; the
   // inner column is pinned to --sidebar-width (see __inner) so nothing
   // reflows mid-transition. prefers-reduced-motion users get instant
@@ -69,6 +90,28 @@
     border-right-color: transparent;
   }
 
+  // On mobile, swap the desktop "width-shrink" collapse for a slide-out
+  // drawer: the sidebar floats above the content and slides off-screen
+  // when collapsed. Width stays at --sidebar-width so the inner column
+  // doesn't reflow while sliding.
+  @media (max-width: 768px) {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(0);
+    transition:
+      transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+      border-right-color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    .shell-layout--sidebar-collapsed & {
+      width: var(--sidebar-width);
+      transform: translateX(-100%);
+      border-right-color: var(--c--contextuals--border--surface--primary);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     transition: none;
   }
@@ -77,6 +120,10 @@
     padding:
       var(--c--globals--spacings--sm)
       var(--c--globals--spacings--md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--c--globals--spacings--xs);
   }
 
   &__logo {
@@ -85,8 +132,34 @@
     text-decoration: none;
   }
 
-  &__flex {
-    flex: 1;
+  // Mobile-only drawer close button — desktop has the topbar burger
+  // already. Hidden by default; surfaced under the same breakpoint that
+  // turns the sidebar into a drawer.
+  &__close {
+    display: none;
+    background: transparent;
+    border: 0;
+    padding: var(--c--globals--spacings--2xs);
+    border-radius: var(--c--components--forms-input--border-radius);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--c--contextuals--background--surface--primary);
+      color: var(--c--contextuals--content--semantic--neutral--primary);
+    }
+
+    > svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+
+    @media (max-width: 768px) {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
   }
 
   &__top {
@@ -146,9 +219,61 @@
     }
   }
 
+  // Trailing clear button on the search row — only rendered when the
+  // input has text. Sized to match the leading 18px Zoom icon for a
+  // balanced row.
+  &__nav-row-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(30, 37, 57, 0.08);
+      color: var(--c--contextuals--content--semantic--neutral--primary);
+    }
+
+    > svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  // Each section: header at the top, scrollable list below. Collapsed
+  // sections take only the header's height. Expanded sections split the
+  // tree asymmetrically:
+  //   - Active (top): shrink-to-content, capped at 50% of the tree so a
+  //     long active list doesn't squeeze the deactivated section out.
+  //     The inner collapse is also content-sized so the section's
+  //     natural height includes the list — without that, the collapse's
+  //     ``flex: 1 1 0`` contributes zero and the section ends up the
+  //     header height only.
+  //   - Deactivated (bottom): grow to fill whatever space the active
+  //     section didn't claim, including the slack when active is short.
   &__section {
     display: flex;
     flex-direction: column;
+    min-height: 0;
+
+    &--active.shell-sidebar__section--open {
+      flex: 0 1 auto;
+      max-height: 50%;
+
+      > .shell-sidebar__section-collapse--open {
+        flex: 0 1 auto;
+      }
+    }
+
+    &--deactivated.shell-sidebar__section--open {
+      flex: 1 1 0;
+    }
   }
 
   &__section-header {
@@ -192,26 +317,27 @@
     }
   }
 
-  // Grid-rows 0fr/1fr trick: animates from 0 to content height without
-  // needing JS to measure the list. Requires overflow:hidden on the
-  // child so items clip mid-transition. Chrome 117+, Firefox 120+,
-  // Safari 17.2+ — older browsers just snap (acceptable fallback).
+  // Wrapper around the list. Asymmetric animation: smooth fade+slide on
+  // open, instant on close. We can't symmetrically transition the
+  // close because the section also drops its ``flex: 1 1 0`` and the
+  // collapse's natural content height (a list of 50+ items, ~660px)
+  // briefly overshoots the previous flex-bounded height — animating
+  // through that visibly jolts both sections.
   &__section-collapse {
-    display: grid;
-    grid-template-rows: 0fr;
-    transition: grid-template-rows 200ms cubic-bezier(0.4, 0, 0.2, 1);
-
-    > * {
-      min-height: 0;
-      overflow: hidden;
-    }
+    display: none;
 
     &--open {
-      grid-template-rows: 1fr;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 0;
+      min-height: 0;
+      animation: shell-sidebar-section-reveal 220ms cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     @media (prefers-reduced-motion: reduce) {
-      transition: none;
+      &--open {
+        animation: none;
+      }
     }
   }
 
@@ -222,11 +348,19 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+    // Each section scrolls on its own — the IntersectionObserver in
+    // ``TransferSection`` is rooted here, so only vertical scrolling
+    // inside this list drives pagination for that section.
+    overflow-y: auto;
+    min-height: 0;
   }
 
   &__tree {
     display: flex;
     flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
     padding-bottom: var(--c--globals--spacings--2xs);
   }
 
@@ -397,5 +531,16 @@
     .material-icons {
       font-size: 20px;
     }
+  }
+}
+
+@keyframes shell-sidebar-section-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

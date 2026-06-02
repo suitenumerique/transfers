@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0013_rename_revoke_to_deactivate'),
+        ('core', '0002_transfer_notifications_completed_at'),
     ]
 
     operations = [

@@ -58,6 +58,7 @@ dev = [
     "django-extensions==4.1",
     "drf-spectacular-sidecar==2026.1.1",
     "flower==2.0.1",
+    "moto[s3]==5.1.16",
     "pip-audit==2.10.0",
     "pylint-django==2.7.0",
     "pylint==4.0.4",
@@ -117,6 +118,9 @@ extra-standard-library = ["tomllib"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/*" = ["S", "SLF"]
+# Dev-only seed command: ``random`` is fine for placeholder data — security
+# checks (S311) don't apply to fixtures that never reach production.
+"**/management/commands/seed_transfers.py" = ["S311"]
 
 [tool.pytest.ini_options]
 addopts = [
