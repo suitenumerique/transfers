@@ -79,8 +79,11 @@ Schedule defined in `transferts/celery_app.py`. See also the
 [Background jobs table](../../README.md#background-jobs-celery-beat)
 in the root README.
 
-- `expire_transfers_task` — flips `ACTIVE → EXPIRED`, deletes S3 files,
-  emits audit events.
+- `deactivate_expired_transfers_task` — flips `ACTIVE → PENDING_FILE_DELETION`
+  for transfers past their `expires_at`; emits audit events.
+- `delete_pending_transfer_files_task` — wipes S3 objects for transfers
+  whose `pending_deletion_at` has passed, then flips to `DEACTIVATED`.
+  Covers all three deactivation paths (expiry, manual, one-shot download).
 - `cleanup_abandoned_drafts_task` — drops drafts older than 24 h.
 - `sweep_orphan_s3_storage_task` — daily safety net (`--min-age=24h`).
 
