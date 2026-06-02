@@ -6,6 +6,7 @@ their own transfer is recognised — those self-views are skipped from the
 recipient activity log.
 """
 
+from django.db import transaction
 from django.http import HttpResponseRedirect
 
 from rest_framework.permissions import AllowAny
@@ -171,17 +172,22 @@ class DownloadFileView(APIView):
         # the bytes once that deadline has passed — long enough for the
         # in-flight GET we're about to redirect to to finish, even on a
         # 20 GiB file and a slow connection.
-        if (
-            transfer.auto_archive_on_download
-            and transfer.status == TransferStatus.ACTIVE
-            and _all_files_downloaded_once(transfer)
-        ):
-            transfer.deactivate(DeactivationReason.FIRST_DOWNLOAD)
-            models.TransferEvent.objects.create(
-                transfer_id=transfer.id,
-                event_type=TransferEventType.TRANSFER_DEACTIVATED_AFTER_FIRST_DOWNLOAD,
-                actor_type=ActorType.AGENT,
-            )
+        #
+        # select_for_update serialises concurrent last-file downloads so
+        # only one caller wins the ACTIVE→PENDING_FILE_DELETION transition
+        # and emits the audit event. deactivate() is a conditional QuerySet
+        # update that returns False when another worker already moved the
+        # row — the event is skipped in that case.
+        if transfer.auto_archive_on_download and transfer.status == TransferStatus.ACTIVE:
+            with transaction.atomic():
+                locked = models.Transfer.objects.select_for_update().get(pk=transfer.pk)
+                if locked.status == TransferStatus.ACTIVE and _all_files_downloaded_once(locked):
+                    if locked.deactivate(DeactivationReason.FIRST_DOWNLOAD):
+                        models.TransferEvent.objects.create(
+                            transfer_id=transfer.id,
+                            event_type=TransferEventType.TRANSFER_DEACTIVATED_AFTER_FIRST_DOWNLOAD,
+                            actor_type=ActorType.AGENT,
+                        )
 
         # Redirect the browser straight to S3 so the download bytes never
         # transit through a Django worker. The presigned URL's short expiry

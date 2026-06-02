@@ -93,8 +93,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           className="download-view__auto-archive-alert"
         >
           {isOwner
-            ? t("This link will be automatically deactivated after download by another user.")
-            : t("This link will be automatically deactivated after download.")}
+            ? t("Single-use link. Deactivates after full download by another user.")
+            : t("Single-use link. Deactivates after full download.")}
         </Alert>
       )}
 

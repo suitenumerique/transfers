@@ -3,6 +3,32 @@
 from django.db import migrations, models
 
 
+def backfill_deactivation_reason(apps, schema_editor):
+    Transfer = apps.get_model('core', 'Transfer')
+    # Rows that expired via the cron — map to the new unified DEACTIVATED
+    # status with the 'expired' reason.
+    Transfer.objects.filter(status='expired').update(
+        status='deactivated',
+        deactivation_reason='expired',
+    )
+    # Rows already DEACTIVATED before this PR had no deactivation_reason
+    # column — they were all manual revocations.
+    Transfer.objects.filter(status='deactivated', deactivation_reason__isnull=True).update(
+        deactivation_reason='manual',
+    )
+
+
+def reverse_backfill_deactivation_reason(apps, schema_editor):
+    Transfer = apps.get_model('core', 'Transfer')
+    Transfer.objects.filter(status='deactivated', deactivation_reason='expired').update(
+        status='expired',
+        deactivation_reason=None,
+    )
+    Transfer.objects.filter(status='deactivated', deactivation_reason='manual').update(
+        deactivation_reason=None,
+    )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -29,6 +55,10 @@ class Migration(migrations.Migration):
             model_name='transfer',
             name='status',
             field=models.CharField(choices=[('active', 'Active'), ('pending_file_deletion', 'Pending file deletion'), ('deactivated', 'Deactivated')], default='active', max_length=24),
+        ),
+        migrations.RunPython(
+            backfill_deactivation_reason,
+            reverse_code=reverse_backfill_deactivation_reason,
         ),
         migrations.AlterField(
             model_name='transfer',

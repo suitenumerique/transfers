@@ -600,7 +600,7 @@
     }
 
     &:focus-visible {
-      outline: 2px solid var(--c--theme--colors--primary-500);
+      outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
       outline-offset: 1px;
     }
   }

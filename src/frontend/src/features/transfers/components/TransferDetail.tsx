@@ -155,8 +155,10 @@ export function TransferDetail({
     });
   } else if (transfer.deactivation_reason === "first_download") {
     metaReason = t("Deactivated after download");
-  } else {
+  } else if (transfer.deactivation_reason === "manual" || !transfer.deactivation_reason) {
     metaReason = t("Deactivated by you");
+  } else {
+    metaReason = t("Deactivated");
   }
 
   const copyLink = async () => {
