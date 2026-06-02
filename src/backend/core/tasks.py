@@ -85,6 +85,28 @@ def sweep_orphan_s3_storage_task():
 
 
 @shared_task
+def sweep_orphan_s3_storage_task():
+    """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
+
+    Should report zero in steady state — non-zero counts are the signal
+    that one of the per-row paths is leaking.
+    """
+    result = run_orphan_sweep(
+        apply=True,
+        min_age_hours=24,
+        write=lambda msg: logger.info("orphan-sweep: %s", msg),
+        write_error=lambda msg: logger.error("orphan-sweep: %s", msg),
+    )
+    if result["objects_deleted"] or result["mpus_aborted"]:
+        logger.warning(
+            "orphan-sweep cleaned %d object(s) and %d MPU(s) — investigate "
+            "which per-row path leaked",
+            result["objects_deleted"],
+            result["mpus_aborted"],
+        )
+
+
+@shared_task
 def cleanup_abandoned_drafts_task():
     """Clean up drafts whose user never pressed "Create link".
 
