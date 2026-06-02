@@ -726,7 +726,6 @@ export function TransferForm() {
                 type="button"
                 className="transfer-form__auto-archive-help"
                 aria-label={t("More information")}
-                tabIndex={0}
               >
                 <Info />
               </button>

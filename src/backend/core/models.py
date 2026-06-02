@@ -259,7 +259,7 @@ class Transfer(BaseModel):
         # So accessibility only depends on status + expiry.
         return self.status == TransferStatus.ACTIVE and not self.is_expired
 
-    def deactivate(self, reason: DeactivationReason) -> None:
+    def deactivate(self, reason: DeactivationReason) -> bool:
         """Transition ``ACTIVE → PENDING_FILE_DELETION`` with the given reason.
 
         Single entry point for the three deactivation flows (manual,
@@ -270,20 +270,28 @@ class Transfer(BaseModel):
         (``TRANSFER_DEACTIVATED_*``) are the caller's responsibility:
         they depend on *who* triggered the deactivation, which the model
         doesn't know.
+
+        Returns True iff the transition was applied. A False return means
+        another caller already moved the row out of ACTIVE — the caller
+        should skip any follow-up audit event.
         """
-        self.status = TransferStatus.PENDING_FILE_DELETION
-        self.deactivation_reason = reason
-        self.pending_deletion_at = timezone.now() + timedelta(
-            hours=settings.TRANSFER_PURGE_DELAY_HOURS
+        now = timezone.now()
+        updated = Transfer.objects.filter(
+            pk=self.pk,
+            status=TransferStatus.ACTIVE,
+        ).update(
+            status=TransferStatus.PENDING_FILE_DELETION,
+            deactivation_reason=reason,
+            pending_deletion_at=now + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS),
+            updated_at=now,
         )
-        self.save(
-            update_fields=[
-                "status",
-                "deactivation_reason",
-                "pending_deletion_at",
-                "updated_at",
-            ]
-        )
+        if updated:
+            self.status = TransferStatus.PENDING_FILE_DELETION
+            self.deactivation_reason = reason
+            self.pending_deletion_at = now + timedelta(
+                hours=settings.TRANSFER_PURGE_DELAY_HOURS
+            )
+        return bool(updated)
 
     def delete_s3_objects(self) -> None:
         """Delete every S3 object attached to this transfer.
