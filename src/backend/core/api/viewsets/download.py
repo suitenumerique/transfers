@@ -96,6 +96,13 @@ def _all_files_downloaded_once(transfer) -> bool:
         models.TransferEvent.objects.filter(
             transfer_id=transfer.id,
             event_type=TransferEventType.FILE_DOWNLOADED,
+            # We count distinct file_ids and compare that to the number of
+            # files. Events whose payload has no file_id (legacy rows from
+            # before we stored it) all collapse to a single NULL, which COUNT
+            # DISTINCT treats as one more "file" — pushing the total over the
+            # threshold and deactivating the link before every file has
+            # actually been downloaded. Excluding them keeps the count honest.
+            payload__file_id__isnull=False,
         )
         .values("payload__file_id")
         .distinct()

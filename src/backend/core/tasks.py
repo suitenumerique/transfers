@@ -253,32 +253,44 @@ def delete_pending_transfer_files_task():
 
     count = 0
     for transfer in to_purge:
-        deleted_files = list(transfer.files.all())
+        # Isolate each transfer: a DB failure on save / bulk_create must not
+        # abort the whole batch. The row stays PENDING_FILE_DELETION and is
+        # retried on the next run (delete_s3_objects is idempotent). count is
+        # only bumped once the status flip + events commit successfully.
+        try:
+            deleted_files = list(transfer.files.all())
 
-        transfer.delete_s3_objects()
+            transfer.delete_s3_objects()
 
-        transfer.status = TransferStatus.DEACTIVATED
-        transfer.deactivated_at = now
-        transfer.pending_deletion_at = None
-        transfer.save(
-            update_fields=[
-                "status",
-                "deactivated_at",
-                "pending_deletion_at",
-                "updated_at",
-            ]
-        )
+            with transaction.atomic():
+                transfer.status = TransferStatus.DEACTIVATED
+                transfer.deactivated_at = now
+                transfer.pending_deletion_at = None
+                transfer.save(
+                    update_fields=[
+                        "status",
+                        "deactivated_at",
+                        "pending_deletion_at",
+                        "updated_at",
+                    ]
+                )
 
-        TransferEvent.objects.bulk_create(
-            TransferEvent(
-                transfer_id=transfer.id,
-                event_type=TransferEventType.FILE_DELETED,
-                actor_type=ActorType.AGENT,
-                payload={"file_id": str(f.id), "filename": f.filename},
+                TransferEvent.objects.bulk_create(
+                    TransferEvent(
+                        transfer_id=transfer.id,
+                        event_type=TransferEventType.FILE_DELETED,
+                        actor_type=ActorType.AGENT,
+                        payload={"file_id": str(f.id), "filename": f.filename},
+                    )
+                    for f in deleted_files
+                )
+            count += 1
+        except Exception:
+            logger.exception(
+                "Failed to purge transfer %s; leaving it for the next run",
+                transfer.id,
             )
-            for f in deleted_files
-        )
-        count += 1
+            continue
 
     if count:
         logger.info("Deleted files of %d transfer(s).", count)
