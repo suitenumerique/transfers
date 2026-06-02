@@ -201,7 +201,7 @@ class TestTransferList:
         self, authenticated_client, user
     ):
         active = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
         TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=false")
@@ -209,17 +209,17 @@ class TestTransferList:
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
-    def test_list_deactivated_true_returns_expired_and_deactivated(
+    def test_list_deactivated_true_returns_non_active(
         self, authenticated_client, user
     ):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        expired = TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        pending = TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
         deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=true")
         assert response.status_code == 200
         ids = {row["id"] for row in response.data["results"]}
-        assert ids == {str(expired.id), str(deactivated.id)}
+        assert ids == {str(pending.id), str(deactivated.id)}
 
     def test_list_search_matches_title_case_insensitive(
         self, authenticated_client, user
