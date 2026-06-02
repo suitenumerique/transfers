@@ -37,9 +37,13 @@ const EVENT_LABELS: Record<string, string> = {
   email_sent: "Notification email sent",
   link_opened: "Link opened",
   file_downloaded: "File downloaded",
-  transfer_deactivated: "Transfer deactivated",
-  transfer_expired: "Transfer expired",
-  files_deleted: "Files deleted",
+  transfer_deactivated_manually: "Transfer deactivated",
+  transfer_deactivated_after_first_download: "Deactivated after download",
+  transfer_deactivated_after_expiry: "Transfer expired",
+  // file_deleted carries ``filename`` in its payload — interpolated below
+  // so the row reads "Fichier screenshot.png supprimé" rather than a
+  // generic label that forces the user to cross-reference the file list.
+  file_deleted: "File {{filename}} deleted",
 };
 
 function formatActivityDate(iso: string): string {
@@ -67,6 +71,11 @@ function displayNameFromEmail(email: string): string {
 function daysUntil(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+function daysBetween(startIso: string, endIso: string): number {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  return Math.max(0, Math.round(ms / (24 * 60 * 60 * 1000)));
 }
 
 export function TransferDetail({
@@ -125,13 +134,32 @@ export function TransferDetail({
     : "";
   const isPublicLink = transfer.sharing_mode === "link";
   const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
-  const days = daysUntil(transfer.expires_at);
   const isActive = transfer.status === "active";
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(
     (r) => r.email_sent_at === null,
   );
+
+  // Meta summary: single line, single reason. For non-active transfers the
+  // "why is it dead" signal replaces the raw expiry countdown (which is
+  // noise once the transfer is terminal). The deactivation_reason column
+  // on the server is the source of truth — we no longer infer it from a
+  // mix of status + flags on the client.
+  let metaReason: string;
+  if (isActive) {
+    metaReason = t("Expires in {{count}} days", { count: daysUntil(transfer.expires_at) });
+  } else if (transfer.deactivation_reason === "expired") {
+    metaReason = t("Expired after {{count}} days", {
+      count: daysBetween(transfer.created_at, transfer.expires_at),
+    });
+  } else if (transfer.deactivation_reason === "first_download") {
+    metaReason = t("Deactivated after download");
+  } else if (transfer.deactivation_reason === "manual" || !transfer.deactivation_reason) {
+    metaReason = t("Deactivated by you");
+  } else {
+    metaReason = t("Deactivated");
+  }
 
   const copyLink = async () => {
     if (!downloadUrl) return;
@@ -174,15 +202,19 @@ export function TransferDetail({
           {t("Public link")}
         </span>
         <span className="transfer-detail__meta-sep">·</span>
-        <span>
-          {isActive
-            ? t("Expires in {{count}} days", { count: days })
-            : t("Expired")}
-        </span>
+        <span>{metaReason}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
+        {transfer.auto_archive_on_download && isActive && (
+          <>
+            <span className="transfer-detail__meta-sep">·</span>
+            <span className="transfer-detail__meta-auto-archive">
+              {t("Deactivates after download")}
+            </span>
+          </>
+        )}
       </div>
 
       {downloadUrl && (
@@ -352,7 +384,10 @@ export function TransferDetail({
               </div>
             </div>
             {events.data.results.map((ev) => {
-              const label = t(EVENT_LABELS[ev.event_type] ?? ev.event_type);
+              const label = t(
+                EVENT_LABELS[ev.event_type] ?? ev.event_type,
+                ev.payload as Record<string, unknown>,
+              );
               const by =
                 ev.actor_type === "agent" ? t("You") : t("Recipient");
               return (

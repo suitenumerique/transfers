@@ -16,6 +16,10 @@ const eslintConfig = defineConfig([
       "no-console": ["error", { allow: ["error", "warn"] }],
       "@typescript-eslint/no-unused-vars": "error",
       "react-hooks/set-state-in-effect": "warn",
+      // Ref mutations in event handlers (e.g. isSubmittingRef) are a
+      // legitimate escape hatch; the React Compiler rule over-flags them.
+      // Kept as a warning, consistent with the other compiler rules above.
+      "react-hooks/immutability": "warn",
     }
   }
 ]);

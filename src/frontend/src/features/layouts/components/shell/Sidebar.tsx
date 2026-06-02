@@ -23,7 +23,6 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
   const config = useConfig();
   const activeId =
     typeof router.query.id === "string" ? router.query.id : undefined;
-
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput, 300);
 

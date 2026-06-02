@@ -21,7 +21,8 @@ from core.models import TransferDraft, TransferFile
 from core.tasks import (
     _DRIVE_IMPORT_CHUNK_SIZE,
     cleanup_abandoned_drafts_task,
-    expire_transfers_task,
+    deactivate_expired_transfers_task,
+    delete_pending_transfer_files_task,
     import_drive_file_task,
 )
 from core.tests._s3_live import assert_bucket_empty, seed_mpu
@@ -266,7 +267,7 @@ class TestImportDriveFileTaskLeaks:
 
 @pytest.mark.django_db
 class TestExpireTransfersTask:
-    """Cron sweep for expired transfers — flips status + deletes S3 objects."""
+    """Cron sweep for expired transfers — two-step: flag then purge S3."""
 
     def test_clears_completed_objects_on_expired_transfer(
         self, user, live_s3_bucket
@@ -285,10 +286,18 @@ class TestExpireTransfersTask:
                 upload_completed_at=timezone.now() - timedelta(hours=2),
             )
 
-        expire_transfers_task()
+        # Step 1: flag as pending deletion (grace window starts).
+        deactivate_expired_transfers_task()
+        transfer.refresh_from_db()
+        assert transfer.status == TransferStatus.PENDING_FILE_DELETION
+
+        # Step 2: bypass the grace window and run the purge task.
+        transfer.pending_deletion_at = timezone.now() - timedelta(seconds=1)
+        transfer.save(update_fields=["pending_deletion_at"])
+        delete_pending_transfer_files_task()
 
         transfer.refresh_from_db()
-        assert transfer.status == TransferStatus.EXPIRED
+        assert transfer.status == TransferStatus.DEACTIVATED
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_leaves_active_transfer_alone(self, user, live_s3_bucket):
@@ -302,7 +311,7 @@ class TestExpireTransfersTask:
             transfer=transfer, s3_key=key, upload_completed_at=timezone.now()
         )
 
-        expire_transfers_task()
+        deactivate_expired_transfers_task()
 
         transfer.refresh_from_db()
         assert transfer.status == TransferStatus.ACTIVE

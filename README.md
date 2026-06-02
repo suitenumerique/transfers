@@ -32,6 +32,7 @@ Services:
 | `TRANSFER_MAX_FILES_PER_TRANSFER` | 20 | Cap on file count per transfer |
 | `TRANSFER_EXPIRY_CHOICES` | `1,7,30` | Expiry options offered in the UI (days) |
 | `TRANSFER_DEFAULT_EXPIRY_DAYS` | 1 | Default expiry; must be in `TRANSFER_EXPIRY_CHOICES` |
+| `TRANSFER_PURGE_DELAY_HOURS` | 6 | Grace period between link closure and S3 deletion (one-shot links + expiry + manual deactivation) |
 
 Recipient count in email mode is hard-capped at 50 (in the serializer).
 

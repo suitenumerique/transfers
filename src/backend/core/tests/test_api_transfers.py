@@ -9,6 +9,9 @@ This file covers the public Transfer surface: list, retrieve, deactivate,
 events.
 """
 
+from datetime import timedelta
+
+from django.conf import settings
 from django.utils import timezone
 
 import pytest
@@ -201,7 +204,7 @@ class TestTransferList:
         self, authenticated_client, user
     ):
         active = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
         TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=false")
@@ -209,17 +212,17 @@ class TestTransferList:
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
-    def test_list_deactivated_true_returns_expired_and_deactivated(
+    def test_list_deactivated_true_returns_non_active(
         self, authenticated_client, user
     ):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        expired = TransferFactory(owner=user, status=TransferStatus.EXPIRED)
+        pending = TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
         deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=true")
         assert response.status_code == 200
         ids = {row["id"] for row in response.data["results"]}
-        assert ids == {str(expired.id), str(deactivated.id)}
+        assert ids == {str(pending.id), str(deactivated.id)}
 
     def test_list_search_matches_title_case_insensitive(
         self, authenticated_client, user
@@ -264,14 +267,34 @@ class TestTransferDeactivate:
         response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
 
         assert response.status_code == 200
-        assert response.data["status"] == "deactivated"
-        assert response.data["deactivated_at"] is not None
-        patched_s3.delete.assert_called()
+        # Deactivate is deferred: status flips to pending_file_deletion, the
+        # actual S3 teardown + final transition to DEACTIVATED happens in
+        # the sweep task.
+        assert response.data["status"] == "pending_file_deletion"
+        assert response.data["pending_deletion_at"] is not None
+        assert response.data["deactivated_at"] is None
+        assert response.data["deactivation_reason"] == "manual"
+        patched_s3.delete.assert_not_called()
 
-        assert_single_event(transfer.id, TransferEventType.TRANSFER_DEACTIVATED)
+        transfer.refresh_from_db()
+        assert transfer.status == "pending_file_deletion"
+        assert transfer.deactivation_reason == "manual"
+        expected_deletion = timezone.now() + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
+        assert abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
+
+        assert_single_event(
+            transfer.id, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY
+        )
 
     def test_deactivate_already_deactivated(self, authenticated_client, transfer):
         transfer.status = TransferStatus.DEACTIVATED
+        transfer.save(update_fields=["status"])
+
+        response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")
+        assert response.status_code == 400
+
+    def test_deactivate_already_pending(self, authenticated_client, transfer):
+        transfer.status = TransferStatus.PENDING_FILE_DELETION
         transfer.save(update_fields=["status"])
 
         response = authenticated_client.post(f"{API_URL}{transfer.id}/deactivate/")

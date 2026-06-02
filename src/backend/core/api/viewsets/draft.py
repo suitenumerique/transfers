@@ -417,6 +417,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 sharing_mode=metadata["sharing_mode"],
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
+                auto_archive_on_download=metadata["auto_archive_on_download"],
             )
             models.TransferFile.objects.filter(draft=draft).update(
                 transfer=transfer, draft=None

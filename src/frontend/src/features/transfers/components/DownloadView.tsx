@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Alert,
+  Button,
+  Input,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
 import {
   Checkmark,
   Copy,
@@ -16,6 +21,7 @@ import { FileItem } from "./FileItem";
 interface DownloadViewProps {
   transfer: DownloadTransferFull;
   token: string;
+  isOwner?: boolean;
 }
 
 function daysUntil(iso: string): number {
@@ -23,7 +29,7 @@ function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
-export function DownloadView({ transfer, token }: DownloadViewProps) {
+export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -80,6 +86,17 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
       </div>
 
       <hr className="download-view__divider" />
+
+      {transfer.auto_archive_on_download && (
+        <Alert
+          type={VariantType.WARNING}
+          className="download-view__auto-archive-alert"
+        >
+          {isOwner
+            ? t("Single-use link. Deactivates after full download by another user.")
+            : t("Single-use link. Deactivates after full download.")}
+        </Alert>
+      )}
 
       {/* Email-mode transfers reach the recipient via the notification
           email itself — re-surfacing the URL here invites accidental
