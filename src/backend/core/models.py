@@ -250,7 +250,7 @@ class Transfer(BaseModel):
 
     @property
     def is_deactivated(self) -> bool:
-        return self.status == TransferStatus.DEACTIVATED
+        return self.status in (TransferStatus.DEACTIVATED, TransferStatus.PENDING_FILE_DELETION)
 
     @property
     def is_accessible(self) -> bool:

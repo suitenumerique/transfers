@@ -9,6 +9,9 @@ This file covers the public Transfer surface: list, retrieve, deactivate,
 events.
 """
 
+from datetime import timedelta
+
+from django.conf import settings
 from django.utils import timezone
 
 import pytest
@@ -272,6 +275,12 @@ class TestTransferDeactivate:
         assert response.data["deactivated_at"] is None
         assert response.data["deactivation_reason"] == "manual"
         patched_s3.delete.assert_not_called()
+
+        transfer.refresh_from_db()
+        assert transfer.status == "pending_file_deletion"
+        assert transfer.deactivation_reason == "manual"
+        expected_deletion = timezone.now() + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
+        assert abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
 
         assert_single_event(
             transfer.id, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY
