@@ -27,4 +27,8 @@ app.conf.beat_schedule = {
         "task": "core.tasks.cleanup_abandoned_drafts_task",
         "schedule": 21600.0,  # Every 6 hours
     },
+    "sweep-orphan-s3-storage": {
+        "task": "core.tasks.sweep_orphan_s3_storage_task",
+        "schedule": 86400.0,  # Every 24 hours
+    },
 }
