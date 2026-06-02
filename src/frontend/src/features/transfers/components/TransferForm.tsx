@@ -720,7 +720,7 @@ export function TransferForm() {
               content={t(
                 "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.",
               )}
-              placement="top"
+              placement="left"
             >
               <button
                 type="button"

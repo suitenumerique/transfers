@@ -119,6 +119,7 @@
   "Deactivate after all files are downloaded": "Désactiver après téléchargement complet",
   "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.": "Dès que chaque fichier a été téléchargé au moins une fois, le transfert est automatiquement désactivé : le lien de téléchargement cesse de fonctionner et les fichiers sont supprimés de nos serveurs.",
   "This link will be automatically deactivated after download.": "Ce lien sera automatiquement désactivé après téléchargement.",
+  "This link will be automatically deactivated after download by another user.": "Ce lien sera automatiquement désactivé après téléchargement par un autre utilisateur.",
   "More information": "Plus d’informations",
   "Deactivates after download": "Se désactive après téléchargement",
   "Deactivated after download": "Désactivé après téléchargement",
