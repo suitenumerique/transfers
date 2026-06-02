@@ -60,7 +60,7 @@ export default function DownloadPage() {
         <p className="download-page__status">{messages[reason]}</p>
       );
     }
-    return <DownloadView transfer={data} token={token!} />;
+    return <DownloadView transfer={data} token={token!} isOwner={user?.email === data.owner_email} />;
   };
 
   return (

@@ -573,13 +573,14 @@
 .transfer-form__auto-archive {
   display: flex;
   align-items: center;
-  gap: var(--c--globals--spacings--2xs);
+  justify-content: space-between;
 
   &-help {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 2px;
+    padding: var(--c--globals--spacings--2xs);
     border: 0;
     background: transparent;
     border-radius: 50%;
@@ -588,8 +589,8 @@
     line-height: 0;
 
     svg {
-      width: 16px;
-      height: 16px;
+      width: 20px;
+      height: 20px;
     }
 
     &:hover,

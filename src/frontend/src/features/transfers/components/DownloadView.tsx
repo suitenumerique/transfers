@@ -21,6 +21,7 @@ import { FileItem } from "./FileItem";
 interface DownloadViewProps {
   transfer: DownloadTransferFull;
   token: string;
+  isOwner?: boolean;
 }
 
 function daysUntil(iso: string): number {
@@ -28,7 +29,7 @@ function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
-export function DownloadView({ transfer, token }: DownloadViewProps) {
+export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -91,7 +92,9 @@ export function DownloadView({ transfer, token }: DownloadViewProps) {
           type={VariantType.WARNING}
           className="download-view__auto-archive-alert"
         >
-          {t("This link will be automatically deactivated after download.")}
+          {isOwner
+            ? t("This link will be automatically deactivated after download by another user.")
+            : t("This link will be automatically deactivated after download.")}
         </Alert>
       )}
 
