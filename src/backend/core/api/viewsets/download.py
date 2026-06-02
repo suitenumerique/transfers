@@ -88,24 +88,20 @@ def _record_visitor_event(transfer, event_type, request, payload=None):
 
 
 def _all_files_downloaded_once(transfer) -> bool:
-    """True iff every file attached to this transfer has at least one
-    FILE_DOWNLOADED event with a matching ``payload['file_id']``.
-
-    Used to gate the auto-archive: the trigger is "recipient has seen every
-    file at least once", not "any single download". The per-event payload
-    already carries ``file_id`` (see ``DownloadFileView.get``), so no schema
-    change is needed — we just count distinct payload keys.
-    """
-    file_ids = {str(f.id) for f in transfer.files.all()}
-    if not file_ids:
+    """True iff every file on this transfer has at least one FILE_DOWNLOADED event."""
+    file_count = transfer.files.count()
+    if not file_count:
         return False
-    downloaded = set(
+    downloaded_count = (
         models.TransferEvent.objects.filter(
             transfer_id=transfer.id,
             event_type=TransferEventType.FILE_DOWNLOADED,
-        ).values_list("payload__file_id", flat=True)
+        )
+        .values("payload__file_id")
+        .distinct()
+        .count()
     )
-    return file_ids.issubset(downloaded)
+    return downloaded_count >= file_count
 
 
 class DownloadTransferView(APIView):
