@@ -18,6 +18,7 @@ from timezone_field import TimeZoneField
 from core.enums import (
     ActorType,
     DeactivationReason,
+    ScanStatus,
     SharingMode,
     TransferEventType,
     TransferStatus,
@@ -422,6 +423,30 @@ class TransferFile(BaseModel):
         "server-side rather than uploaded by the browser. Preserved after "
         "import completes for audit — the bytes live in our S3 like any "
         "other file once ``upload_completed_at`` is set.",
+    )
+
+    scan_status = models.CharField(
+        max_length=10,
+        choices=ScanStatus.choices,
+        default=ScanStatus.PENDING,
+        help_text="Antivirus scan state. A file is only downloadable once it "
+        "is CLEAN; the download path fails closed on anything else. Driven by "
+        "the clamav file-scanner service's webhook callback.",
+    )
+    scan_job_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Job id returned by the file-scanner service when the scan "
+        "was submitted. Kept for traceability / debugging.",
+    )
+    webhook_secret = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Per-file opaque token embedded in the scan callback URL. "
+        "The scanner echoes it back; the webhook compares it (constant-time) "
+        "before trusting the result. Generated when the scan is submitted.",
     )
 
     class Meta:

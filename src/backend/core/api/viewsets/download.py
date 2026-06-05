@@ -18,6 +18,7 @@ from core.api.serializers import DownloadTransferSerializer
 from core.enums import (
     ActorType,
     DeactivationReason,
+    ScanStatus,
     TransferEventType,
     TransferStatus,
 )
@@ -152,6 +153,26 @@ class DownloadFileView(APIView):
             )
         except models.TransferFile.DoesNotExist:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
+
+        # Antivirus gate — fail closed. The file is only released once the
+        # scanner has reported it CLEAN; anything else (still scanning,
+        # infected, scan errored) blocks the download.
+        if transfer_file.scan_status == ScanStatus.PENDING:
+            return Response(
+                {
+                    "detail": "This file is still being scanned for viruses.",
+                    "reason": "scan_pending",
+                },
+                status=202,
+            )
+        if transfer_file.scan_status != ScanStatus.CLEAN:
+            return Response(
+                {
+                    "detail": "This file was blocked by the antivirus scan.",
+                    "reason": "scan_blocked",
+                },
+                status=403,
+            )
 
         url = sign_download_url(
             transfer_file.s3_key,

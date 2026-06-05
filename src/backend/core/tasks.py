@@ -1,8 +1,10 @@
 """Celery tasks for the transferts core app."""
 
 import logging
+import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -13,6 +15,7 @@ from celery import shared_task
 from core.enums import (
     ActorType,
     DeactivationReason,
+    ScanStatus,
     TransferEventType,
     TransferStatus,
 )
@@ -214,6 +217,11 @@ def import_drive_file_task(transfer_file_id):
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
         tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
+
+        # Drive-imported files land in S3 like any other upload, so they go
+        # through the same antivirus gate before becoming downloadable.
+        if settings.CLAMAV_SCAN_ENABLED:
+            submit_scan_task.delay(str(tf.id))
     except Exception:
         # Catch broadly: any failure between create_multipart_upload and the
         # final save (DB hiccup, S3 error, size mismatch, …) needs the same
@@ -236,6 +244,117 @@ def import_drive_file_task(transfer_file_id):
             except botocore.exceptions.ClientError:
                 logger.exception("Failed to delete object %s", tf.s3_key)
         tf.delete()
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def submit_scan_task(self, transfer_file_id):
+    """Submit a completed file to the file-scanner service for a virus scan.
+
+    Fire-and-forget from the caller's view: we hand the scanner a presigned
+    GET URL for the file plus a callback URL carrying a per-file secret, and
+    the result lands later on the scan-result webhook (which flips
+    ``scan_status``). The file stays ``PENDING`` — and thus undownloadable —
+    until then.
+
+    No-ops cleanly when scanning is disabled, when the file row has vanished
+    (uploaded then removed before the task ran), or when the upload never
+    actually completed. Only the HTTP submit is retried; once the scanner has
+    accepted the job, delivery of the result is the webhook's problem.
+    """
+    if not settings.CLAMAV_SCAN_ENABLED:
+        return
+    if not settings.CLAMAV_SERVICE_URL or not settings.SCAN_WEBHOOK_BASE_URL:
+        logger.error(
+            "Scan enabled but CLAMAV_SERVICE_URL / SCAN_WEBHOOK_BASE_URL unset; "
+            "skipping scan for %s",
+            transfer_file_id,
+        )
+        return
+
+    try:
+        tf = TransferFile.objects.get(id=transfer_file_id)
+    except TransferFile.DoesNotExist:
+        # Uploaded then deleted before the scan was submitted — nothing to do.
+        return
+
+    if tf.upload_completed_at is None:
+        # Upload not finished (or was rolled back) — don't scan a partial object.
+        return
+
+    # Mint the per-file callback secret on first submit; reuse it on retries so
+    # the webhook URL stays stable across attempts.
+    if not tf.webhook_secret:
+        tf.webhook_secret = secrets.token_urlsafe(32)
+        tf.save(update_fields=["webhook_secret", "updated_at"])
+
+    scan_url = s3.sign_scan_url(tf.s3_key)
+    webhook_url = (
+        f"{settings.SCAN_WEBHOOK_BASE_URL}/api/{settings.API_VERSION}"
+        f"/webhooks/scan-result/?file_id={tf.id}&secret={tf.webhook_secret}"
+    )
+
+    try:
+        response = requests.post(
+            f"{settings.CLAMAV_SERVICE_URL}/v2/scan-async",
+            json={
+                "url": scan_url,
+                "filename": tf.filename,
+                "webhook_url": webhook_url,
+            },
+            headers={"X-API-Key": settings.CLAMAV_API_KEY},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning(
+            "Scan submission failed for TransferFile %s: %s", transfer_file_id, exc
+        )
+        raise self.retry(exc=exc)
+
+    job_id = ""
+    try:
+        job_id = response.json().get("job_id", "")
+    except ValueError:
+        logger.warning("Scanner returned a non-JSON body for %s", transfer_file_id)
+
+    # Targeted update: the row may have been concurrently mutated and we only
+    # own the scan_job_id column here.
+    TransferFile.objects.filter(id=tf.id).update(scan_job_id=job_id)
+    logger.info(
+        "Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id
+    )
+
+
+@shared_task
+def reap_stale_pending_scans_task():
+    """Re-submit files stuck in PENDING for too long.
+
+    The file-scanner is stateless and delivers async results only via webhook,
+    so a lost message (webhook delivery exhausted, worker/broker crash, expired
+    presigned URL) would otherwise pin a file in PENDING — and thus
+    undownloadable — forever. This periodic sweep re-submits any file whose
+    upload completed more than ``SCAN_PENDING_REAP_MINUTES`` ago and is still
+    PENDING. ``submit_scan_task`` reuses the existing per-file secret and mints
+    a fresh presigned URL, so re-submitting is safe and idempotent on the
+    receiving end.
+    """
+    if not settings.CLAMAV_SCAN_ENABLED:
+        return
+
+    cutoff = timezone.now() - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
+    stale = TransferFile.objects.filter(
+        scan_status=ScanStatus.PENDING,
+        upload_completed_at__isnull=False,
+        upload_completed_at__lte=cutoff,
+    ).values_list("id", flat=True)
+
+    count = 0
+    for file_id in stale:
+        submit_scan_task.delay(str(file_id))
+        count += 1
+
+    if count:
+        logger.info("Re-submitted %d stale pending scan(s).", count)
 
 
 @shared_task

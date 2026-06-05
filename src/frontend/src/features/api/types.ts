@@ -37,6 +37,7 @@ export interface TransferFile {
   size: number;
   mime_type: string;
   created_at: string;
+  scan_status: ScanStatus;
 }
 
 export interface TransferDetail {
@@ -80,11 +81,21 @@ export interface PaginatedResponse<T> {
   results: T[];
 }
 
+export type ScanStatus = "pending" | "clean" | "infected" | "error";
+
+export interface DownloadTransferFile {
+  id: string;
+  filename: string;
+  size: number;
+  mime_type: string;
+  scan_status: ScanStatus;
+}
+
 export interface DownloadTransferFull {
   title: string;
   expires_at: string;
   created_at: string;
-  files: { id: string; filename: string; size: number; mime_type: string }[];
+  files: DownloadTransferFile[];
   owner_name: string;
   is_owner: boolean;
   sharing_mode: SharingMode;

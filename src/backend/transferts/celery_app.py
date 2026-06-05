@@ -31,4 +31,8 @@ app.conf.beat_schedule = {
         "task": "core.tasks.sweep_orphan_s3_storage_task",
         "schedule": 86400.0,  # Every 24 hours
     },
+    "reap-stale-pending-scans": {
+        "task": "core.tasks.reap_stale_pending_scans_task",
+        "schedule": 300.0,  # Every 5 min — re-submit scans whose result was lost
+    },
 }

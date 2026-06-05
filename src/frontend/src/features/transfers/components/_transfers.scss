@@ -1038,6 +1038,57 @@
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     flex-shrink: 0;
   }
+
+  // Antivirus status pill rendered after the size. Icon + optional short
+  // label; colour communicates the state (green = clean, neutral = scanning,
+  // red = blocked). The clean variant is icon-only (label lives in the
+  // tooltip) so a fully-scanned list stays visually quiet.
+  &__scan {
+    display: inline-flex;
+    align-items: center;
+    // The parent `__label` aligns its items on the text baseline (right for
+    // name / size), but this badge is icon-led — pin it to the row's vertical
+    // centre instead so the icon doesn't ride above the text line.
+    align-self: center;
+    gap: 4px;
+    flex-shrink: 0;
+    line-height: 1;
+    font-size: var(--c--globals--font--sizes--xs);
+    font-weight: 500;
+
+    > svg {
+      // `block` removes the inline-SVG descender gap that otherwise pushes the
+      // glyph off-centre relative to the label text.
+      display: block;
+      width: 16px;
+      height: 16px;
+    }
+
+    &--clean {
+      color: var(
+        --c--contextuals--content--semantic--success--primary,
+        #18753c
+      );
+    }
+
+    &--pending {
+      color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+      > svg {
+        animation: file-item-scan-spin 0.8s linear infinite;
+      }
+    }
+
+    &--blocked {
+      color: var(--c--contextuals--content--semantic--error--primary);
+    }
+  }
+}
+
+@keyframes file-item-scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 // Post-finalize confirmation panel — replaces the form once the Transfer

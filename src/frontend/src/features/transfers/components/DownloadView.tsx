@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Checkmark, Copy, Doc, Download, Globe } from "@gouvfr-lasuite/ui-kit/icons";
-import type { DownloadTransferFull } from "@/features/api/types";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { isExpired } from "@/features/utils/date";
@@ -41,11 +42,61 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // drops the 2nd+ download when several fire in close succession. The
   // 800ms stagger still leaves time for the "allow multiple downloads"
   // prompt the first time it appears. A real bulk-zip endpoint would
-  // replace this entirely.
+  // replace this entirely. Only clean files are eligible — pending / blocked
+  // files are skipped rather than triggering a 202/403 from the backend.
+  const cleanFiles = transfer.files.filter((f) => f.scan_status === "clean");
   const downloadAll = () => {
-    transfer.files.forEach((file, i) => {
+    cleanFiles.forEach((file, i) => {
       setTimeout(() => downloadFileInIframe(token, file.id), i * 800);
     });
+  };
+
+  // Per-file antivirus badge shown after the size, plus whether the file is
+  // releasable. Mirrors the backend's fail-closed gate: only "clean" is
+  // downloadable; "pending" shows a live spinner (the query polls until it
+  // resolves); "infected" / "error" are blocked.
+  const scanBadge = (status: ScanStatus) => {
+    switch (status) {
+      case "clean":
+        return (
+          <span
+            className="file-item__scan file-item__scan--clean"
+            title={t("Scanned — no virus found")}
+          >
+            <CheckmarkShield />
+          </span>
+        );
+      case "pending":
+        return (
+          <span
+            className="file-item__scan file-item__scan--pending"
+            title={t("Antivirus scan in progress…")}
+          >
+            <Spinner />
+            {t("Scanning…")}
+          </span>
+        );
+      case "infected":
+        return (
+          <span
+            className="file-item__scan file-item__scan--blocked"
+            title={t("Blocked: a virus was detected in this file")}
+          >
+            <WarningFilled />
+            {t("Virus detected")}
+          </span>
+        );
+      default:
+        return (
+          <span
+            className="file-item__scan file-item__scan--blocked"
+            title={t("Blocked: the antivirus scan could not complete")}
+          >
+            <WarningFilled />
+            {t("Scan failed")}
+          </span>
+        );
+    }
   };
 
   return (
@@ -117,29 +168,43 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
             count: transfer.files.length,
           })}
         >
-          {transfer.files.map((file) => (
-            <FileItem
-              key={file.id}
-              icon={<Doc />}
-              name={file.filename}
-              size={formatFileSize(file.size)}
-              state="done"
-              action={
-                <Button
-                  color="neutral"
-                  variant="tertiary"
-                  icon={<Download />}
-                  onClick={() => downloadFile(token, file.id)}
-                  aria-label={t("Download {{name}}", { name: file.filename })}
-                  title={t("Download")}
-                />
-              }
-            />
-          ))}
+          {transfer.files.map((file) => {
+            const isClean = file.scan_status === "clean";
+            return (
+              <FileItem
+                key={file.id}
+                icon={<Doc />}
+                name={file.filename}
+                size={formatFileSize(file.size)}
+                state={
+                  file.scan_status === "infected" ||
+                  file.scan_status === "error"
+                    ? "error"
+                    : "done"
+                }
+                extras={scanBadge(file.scan_status)}
+                action={
+                  <Button
+                    color="neutral"
+                    variant="tertiary"
+                    icon={<Download />}
+                    disabled={!isClean}
+                    onClick={() => downloadFile(token, file.id)}
+                    aria-label={t("Download {{name}}", { name: file.filename })}
+                    title={
+                      isClean
+                        ? t("Download")
+                        : t("Available once the antivirus scan passes")
+                    }
+                  />
+                }
+              />
+            );
+          })}
         </ul>
       )}
 
-      {transfer.files.length > 0 && (
+      {cleanFiles.length > 0 && (
         <Button
           color="brand"
           icon={<Download />}

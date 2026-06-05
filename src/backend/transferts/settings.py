@@ -178,6 +178,48 @@ class Base(Configuration):
         environ_prefix=None,
     )
 
+    # Antivirus scanning (clamav file-scanner service)
+    # ------------------------------------------------
+    # When enabled, every file that completes its upload is submitted to the
+    # external file-scanner service for an asynchronous virus scan; the
+    # result comes back via the scan-result webhook and gates downloads.
+    # Disabled by default so the service runs standalone without the scanner.
+    CLAMAV_SCAN_ENABLED = values.BooleanValue(
+        False, environ_name="CLAMAV_SCAN_ENABLED", environ_prefix=None
+    )
+    # Base URL of the file-scanner REST service, reachable from the backend
+    # AND worker containers (e.g. http://clamav_rest:8090 on the shared
+    # Docker network). No trailing slash.
+    CLAMAV_SERVICE_URL = values.Value(
+        "", environ_name="CLAMAV_SERVICE_URL", environ_prefix=None
+    )
+    # API key presented to the file-scanner as the X-API-Key header.
+    CLAMAV_API_KEY = values.Value(
+        "", environ_name="CLAMAV_API_KEY", environ_prefix=None
+    )
+    # Public base URL of THIS service as seen by the scanner container, used
+    # to build the webhook callback URL (e.g. http://backend-dev:8000 on the
+    # shared Docker network). No trailing slash.
+    SCAN_WEBHOOK_BASE_URL = values.Value(
+        "", environ_name="SCAN_WEBHOOK_BASE_URL", environ_prefix=None
+    )
+    # Lifetime of the presigned GET URL handed to the scanner. Longer than a
+    # browser download's: the scan request may queue on the scanner side
+    # before the file is fetched.
+    SCAN_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
+        3600,  # 1 hour
+        environ_name="SCAN_PRESIGNED_URL_EXPIRY",
+        environ_prefix=None,
+    )
+    # Files still PENDING this long after their upload completed are assumed to
+    # have lost their scan result (the scanner is stateless / webhook-only) and
+    # are re-submitted by ``reap_stale_pending_scans_task``.
+    SCAN_PENDING_REAP_MINUTES = values.PositiveIntegerValue(
+        15,
+        environ_name="SCAN_PENDING_REAP_MINUTES",
+        environ_prefix=None,
+    )
+
     # End-user help / documentation URL. Surfaced by the frontend on the
     # sidebar's "?" button as an external link (new tab) AND as the
     # "Contacter le service support" link in the footer of every

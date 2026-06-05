@@ -52,6 +52,22 @@ class TransferEventType(models.TextChoices):
     FILE_DELETED = "file_deleted"
 
 
+class ScanStatus(models.TextChoices):
+    """Antivirus scan state of a file.
+
+    A file is born ``PENDING`` and is only downloadable once it reaches
+    ``CLEAN``. ``INFECTED`` and ``ERROR`` are both terminal blocks — the
+    download path fails closed on anything that isn't ``CLEAN``. The
+    transitions are driven by the clamav file-scanner service's webhook
+    callback, never by the user.
+    """
+
+    PENDING = "pending", "Pending"
+    CLEAN = "clean", "Clean"
+    INFECTED = "infected", "Infected"
+    ERROR = "error", "Error"
+
+
 class SharingMode(models.TextChoices):
     """How the transfer link is shared."""
 

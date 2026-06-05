@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
-import type { TransferDetail as TransferDetailType } from "@/features/api/types";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile } from "../api/useDownload";
@@ -151,6 +151,55 @@ export function TransferDetail({
     deactivateTransfer.mutate(transfer.id);
   };
 
+  // Sender-side mirror of the recipient's antivirus badge. The recap shows
+  // the same state the recipient sees so that, when a recipient flags an
+  // infected file, the sender can confirm it from their own view. The
+  // useTransfer query polls while anything is "pending", so a freshly
+  // uploaded file flips from "scanning…" to clean/blocked without a reload.
+  const scanBadge = (status: ScanStatus) => {
+    switch (status) {
+      case "clean":
+        return (
+          <span
+            className="file-item__scan file-item__scan--clean"
+            title={t("Scanned — no virus found")}
+          >
+            <CheckmarkShield />
+          </span>
+        );
+      case "pending":
+        return (
+          <span
+            className="file-item__scan file-item__scan--pending"
+            title={t("Antivirus scan in progress…")}
+          >
+            <Spinner />
+            {t("Scanning…")}
+          </span>
+        );
+      case "infected":
+        return (
+          <span
+            className="file-item__scan file-item__scan--blocked"
+            title={t("Blocked: a virus was detected in this file")}
+          >
+            <WarningFilled />
+            {t("Virus detected")}
+          </span>
+        );
+      default:
+        return (
+          <span
+            className="file-item__scan file-item__scan--blocked"
+            title={t("Blocked: the antivirus scan could not complete")}
+          >
+            <WarningFilled />
+            {t("Scan failed")}
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="transfer-detail">
       <header className="transfer-detail__header">
@@ -270,26 +319,35 @@ export function TransferDetail({
         className="transfer-detail__file-list"
         aria-label={t("Files ({{count}})", { count: transfer.files.length })}
       >
-        {transfer.files.map((file) => (
-          <FileItem
-            key={file.id}
-            icon={<Doc />}
-            name={file.filename}
-            size={formatFileSize(file.size)}
-            state="done"
-            action={
-              <Button
-                color="neutral"
-                variant="tertiary"
-                icon={<Download />}
-                onClick={() => handleDownload(file.id)}
-                disabled={!isActive || !transfer.public_token}
-                aria-label={t("Download {{name}}", { name: file.filename })}
-                title={t("Download")}
-              />
-            }
-          />
-        ))}
+        {transfer.files.map((file) => {
+          const isClean = file.scan_status === "clean";
+          return (
+            <FileItem
+              key={file.id}
+              icon={<Doc />}
+              name={file.filename}
+              size={formatFileSize(file.size)}
+              state={
+                file.scan_status === "infected" ||
+                file.scan_status === "error"
+                  ? "error"
+                  : "done"
+              }
+              extras={scanBadge(file.scan_status)}
+              action={
+                <Button
+                  color="neutral"
+                  variant="tertiary"
+                  icon={<Download />}
+                  onClick={() => handleDownload(file.id)}
+                  disabled={!isActive || !transfer.public_token || !isClean}
+                  aria-label={t("Download {{name}}", { name: file.filename })}
+                  title={t("Download")}
+                />
+              }
+            />
+          );
+        })}
       </ul>
 
       {isActive && (

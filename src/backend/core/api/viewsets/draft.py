@@ -34,7 +34,7 @@ from core.api.serializers import (
 from core.api.utils import log_agent_event
 from core.enums import SharingMode, TransferEventType
 from core.services import s3
-from core.tasks import import_drive_file_task
+from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +314,14 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             "updated_at",
                         ]
                     )
+                    # Kick off the antivirus scan once the bytes have landed.
+                    # Scheduled on commit so the scanner never races the
+                    # transaction and fetches a not-yet-visible row/object.
+                    if settings.CLAMAV_SCAN_ENABLED:
+                        file_id = str(transfer_file.id)
+                        transaction.on_commit(
+                            lambda fid=file_id: submit_scan_task.delay(fid)
+                        )
 
         if error_detail is not None:
             raise drf.exceptions.ValidationError(error_detail)
