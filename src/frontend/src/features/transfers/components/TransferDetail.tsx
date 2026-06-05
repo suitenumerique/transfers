@@ -158,6 +158,8 @@ export function TransferDetail({
   // uploaded file flips from "scanning…" to clean/blocked without a reload.
   const scanBadge = (status: ScanStatus) => {
     switch (status) {
+      case "skipped":
+        return null;
       case "clean":
         return (
           <span
@@ -320,7 +322,8 @@ export function TransferDetail({
         aria-label={t("Files ({{count}})", { count: transfer.files.length })}
       >
         {transfer.files.map((file) => {
-          const isClean = file.scan_status === "clean";
+          const downloadable =
+            file.scan_status === "clean" || file.scan_status === "skipped";
           return (
             <FileItem
               key={file.id}
@@ -340,7 +343,7 @@ export function TransferDetail({
                   variant="tertiary"
                   icon={<Download />}
                   onClick={() => handleDownload(file.id)}
-                  disabled={!isActive || !transfer.public_token || !isClean}
+                  disabled={!isActive || !transfer.public_token || !downloadable}
                   aria-label={t("Download {{name}}", { name: file.filename })}
                   title={t("Download")}
                 />

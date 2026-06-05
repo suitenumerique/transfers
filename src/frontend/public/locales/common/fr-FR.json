@@ -1,4 +1,12 @@
 {
+  "Antivirus scan in progress…": "Analyse antivirus en cours…",
+  "Available once the antivirus scan passes": "Disponible une fois l'analyse antivirus réussie",
+  "Blocked: a virus was detected in this file": "Bloqué : un virus a été détecté dans ce fichier",
+  "Blocked: the antivirus scan could not complete": "Bloqué : l'analyse antivirus n'a pas pu aboutir",
+  "Scan failed": "Échec de l'analyse",
+  "Scanned — no virus found": "Analysé — aucun virus détecté",
+  "Scanning…": "Analyse en cours…",
+  "Virus detected": "Virus détecté",
   "Active": "Actif",
   "Activity": "Activité",
   "Active transfers": "Transferts actifs",

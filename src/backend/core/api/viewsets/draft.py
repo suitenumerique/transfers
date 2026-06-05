@@ -32,7 +32,7 @@ from core.api.serializers import (
     TransferDetailSerializer,
 )
 from core.api.utils import log_agent_event
-from core.enums import SharingMode, TransferEventType
+from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
 from core.tasks import import_drive_file_task, submit_scan_task
 
@@ -307,16 +307,20 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
+                    # No scan coming → mark SKIPPED (downloadable, no "clean"
+                    # claim), else it stays PENDING forever (perpetual spinner +
+                    # blocked download). Scanning on → PENDING until the webhook.
+                    if not settings.CLAMAV_SCAN_ENABLED:
+                        transfer_file.scan_status = ScanStatus.SKIPPED
                     transfer_file.save(
                         update_fields=[
                             "upload_completed_at",
                             "upload_id",
+                            "scan_status",
                             "updated_at",
                         ]
                     )
-                    # Kick off the antivirus scan once the bytes have landed.
-                    # Scheduled on commit so the scanner never races the
-                    # transaction and fetches a not-yet-visible row/object.
+                    # on_commit so the scanner never races the transaction.
                     if settings.CLAMAV_SCAN_ENABLED:
                         file_id = str(transfer_file.id)
                         transaction.on_commit(

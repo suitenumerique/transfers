@@ -44,9 +44,14 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // prompt the first time it appears. A real bulk-zip endpoint would
   // replace this entirely. Only clean files are eligible — pending / blocked
   // files are skipped rather than triggering a 202/403 from the backend.
-  const cleanFiles = transfer.files.filter((f) => f.scan_status === "clean");
+  // "skipped" = scanning disabled on this instance: never scanned, no badge,
+  // but downloadable just like "clean".
+  const isDownloadable = (s: ScanStatus) => s === "clean" || s === "skipped";
+  const downloadableFiles = transfer.files.filter((f) =>
+    isDownloadable(f.scan_status),
+  );
   const downloadAll = () => {
-    cleanFiles.forEach((file, i) => {
+    downloadableFiles.forEach((file, i) => {
       setTimeout(() => downloadFileInIframe(token, file.id), i * 800);
     });
   };
@@ -57,6 +62,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // resolves); "infected" / "error" are blocked.
   const scanBadge = (status: ScanStatus) => {
     switch (status) {
+      case "skipped":
+        return null;
       case "clean":
         return (
           <span
@@ -169,7 +176,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           })}
         >
           {transfer.files.map((file) => {
-            const isClean = file.scan_status === "clean";
+            const downloadable = isDownloadable(file.scan_status);
             return (
               <FileItem
                 key={file.id}
@@ -188,11 +195,11 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                     color="neutral"
                     variant="tertiary"
                     icon={<Download />}
-                    disabled={!isClean}
+                    disabled={!downloadable}
                     onClick={() => downloadFile(token, file.id)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
                     title={
-                      isClean
+                      downloadable
                         ? t("Download")
                         : t("Available once the antivirus scan passes")
                     }
@@ -204,7 +211,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </ul>
       )}
 
-      {cleanFiles.length > 0 && (
+      {downloadableFiles.length > 0 && (
         <Button
           color="brand"
           icon={<Download />}

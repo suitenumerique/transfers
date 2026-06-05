@@ -1,4 +1,12 @@
 {
+  "Antivirus scan in progress…": "Antivirus scan in progress…",
+  "Available once the antivirus scan passes": "Available once the antivirus scan passes",
+  "Blocked: a virus was detected in this file": "Blocked: a virus was detected in this file",
+  "Blocked: the antivirus scan could not complete": "Blocked: the antivirus scan could not complete",
+  "Scan failed": "Scan failed",
+  "Scanned — no virus found": "Scanned — no virus found",
+  "Scanning…": "Scanning…",
+  "Virus detected": "Virus detected",
   "Active": "Active",
   "Activity": "Activity",
   "Active transfers": "Active transfers",

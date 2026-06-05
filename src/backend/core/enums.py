@@ -56,16 +56,18 @@ class ScanStatus(models.TextChoices):
     """Antivirus scan state of a file.
 
     A file is born ``PENDING`` and is only downloadable once it reaches
-    ``CLEAN``. ``INFECTED`` and ``ERROR`` are both terminal blocks — the
-    download path fails closed on anything that isn't ``CLEAN``. The
-    transitions are driven by the clamav file-scanner service's webhook
-    callback, never by the user.
+    ``CLEAN``. ``INFECTED`` and ``ERROR`` are terminal blocks — the download
+    path fails closed on anything that isn't ``CLEAN`` or ``SKIPPED``.
+    ``SKIPPED`` means scanning was disabled on this instance: the file was
+    never scanned, so it carries no "clean" claim, but stays downloadable.
+    Transitions are driven by the clamav file-scanner webhook, never the user.
     """
 
     PENDING = "pending", "Pending"
     CLEAN = "clean", "Clean"
     INFECTED = "infected", "Infected"
     ERROR = "error", "Error"
+    SKIPPED = "skipped", "Skipped"
 
 
 class SharingMode(models.TextChoices):

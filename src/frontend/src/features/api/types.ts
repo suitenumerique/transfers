@@ -81,7 +81,12 @@ export interface PaginatedResponse<T> {
   results: T[];
 }
 
-export type ScanStatus = "pending" | "clean" | "infected" | "error";
+export type ScanStatus =
+  | "pending"
+  | "clean"
+  | "infected"
+  | "error"
+  | "skipped";
 
 export interface DownloadTransferFile {
   id: string;

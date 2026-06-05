@@ -216,10 +216,18 @@ def import_drive_file_task(transfer_file_id):
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
-
-        # Drive-imported files land in S3 like any other upload, so they go
-        # through the same antivirus gate before becoming downloadable.
+        # SKIPPED when scanning is off (downloadable, not "clean"), else
+        # PENDING until the scanner's webhook resolves it.
+        if not settings.CLAMAV_SCAN_ENABLED:
+            tf.scan_status = ScanStatus.SKIPPED
+        tf.save(
+            update_fields=[
+                "upload_id",
+                "upload_completed_at",
+                "scan_status",
+                "updated_at",
+            ]
+        )
         if settings.CLAMAV_SCAN_ENABLED:
             submit_scan_task.delay(str(tf.id))
     except Exception:

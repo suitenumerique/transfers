@@ -165,7 +165,7 @@ class DownloadFileView(APIView):
                 },
                 status=202,
             )
-        if transfer_file.scan_status != ScanStatus.CLEAN:
+        if transfer_file.scan_status not in (ScanStatus.CLEAN, ScanStatus.SKIPPED):
             return Response(
                 {
                     "detail": "This file was blocked by the antivirus scan.",
