@@ -86,7 +86,8 @@ export type ScanStatus =
   | "clean"
   | "infected"
   | "error"
-  | "skipped";
+  | "skipped"
+  | "too_large";
 
 export interface DownloadTransferFile {
   id: string;

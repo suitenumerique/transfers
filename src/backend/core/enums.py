@@ -68,6 +68,10 @@ class ScanStatus(models.TextChoices):
     INFECTED = "infected", "Infected"
     ERROR = "error", "Error"
     SKIPPED = "skipped", "Skipped"
+    # File exceeds the antivirus size limit (clamd caps ~4 GB; the service is
+    # tighter). Not scanned, but still downloadable — like SKIPPED, with an
+    # honest "too large to scan" label instead of a clean claim.
+    TOO_LARGE = "too_large", "Too large to scan"
 
 
 class SharingMode(models.TextChoices):

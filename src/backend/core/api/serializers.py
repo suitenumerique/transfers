@@ -221,6 +221,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
             "mime_type",
             "state",
             "source_url",
+            "scan_status",
         ]
         read_only_fields = fields
 

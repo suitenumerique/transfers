@@ -312,6 +312,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     # blocked download). Scanning on → PENDING until the webhook.
                     if not settings.CLAMAV_SCAN_ENABLED:
                         transfer_file.scan_status = ScanStatus.SKIPPED
+                    elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
+                        transfer_file.scan_status = ScanStatus.TOO_LARGE
                     transfer_file.save(
                         update_fields=[
                             "upload_completed_at",
@@ -321,7 +323,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         ]
                     )
                     # on_commit so the scanner never races the transaction.
-                    if settings.CLAMAV_SCAN_ENABLED:
+                    # PENDING ⟺ AV on AND within size limit (the only case that
+                    # needs a scan — SKIPPED / TOO_LARGE were set above).
+                    if transfer_file.scan_status == ScanStatus.PENDING:
                         file_id = str(transfer_file.id)
                         transaction.on_commit(
                             lambda fid=file_id: submit_scan_task.delay(fid)
@@ -422,6 +426,48 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         "pending_file_ids": pending,
                     }
                 )
+
+            # Antivirus gate (fail closed): a draft only becomes a transfer once
+            # every file is CLEAN. A virus is a hard block. A file whose scan
+            # errored (clamd/scanner hiccup) is re-submitted and kept polling so
+            # a transient failure doesn't brick the draft — the client's overall
+            # timeout bounds the retries. A broken scanner thus never sends, but
+            # recovers on its own once it's back.
+            if settings.CLAMAV_SCAN_ENABLED:
+                infected, errored, scanning = [], [], []
+                for f in files:
+                    if f.scan_status == ScanStatus.INFECTED:
+                        infected.append(str(f.id))
+                    elif f.scan_status == ScanStatus.ERROR:
+                        errored.append(f)
+                    elif f.scan_status == ScanStatus.PENDING:
+                        scanning.append(str(f.id))
+
+                if infected:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "The antivirus scan blocked one or more files.",
+                            "reason": "scan_blocked",
+                            "blocked_file_ids": infected,
+                        }
+                    )
+                for f in errored:
+                    f.scan_status = ScanStatus.PENDING
+                    f.save(update_fields=["scan_status", "updated_at"])
+                    transaction.on_commit(
+                        lambda fid=str(f.id): submit_scan_task.delay(fid)
+                    )
+                    scanning.append(str(f.id))
+
+                if scanning:
+                    return drf.response.Response(
+                        {
+                            "detail": "Files are still being scanned for viruses.",
+                            "reason": "scan_pending",
+                            "pending_file_ids": scanning,
+                        },
+                        status=202,
+                    )
 
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,

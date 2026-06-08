@@ -1,4 +1,11 @@
 {
+  "A virus was detected — this transfer was blocked and not sent.": "A virus was detected — this transfer was blocked and not sent.",
+  "Checking for viruses…": "Checking for viruses…",
+  "Files scanned — no virus found": "Files scanned — no virus found",
+  "File too large to be scanned for viruses": "File too large to be scanned for viruses",
+  "Not scanned (too large)": "Not scanned (too large)",
+  "Scanning your files for viruses before sending…": "Scanning your files for viruses before sending…",
+  "The antivirus scan is taking too long. Please try again.": "The antivirus scan is taking too long. Please try again.",
   "Antivirus scan in progress…": "Antivirus scan in progress…",
   "Available once the antivirus scan passes": "Available once the antivirus scan passes",
   "Blocked: a virus was detected in this file": "Blocked: a virus was detected in this file",

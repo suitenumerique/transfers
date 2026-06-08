@@ -197,6 +197,15 @@ class Base(Configuration):
     CLAMAV_API_KEY = values.Value(
         "", environ_name="CLAMAV_API_KEY", environ_prefix=None
     )
+    # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
+    # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
+    # sendable, but flagged "not scanned" rather than claimed clean. Keep this
+    # at or below the scanner's own max_url_size (2 GB).
+    SCAN_MAX_FILE_SIZE = values.PositiveIntegerValue(
+        2 * 1024 * 1024 * 1024,  # 2 GB
+        environ_name="SCAN_MAX_FILE_SIZE",
+        environ_prefix=None,
+    )
     # Public base URL of THIS service as seen by the scanner container, used
     # to build the webhook callback URL (e.g. http://backend-dev:8000 on the
     # shared Docker network). No trailing slash.

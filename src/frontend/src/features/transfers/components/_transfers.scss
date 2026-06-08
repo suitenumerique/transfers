@@ -1082,6 +1082,10 @@
     &--blocked {
       color: var(--c--contextuals--content--semantic--error--primary);
     }
+
+    &--info {
+      color: var(--c--contextuals--content--semantic--neutral--secondary);
+    }
   }
 }
 
@@ -1123,6 +1127,20 @@
     > svg {
       width: 48px;
       height: 48px;
+    }
+  }
+
+  &__scan {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    margin: 0 0 var(--c--globals--spacings--sm);
+    font-size: var(--c--globals--font--sizes--sm, 0.875rem);
+    color: var(--c--contextuals--content--semantic--success--primary, #18753c);
+
+    > svg {
+      width: 16px;
+      height: 16px;
     }
   }
 

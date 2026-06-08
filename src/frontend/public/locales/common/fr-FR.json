@@ -1,4 +1,11 @@
 {
+  "A virus was detected — this transfer was blocked and not sent.": "Un virus a été détecté — ce transfert a été bloqué et n'a pas été envoyé.",
+  "Checking for viruses…": "Vérification antivirus…",
+  "Files scanned — no virus found": "Fichiers analysés, aucun virus détecté",
+  "File too large to be scanned for viruses": "Fichier trop volumineux pour l'analyse antivirus",
+  "Not scanned (too large)": "Non analysé (trop volumineux)",
+  "Scanning your files for viruses before sending…": "Analyse antivirus de vos fichiers avant l'envoi…",
+  "The antivirus scan is taking too long. Please try again.": "L'analyse antivirus prend trop de temps. Veuillez réessayer.",
   "Antivirus scan in progress…": "Analyse antivirus en cours…",
   "Available once the antivirus scan passes": "Disponible une fois l'analyse antivirus réussie",
   "Blocked: a virus was detected in this file": "Bloqué : un virus a été détecté dans ce fichier",

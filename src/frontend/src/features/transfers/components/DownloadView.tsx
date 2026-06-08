@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -46,7 +45,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // files are skipped rather than triggering a 202/403 from the backend.
   // "skipped" = scanning disabled on this instance: never scanned, no badge,
   // but downloadable just like "clean".
-  const isDownloadable = (s: ScanStatus) => s === "clean" || s === "skipped";
+  const isDownloadable = (s: ScanStatus) =>
+    s === "clean" || s === "skipped" || s === "too_large";
   const downloadableFiles = transfer.files.filter((f) =>
     isDownloadable(f.scan_status),
   );
@@ -56,54 +56,31 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     });
   };
 
-  // Per-file antivirus badge shown after the size, plus whether the file is
-  // releasable. Mirrors the backend's fail-closed gate: only "clean" is
-  // downloadable; "pending" shows a live spinner (the query polls until it
-  // resolves); "infected" / "error" are blocked.
+  // Recipients only ever see transfers whose files are all clean — the scan is
+  // a hard gate at creation, so infected/pending never reach here. "skipped"
+  // (scanning disabled on the instance) shows no badge.
   const scanBadge = (status: ScanStatus) => {
-    switch (status) {
-      case "skipped":
-        return null;
-      case "clean":
-        return (
-          <span
-            className="file-item__scan file-item__scan--clean"
-            title={t("Scanned — no virus found")}
-          >
-            <CheckmarkShield />
-          </span>
-        );
-      case "pending":
-        return (
-          <span
-            className="file-item__scan file-item__scan--pending"
-            title={t("Antivirus scan in progress…")}
-          >
-            <Spinner />
-            {t("Scanning…")}
-          </span>
-        );
-      case "infected":
-        return (
-          <span
-            className="file-item__scan file-item__scan--blocked"
-            title={t("Blocked: a virus was detected in this file")}
-          >
-            <WarningFilled />
-            {t("Virus detected")}
-          </span>
-        );
-      default:
-        return (
-          <span
-            className="file-item__scan file-item__scan--blocked"
-            title={t("Blocked: the antivirus scan could not complete")}
-          >
-            <WarningFilled />
-            {t("Scan failed")}
-          </span>
-        );
+    if (status === "clean") {
+      return (
+        <span
+          className="file-item__scan file-item__scan--clean"
+          title={t("Scanned — no virus found")}
+        >
+          <CheckmarkShield />
+        </span>
+      );
     }
+    if (status === "too_large") {
+      return (
+        <span
+          className="file-item__scan file-item__scan--info"
+          title={t("File too large to be scanned for viruses")}
+        >
+          {t("Not scanned (too large)")}
+        </span>
+      );
+    }
+    return null;
   };
 
   return (

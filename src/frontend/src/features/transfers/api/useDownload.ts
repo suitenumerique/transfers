@@ -8,14 +8,6 @@ export function useDownloadTransfer(token: string | undefined) {
     queryFn: () => apiFetch<DownloadTransferFull>(`/downloads/${token}/`),
     enabled: !!token,
     retry: false,
-    // While any file is still being scanned for viruses, poll so the UI
-    // flips from "scanning…" to a downloadable state without a manual
-    // refresh. Stop polling once every file has reached a terminal state.
-    refetchInterval: (query) => {
-      const data = query.state.data as DownloadTransferFull | undefined;
-      const stillScanning = data?.files.some((f) => f.scan_status === "pending");
-      return stillScanning ? 3000 : false;
-    },
   });
 }
 

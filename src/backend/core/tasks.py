@@ -220,6 +220,8 @@ def import_drive_file_task(transfer_file_id):
         # PENDING until the scanner's webhook resolves it.
         if not settings.CLAMAV_SCAN_ENABLED:
             tf.scan_status = ScanStatus.SKIPPED
+        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
+            tf.scan_status = ScanStatus.TOO_LARGE
         tf.save(
             update_fields=[
                 "upload_id",
@@ -228,7 +230,8 @@ def import_drive_file_task(transfer_file_id):
                 "updated_at",
             ]
         )
-        if settings.CLAMAV_SCAN_ENABLED:
+        # PENDING ⟺ AV on AND within size limit (SKIPPED / TOO_LARGE set above).
+        if tf.scan_status == ScanStatus.PENDING:
             submit_scan_task.delay(str(tf.id))
     except Exception:
         # Catch broadly: any failure between create_multipart_upload and the

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -156,50 +156,30 @@ export function TransferDetail({
   // infected file, the sender can confirm it from their own view. The
   // useTransfer query polls while anything is "pending", so a freshly
   // uploaded file flips from "scanning…" to clean/blocked without a reload.
+  // A finalized transfer's files are always clean (scan gates creation), so the
+  // recap badge is just the "validated" mark. "skipped" (scanning off) = none.
   const scanBadge = (status: ScanStatus) => {
-    switch (status) {
-      case "skipped":
-        return null;
-      case "clean":
-        return (
-          <span
-            className="file-item__scan file-item__scan--clean"
-            title={t("Scanned — no virus found")}
-          >
-            <CheckmarkShield />
-          </span>
-        );
-      case "pending":
-        return (
-          <span
-            className="file-item__scan file-item__scan--pending"
-            title={t("Antivirus scan in progress…")}
-          >
-            <Spinner />
-            {t("Scanning…")}
-          </span>
-        );
-      case "infected":
-        return (
-          <span
-            className="file-item__scan file-item__scan--blocked"
-            title={t("Blocked: a virus was detected in this file")}
-          >
-            <WarningFilled />
-            {t("Virus detected")}
-          </span>
-        );
-      default:
-        return (
-          <span
-            className="file-item__scan file-item__scan--blocked"
-            title={t("Blocked: the antivirus scan could not complete")}
-          >
-            <WarningFilled />
-            {t("Scan failed")}
-          </span>
-        );
+    if (status === "clean") {
+      return (
+        <span
+          className="file-item__scan file-item__scan--clean"
+          title={t("Scanned — no virus found")}
+        >
+          <CheckmarkShield />
+        </span>
+      );
     }
+    if (status === "too_large") {
+      return (
+        <span
+          className="file-item__scan file-item__scan--info"
+          title={t("File too large to be scanned for viruses")}
+        >
+          {t("Not scanned (too large)")}
+        </span>
+      );
+    }
+    return null;
   };
 
   return (
@@ -323,7 +303,9 @@ export function TransferDetail({
       >
         {transfer.files.map((file) => {
           const downloadable =
-            file.scan_status === "clean" || file.scan_status === "skipped";
+            file.scan_status === "clean" ||
+            file.scan_status === "skipped" ||
+            file.scan_status === "too_large";
           return (
             <FileItem
               key={file.id}
