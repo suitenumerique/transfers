@@ -16,5 +16,8 @@
 // Transfer components
 @use "./../features/transfers/components/transfers";
 
+// Error page
+@use "./../features/errors/components/errors";
+
 // Application views
 @use "./../pages";
