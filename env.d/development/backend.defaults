@@ -58,7 +58,7 @@ OIDC_RP_SIGN_ALGO=RS256
 OIDC_RP_SCOPES="openid email"
 
 LOGIN_REDIRECT_URL=http://localhost:8900
-LOGIN_REDIRECT_URL_FAILURE=http://localhost:8900
+LOGIN_REDIRECT_URL_FAILURE=http://localhost:8900/errors
 LOGOUT_REDIRECT_URL=http://localhost:8900
 
 OIDC_REDIRECT_ALLOWED_HOSTS=["localhost:8908","localhost:8900"]

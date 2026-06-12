@@ -9,7 +9,7 @@ from lasuite.oidc_login.backends import (
     OIDCAuthenticationBackend as LaSuiteOIDCAuthenticationBackend,
 )
 
-from core.authentication import UserCannotAccessApp
+from core.authentication import OIDC_ACCESS_DENIED_SESSION_KEY, UserCannotAccessApp
 from core.entitlements import get_entitlements_backend
 from core.models import DuplicateEmailError, User
 
@@ -21,6 +21,16 @@ class OIDCAuthenticationBackend(LaSuiteOIDCAuthenticationBackend):
 
     Handles user creation/update from OIDC claims (ProConnect).
     """
+
+    def authenticate(self, request, **kwargs):
+        """Authenticate via OIDC and map entitlement denials to login failure."""
+        try:
+            return super().authenticate(request, **kwargs)
+        except UserCannotAccessApp as exc:
+            logger.info("User denied app access: %s", exc)
+            request.session[OIDC_ACCESS_DENIED_SESSION_KEY] = True
+            request.session.modified = True
+            return None
 
     def get_or_create_user(self, access_token, id_token, payload):
         """Return a User based on userinfo. Create a new user if no match is found."""
