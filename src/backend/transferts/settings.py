@@ -575,7 +575,7 @@ class Development(Base):
 
     ALLOWED_HOSTS = ["*"]
     CORS_ALLOW_ALL_ORIGINS = True
-    CSRF_TRUSTED_ORIGINS = ["http://localhost:8900", "http://localhost:8901"]
+    CSRF_TRUSTED_ORIGINS = ["http://localhost:8980", "http://localhost:8981"]
     DEBUG = True
 
     SESSION_COOKIE_NAME = "transferts_sessionid"

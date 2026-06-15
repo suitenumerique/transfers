@@ -1,28 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  Input,
-  Modal,
-  ModalSize,
-  useModal,
-} from "@gouvfr-lasuite/cunningham-react";
-import {
-  ArrowUpRight,
-  Checkmark,
-  ChevronDown,
-  Clock,
-  Copy,
-  Doc,
-  Download,
-  Folder,
-  Globe,
-  Perso,
-  Spinner,
-  UserAvatar,
-  Warning,
-} from "@gouvfr-lasuite/ui-kit";
+import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
+import { ArrowUpRight, Checkmark, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { downloadFile } from "../api/useDownload";

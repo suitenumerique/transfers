@@ -1,18 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Button,
-  Input,
-  VariantType,
-} from "@gouvfr-lasuite/cunningham-react";
-import {
-  Checkmark,
-  Copy,
-  Doc,
-  Download,
-  Globe,
-} from "@gouvfr-lasuite/ui-kit";
+import { Alert, Button, Input, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { Checkmark, Copy, Doc, Download, Globe } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";

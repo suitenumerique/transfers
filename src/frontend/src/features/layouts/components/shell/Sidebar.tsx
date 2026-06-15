@@ -1,28 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/router";
+import { Link, useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-// router is read in the parent to highlight the active row; navigation
-// itself uses Next.js Link so the URL bar updates via client-side push.
+// The active transfer id is read from the matched route params to highlight
+// the corresponding row; navigation itself uses TanStack Router's Link so the
+// URL bar updates via client-side navigation.
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import {
-  ChevronDown,
-  Folder,
-  Plus,
-  QuestionMark,
-  XMark,
-  Zoom,
-} from "@gouvfr-lasuite/ui-kit";
+import { ChevronDown, Folder, Plus, QuestionMark, XMark, Zoom } from "@gouvfr-lasuite/ui-kit/icons";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
 import { useDebouncedValue } from "@/features/utils/use-debounced-value";
 import { useConfig } from "@/features/providers/config";
 
 export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useTranslation();
-  const router = useRouter();
   const config = useConfig();
-  const activeId =
-    typeof router.query.id === "string" ? router.query.id : undefined;
+  // `strict: false` reads params from whatever route is currently matched —
+  // returns `{ id }` on /transfers/$id, an empty object elsewhere.
+  const { id: activeId } = useParams({ strict: false }) as { id?: string };
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput, 300);
 
@@ -30,7 +23,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
     <aside className="shell-sidebar">
       <div className="shell-sidebar__header">
         <Link
-          href="/"
+          to="/"
           className="shell-sidebar__logo"
           aria-label={t("Transferts")}
         >
@@ -58,7 +51,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
       </div>
 
       <div className="shell-sidebar__top">
-        <Link href="/" className="shell-sidebar__nav-row">
+        <Link to="/" className="shell-sidebar__nav-row">
           <Plus />
           <span>{t("New transfer")}</span>
         </Link>
@@ -242,7 +235,8 @@ function TransferSection({
                 }`}
               >
                 <Link
-                  href={`/transfers/${item.id}`}
+                  to="/transfers/$id"
+                  params={{ id: item.id }}
                   className="shell-sidebar__tree-row-link"
                 >
                   <Folder

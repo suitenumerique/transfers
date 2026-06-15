@@ -1,20 +1,33 @@
 # Transferts frontend
 
-Next.js Pages Router app served as a static export through Caddy. Uses
+[Vite](https://vite.dev/) single-page app with file-based routing via
+[TanStack Router](https://tanstack.com/router/), built to static assets and
+served through Caddy. Uses
 [Cunningham](https://github.com/numerique-gouv/cunningham) for the
 component kit, [TanStack Query](https://tanstack.com/query) for server
 state, and [i18next](https://www.i18next.com/) for translations.
+
+## Getting started
+
+```bash
+npm install
+npm run dev      # Vite dev server on http://localhost:3000 (8980 via `make`)
+npm run build    # type-check + production build into dist/
+npm run preview  # serve the production build locally
+```
 
 ## Layout
 
 ```
 src/
-├── pages/                  # Next.js Pages Router
-│   ├── index.tsx           # Home — new transfer form
-│   ├── transfers/[id].tsx  # Transfer detail (owner view)
-│   ├── t/[token].tsx       # Public download page (recipient view)
-│   ├── confirm/            # Post-finalize confirmation flow
-│   └── confirm-failed/     # Email-mode partial-failure landing
+├── routes/                 # TanStack Router file-based routes
+│   ├── __root.tsx          # Providers (Query, Cunningham, Config, Auth)
+│   ├── _app.tsx            # Pathless layout wrapping the app shell
+│   ├── _app/index.tsx      # Home — new transfer form
+│   ├── _app/transfers/$id.tsx  # Transfer detail (owner view)
+│   ├── _app/confirm/$id.tsx        # Post-finalize confirmation
+│   ├── _app/confirm-failed/$id.tsx # Email-mode partial-failure landing
+│   └── t/$token.tsx        # Public download page (recipient view)
 ├── features/
 │   ├── api/                # Shared API client (apiFetch, ApiError, types)
 │   ├── transfers/

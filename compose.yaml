@@ -4,7 +4,7 @@ services:
   postgresql:
     image: postgres:16.6
     ports:
-      - "8912:5432"
+      - "8982:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 1s
@@ -17,13 +17,13 @@ services:
   redis:
     image: redis:5
     ports:
-      - "8913:6379"
+      - "8985:6379"
 
   mailcatcher:
     image: maildev/maildev:2.2.1
     ports:
-      - "8904:1080"
-      - "8917:1025"
+      - "8984:1080"
+      - "8988:1025"
 
   objectstorage:
     image: rustfs/rustfs:1.0.0-alpha.83
@@ -36,8 +36,8 @@ services:
       - RUSTFS_CORS_ALLOWED_ORIGINS=*
       - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=*
     ports:
-      - "8906:9000"
-      - "8907:9001"
+      - "8986:9000"
+      - "8987:9001"
     healthcheck:
       test:
         [
@@ -78,7 +78,7 @@ services:
       - env.d/development/backend.defaults
       - env.d/development/backend.local
     ports:
-      - "8901:8000"
+      - "8981:8000"
     depends_on:
       postgresql:
         condition: service_healthy
@@ -99,7 +99,7 @@ services:
       - env.d/development/backend.defaults
       - env.d/development/backend.local
     ports:
-      - "8901:8000"
+      - "8981:8000"
     depends_on:
       postgresql:
         condition: service_healthy
@@ -151,7 +151,7 @@ services:
     volumes:
       - ./src/backend:/app
     ports:
-      - "8903:8803"
+      - "8983:8803"
     command: celery -A transferts.celery_app flower --port=8803
 
   frontend-base:
@@ -172,7 +172,7 @@ services:
     volumes:
       - ./src/frontend/:/home/frontend/
     ports:
-      - "8900:3000"
+      - "8980:3000"
 
   frontend-tools:
     extends: frontend-base
