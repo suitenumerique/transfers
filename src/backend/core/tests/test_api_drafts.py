@@ -14,11 +14,13 @@ import uuid as _uuid
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
+from django.test import override_settings
 from django.utils import timezone
 
 import pytest
 from botocore.exceptions import ClientError
 
+from core.entitlements import get_entitlements_backend
 from core.enums import TransferEventType
 from core.factories import (
     TransferDraftFactory,
@@ -1098,3 +1100,85 @@ class TestImportDriveFileTask:
         assert not TransferFile.objects.filter(id=tf.id).exists()
         mock_create.assert_not_called()
         mock_abort.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestDraftUploadEntitlement:
+    """Draft multipart endpoints require ``can_access`` from the entitlements backend."""
+
+    @staticmethod
+    def _no_access_entitlements():
+        return override_settings(
+            ENTITLEMENTS_BACKEND="core.entitlements.backends.static.StaticEntitlementsBackend",
+            ENTITLEMENTS_BACKEND_PARAMETERS={
+                "entitlements": {
+                    "can_access": {"result": False, "message": "access_denied"},
+                },
+            },
+        )
+
+    def test_add_file_returns_403_when_can_access_false(self, authenticated_client):
+        with self._no_access_entitlements():
+            get_entitlements_backend.cache_clear()
+            try:
+                resp = authenticated_client.post(
+                    ADD_FILE_URL,
+                    {"filename": "a.bin", "size": 100},
+                    format="json",
+                )
+                assert resp.status_code == 403, resp.data
+                assert "access_denied" in str(resp.data)
+            finally:
+                get_entitlements_backend.cache_clear()
+
+    def test_sign_part_returns_403_when_can_access_false(self, authenticated_client, user):
+        draft = TransferDraftFactory(owner=user)
+        transfer_file = TransferFileFactory(
+            draft=draft,
+            transfer=None,
+            filename="a.bin",
+            size=100,
+            upload_id="mpu-test",
+            upload_completed_at=None,
+        )
+        with self._no_access_entitlements():
+            get_entitlements_backend.cache_clear()
+            try:
+                resp = authenticated_client.post(
+                    f"{DRAFTS_URL}{draft.id}/sign-part/",
+                    {
+                        "transfer_file_id": str(transfer_file.id),
+                        "part_number": 1,
+                    },
+                    format="json",
+                )
+                assert resp.status_code == 403, resp.data
+            finally:
+                get_entitlements_backend.cache_clear()
+
+    def test_complete_upload_returns_403_when_can_access_false(
+        self, authenticated_client, user
+    ):
+        draft = TransferDraftFactory(owner=user)
+        transfer_file = TransferFileFactory(
+            draft=draft,
+            transfer=None,
+            filename="a.bin",
+            size=100,
+            upload_id="mpu-test",
+            upload_completed_at=None,
+        )
+        with self._no_access_entitlements():
+            get_entitlements_backend.cache_clear()
+            try:
+                resp = authenticated_client.post(
+                    f"{DRAFTS_URL}{draft.id}/complete-upload/",
+                    {
+                        "transfer_file_id": str(transfer_file.id),
+                        "parts": [{"PartNumber": 1, "ETag": '"etag-1"'}],
+                    },
+                    format="json",
+                )
+                assert resp.status_code == 403, resp.data
+            finally:
+                get_entitlements_backend.cache_clear()

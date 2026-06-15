@@ -149,6 +149,15 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
         ),
     )
 
+    claims = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text=(
+            "Subset of OIDC userinfo kept for integrations "
+            "(e.g. DeployCenter entitlements). Keys come from OIDC_STORE_CLAIMS."
+        ),
+    )
+
     objects = UserManager()
 
     USERNAME_FIELD = "admin_email"

@@ -421,7 +421,7 @@ class Base(Configuration):
         "openid email", environ_name="OIDC_RP_SCOPES", environ_prefix=None
     )
     OIDC_AUTHENTICATE_CLASS = "lasuite.oidc_login.views.OIDCAuthenticationRequestView"
-    OIDC_CALLBACK_CLASS = "lasuite.oidc_login.views.OIDCAuthenticationCallbackView"
+    OIDC_CALLBACK_CLASS = "core.authentication.views.OIDCAuthenticationCallbackView"
     LOGIN_REDIRECT_URL = values.Value(
         None, environ_name="LOGIN_REDIRECT_URL", environ_prefix=None
     )
@@ -459,6 +459,11 @@ class Base(Configuration):
     OIDC_USERINFO_FULLNAME_FIELDS = values.ListValue(
         default=["first_name", "last_name"],
         environ_name="OIDC_USERINFO_FULLNAME_FIELDS",
+        environ_prefix=None,
+    )
+    OIDC_STORE_CLAIMS = values.ListValue(
+        default=[],
+        environ_name="OIDC_STORE_CLAIMS",
         environ_prefix=None,
     )
     ALLOW_LOGOUT_GET_METHOD = values.BooleanValue(
@@ -509,6 +514,19 @@ class Base(Configuration):
             },
         },
     }
+
+    # Entitlements
+    ENTITLEMENTS_BACKEND = values.Value(
+        "core.entitlements.backends.static.StaticEntitlementsBackend",
+        environ_name="ENTITLEMENTS_BACKEND",
+        environ_prefix=None,
+    )
+
+    ENTITLEMENTS_BACKEND_PARAMETERS = values.DictValue(
+        {},
+        environ_name="ENTITLEMENTS_BACKEND_PARAMETERS",
+        environ_prefix=None,
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -578,7 +596,16 @@ class Development(Base):
     CSRF_TRUSTED_ORIGINS = ["http://localhost:8900", "http://localhost:8901"]
     DEBUG = True
 
+    # OIDC (mozilla-django-oidc / lasuite) stores ``state`` / nonce under
+    # ``request.session["oidc_states"]``. With ``SESSION_ENGINE=cache`` and
+    # Redis, concurrent ``/authenticate/`` requests or cache quirks can drop
+    # or overwrite that payload before Keycloak redirects back — leading to
+    # ``SuspiciousOperation: OIDC callback state not found in session``. DB
+    # sessions avoid that class of failures in local dev.
+    SESSION_ENGINE = "django.contrib.sessions.backends.db"
+
     SESSION_COOKIE_NAME = "transferts_sessionid"
+    SESSION_COOKIE_SAMESITE = "Lax"
 
     # Dev-only switch: mount a GET endpoint that hands back a session
     # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined
@@ -629,6 +656,15 @@ class Development(Base):
     def __init__(self):
         super().__init__()
         self.INSTALLED_APPS += ["django_extensions", "drf_spectacular_sidecar"]
+        if getattr(self, "DEV_AUTH_BYPASS", False):
+            auth_mw = "django.contrib.auth.middleware.AuthenticationMiddleware"
+            dev_claims_mw = "core.authentication.dev_claims_middleware.DevAuthClaimsMiddleware"
+            if dev_claims_mw not in self.MIDDLEWARE:
+                try:
+                    idx = self.MIDDLEWARE.index(auth_mw)
+                    self.MIDDLEWARE.insert(idx + 1, dev_claims_mw)
+                except ValueError:
+                    self.MIDDLEWARE.append(dev_claims_mw)
 
 
 class DevelopmentMinimal(Development):

@@ -1,0 +1,263 @@
+"""
+Test Entitlements API endpoints with DeployCenter entitlements backend.
+"""
+
+import urllib.parse
+
+from django.test import override_settings
+
+import pytest
+import responses
+from rest_framework.test import APIClient
+
+from core.factories import UserFactory
+from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
+from core.entitlements.backends.deploycenter import DeployCenterEntitlementsBackend
+
+pytestmark = pytest.mark.django_db
+
+ENTITLEMENTS_URL = "http://backend-dev:8000/api/v1.0/entitlements/"
+ENTITLEMENTS_BACKEND_PARAMETERS = {
+    "base_url": ENTITLEMENTS_URL,
+    "api_key": "test-api-key",
+    "service_id": 8,
+    "oidc_claims": ["siret"],
+}
+
+ENTITLEMENTS_PARAMETERS_WITH_CLAIM_DEFAULTS = {
+    **ENTITLEMENTS_BACKEND_PARAMETERS,
+    "claim_defaults": {"siret": "21140001500015"},
+}
+
+
+@pytest.fixture(autouse=True)
+def _clear_entitlements_backend_cache():
+    # get_entitlements_backend() is cached via functools.cache; clear between tests
+    # so override_settings is applied correctly.
+    get_entitlements_backend.cache_clear()
+    yield
+    get_entitlements_backend.cache_clear()
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_BACKEND_PARAMETERS,
+)
+def test_api_entitlements_deploycenter_get_entitlements_anonymous():
+    """Anonymous users should not be allowed to get entitlements."""
+    client = APIClient()
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication credentials were not provided."}
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_BACKEND_PARAMETERS,
+)
+@responses.activate
+def test_api_entitlements_deploycenter_get_entitlements_both_true():
+    """Authenticated users should get entitlements when can_access is True."""
+    responses.add(
+        responses.GET,
+        ENTITLEMENTS_URL,
+        json={
+            "entitlements": {
+                "can_access": True,
+                "can_upload": True,
+            }
+        },
+        status=200,
+    )
+
+    client = APIClient()
+    user = UserFactory()
+    user.claims = {"siret": "21140001500015"}
+    client.force_authenticate(user)
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert response.json() == {
+        "can_access": {
+            "result": True,
+        },
+        "context": {
+            "organization": None,
+            "operator": None,
+            "potentialOperators": None,
+        },
+    }
+    assert len(responses.calls) == 1
+    assert responses.calls[0].request.url.startswith(ENTITLEMENTS_URL)
+    assert "siret" in responses.calls[0].request.url
+    assert f"account_email={urllib.parse.quote(user.email)}" in responses.calls[0].request.url
+    assert "account_type=user" in responses.calls[0].request.url
+    assert "service_id=8" in responses.calls[0].request.url
+    assert responses.calls[0].request.headers["X-Service-Auth"] == (
+        f"Bearer {ENTITLEMENTS_BACKEND_PARAMETERS['api_key']}"
+    )
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_BACKEND_PARAMETERS,
+)
+@responses.activate
+def test_api_entitlements_deploycenter_get_entitlements_can_access_false():
+    """Authenticated users should get correct entitlements when can_access is False."""
+    responses.add(
+        responses.GET,
+        ENTITLEMENTS_URL,
+        json={
+            "entitlements": {
+                "can_access": False,
+                "can_upload": True,
+            }
+        },
+        status=200,
+    )
+
+    client = APIClient()
+    user = UserFactory()
+    user.claims = {"siret": "12345678901234"}
+    client.force_authenticate(user)
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert response.json() == {
+        "can_access": {
+            "result": False,
+        },
+        "context": {
+            "organization": None,
+            "operator": None,
+            "potentialOperators": None,
+        },
+    }
+    assert len(responses.calls) == 1
+    assert responses.calls[0].request.url.startswith(ENTITLEMENTS_URL)
+    assert "siret" in responses.calls[0].request.url
+    assert f"account_email={urllib.parse.quote(user.email)}" in responses.calls[0].request.url
+    assert "account_type=user" in responses.calls[0].request.url
+    assert "service_id=8" in responses.calls[0].request.url
+    assert responses.calls[0].request.headers["X-Service-Auth"] == (
+        f"Bearer {ENTITLEMENTS_BACKEND_PARAMETERS['api_key']}"
+    )
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_BACKEND_PARAMETERS,
+)
+@responses.activate
+def test_api_entitlements_deploycenter_get_entitlements_cache():
+    """Authenticated users should get entitlements from cache when doing subsequent requests."""
+    responses.add(
+        responses.GET,
+        ENTITLEMENTS_URL,
+        json={
+            "entitlements": {
+                "can_access": True,
+                "can_upload": True,
+            }
+        },
+        status=200,
+    )
+
+    client = APIClient()
+    user = UserFactory()
+    user.claims = {"siret": "12345678901234"}
+    client.force_authenticate(user)
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert response.json() == {
+        "can_access": {
+            "result": True,
+        },
+        "context": {
+            "organization": None,
+            "operator": None,
+            "potentialOperators": None,
+        },
+    }
+    assert len(responses.calls) == 1
+
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert response.json() == {
+        "can_access": {
+            "result": True,
+        },
+        "context": {
+            "organization": None,
+            "operator": None,
+            "potentialOperators": None,
+        },
+    }
+    # Verify that the request was not made again.
+    assert len(responses.calls) == 1
+
+
+@override_settings(
+    ENTITLEMENTS_BACKEND="core.entitlements.backends.deploycenter.DeployCenterEntitlementsBackend",
+    ENTITLEMENTS_BACKEND_PARAMETERS=ENTITLEMENTS_PARAMETERS_WITH_CLAIM_DEFAULTS,
+)
+@responses.activate
+def test_api_entitlements_deploycenter_siret_from_claim_defaults():
+    """When User.claims has no siret, claim_defaults still satisfies DeployCenter."""
+    responses.add(
+        responses.GET,
+        ENTITLEMENTS_URL,
+        json={
+            "entitlements": {
+                "can_access": True,
+                "can_upload": True,
+            }
+        },
+        status=200,
+    )
+
+    client = APIClient()
+    user = UserFactory()
+    user.claims = {}
+    client.force_authenticate(user)
+    response = client.get("/api/v1.0/entitlements/")
+    assert response.status_code == 200
+    assert len(responses.calls) == 1
+    parsed = urllib.parse.urlparse(responses.calls[0].request.url)
+    q = urllib.parse.parse_qs(parsed.query)
+    assert q["siret"] == ["21140001500015"]
+
+
+def test_deploycenter_fetch_entitlements_missing_siret_raises():
+    """Without siret in claims or claim_defaults, fetch_entitlements fails fast."""
+    backend = DeployCenterEntitlementsBackend(**ENTITLEMENTS_BACKEND_PARAMETERS)
+    user = UserFactory()
+    user.claims = {}
+    with pytest.raises(EntitlementsUnavailableError, match="siret"):
+        backend.fetch_entitlements(user)
+
+
+def test_api_entitlements_deploycenter_missing_base_url_parameter():
+    """Missing base_url parameter should raise an exception."""
+    with pytest.raises(TypeError):
+        DeployCenterEntitlementsBackend(  # pylint: disable=no-value-for-parameter
+            service_id=8,
+            api_key="secret",
+        )
+
+
+def test_api_entitlements_deploycenter_missing_api_key_parameter():
+    """Missing api_key parameter should raise an exception."""
+    with pytest.raises(TypeError):
+        DeployCenterEntitlementsBackend(  # pylint: disable=no-value-for-parameter
+            base_url=ENTITLEMENTS_URL,
+            service_id=8,
+        )
+
+
+def test_api_entitlements_deploycenter_missing_service_id_parameter():
+    """Missing service_id parameter should raise an exception."""
+    with pytest.raises(TypeError):
+        DeployCenterEntitlementsBackend(  # pylint: disable=no-value-for-parameter
+            base_url=ENTITLEMENTS_URL,
+            api_key="secret",
+        )

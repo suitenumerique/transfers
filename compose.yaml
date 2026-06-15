@@ -25,6 +25,55 @@ services:
       - "8904:1080"
       - "8917:1025"
 
+  kc_postgresql:
+    image: postgres:14.3
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 1s
+      timeout: 2s
+      retries: 300
+    ports:
+      - "8914:5432"
+    env_file:
+      - env.d/development/kc_postgresql.defaults
+      - env.d/development/kc_postgresql.local
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.2
+    volumes:
+      - ./docker/auth/realm.json:/opt/keycloak/data/import/realm.json:ro
+    command:
+      - start-dev
+      - --features=preview
+      - --import-realm
+      - --proxy=edge
+      - --hostname=http://localhost:8908
+      - --hostname-strict=false
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL_HOST: kc_postgresql
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_PASSWORD: pass
+      KC_DB_USERNAME: transferts
+      KC_DB_SCHEMA: public
+      PROXY_ADDRESS_FORWARDING: "true"
+    ports:
+      - "8909:8080"
+    depends_on:
+      kc_postgresql:
+        condition: service_healthy
+
+  nginx-oidc:
+    image: nginx:1.25
+    ports:
+      - "8908:8908"
+    depends_on:
+      - keycloak
+    volumes:
+      - ./docker/files/development/nginx/conf.d:/etc/nginx/conf.d:ro
+
   objectstorage:
     image: rustfs/rustfs:1.0.0-alpha.83
     environment:
@@ -88,6 +137,10 @@ services:
         condition: service_started
       mailcatcher:
         condition: service_started
+      nginx-oidc:
+        condition: service_started
+      keycloak:
+        condition: service_started
 
   backend-db:
     extends: backend-base
@@ -132,6 +185,8 @@ services:
       - ./data/static:/data/static
     depends_on:
       - backend-dev
+      - nginx-oidc
+      - keycloak
 
   worker-ui:
     build:
