@@ -39,20 +39,17 @@
 			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
-		# Next.js static export routes
-		@transfer_download path_regexp ^/t/[^/]+$
-		rewrite @transfer_download /t/[token].html
-
-		@transfer_detail path_regexp ^/transfers/[^/]+$
-		rewrite @transfer_detail /transfers/[id].html
-
-		# Default: SPA fallback
+		# SPA fallback: any unmatched request returns index.html so the
+		# client-side router (TanStack Router) can resolve the path.
 		try_files {path} /index.html
 		file_server
 	}
 
 	handle_errors {
-		rewrite * /404.html
-		file_server
+		@spa_404 expression `{err.status_code} == 404`
+		handle @spa_404 {
+			rewrite * /index.html
+			file_server
+		}
 	}
 }

@@ -50,7 +50,7 @@ def _get_presigning_client():
     """Return the client used to generate presigned URLs.
 
     In dev, backend and frontend may see the object storage on different
-    hostnames (``objectstorage:9000`` vs ``localhost:8906``). Signatures are
+    hostnames (``objectstorage:9000`` vs ``localhost:8986``). Signatures are
     tied to the hostname, so presigned URLs generated against the internal
     hostname are unusable from the browser. ``AWS_S3_DOMAIN_REPLACE`` lets us
     generate signatures against the browser-facing hostname.

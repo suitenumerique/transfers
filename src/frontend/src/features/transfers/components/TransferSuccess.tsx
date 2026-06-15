@@ -1,14 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
-import {
-  ArrowUpCircle,
-  ArrowUpDown,
-  Checkmark,
-  Copy,
-  Link as LinkIcon,
-  MailCheckFilled,
-} from "@gouvfr-lasuite/ui-kit";
+import { ArrowUpCircle, ArrowUpDown, Checkmark, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 
 function formatExpiry(iso: string): string {

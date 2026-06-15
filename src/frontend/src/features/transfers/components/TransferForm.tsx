@@ -1,31 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/router";
+import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Input,
-  LabelledBox,
-  Tooltip,
-  VariantType,
-} from "@gouvfr-lasuite/cunningham-react";
-import {
-  ArrowUpRight,
-  Copy,
-  Doc,
-  DropdownMenu,
-  FileCheck,
-  FileError,
-  FolderDrive,
-  Icon,
-  Info,
-  Link as LinkIcon,
-  Mail,
-  Spinner,
-  useDropdownMenu,
-} from "@gouvfr-lasuite/ui-kit";
+import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
+import { ArrowUpRight, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail } from "@gouvfr-lasuite/ui-kit/icons";
 import { apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
@@ -189,7 +168,7 @@ function percent(df: DraftFile): number {
 
 export function TransferForm() {
   const { t } = useTranslation();
-  const router = useRouter();
+  const navigate = useNavigate();
   const config = useConfig();
   const draft = useTransferDraft();
 
@@ -238,10 +217,11 @@ export function TransferForm() {
     if (!data?.notifications_completed_at) return;
     isSubmittingRef.current = true;
     const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
-    router.push(
-      hasFailures ? `/confirm-failed/${data.id}` : `/confirm/${data.id}`,
-    );
-  }, [pollQuery.data, router]);
+    navigate({
+      to: hasFailures ? "/confirm-failed/$id" : "/confirm/$id",
+      params: { id: data.id },
+    });
+  }, [pollQuery.data, navigate]);
 
   const handleFilesChange = (incoming: File[]) => {
     setFileError(null);
@@ -365,9 +345,9 @@ export function TransferForm() {
   // in flight. Two separate guards because the events don't overlap:
   // - beforeunload covers tab close / refresh / cross-origin nav (browser
   //   shows its own native, non-customisable wording).
-  // - router.events.routeChangeStart covers intra-app navigation (clicking
-  //   another transfer in the sidebar etc.); we get to show a confirm()
-  //   with our own message and abort the navigation if the user declines.
+  // - the TanStack Router useBlocker below covers intra-app navigation
+  //   (clicking another transfer in the sidebar etc.); we get to show a
+  //   confirm() with our own message and abort the navigation if declined.
   const shouldWarnOnLeave = hasFiles || awaitingUploads;
   useEffect(() => {
     if (!shouldWarnOnLeave) return;
@@ -381,28 +361,25 @@ export function TransferForm() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [shouldWarnOnLeave]);
 
-  // Lets the routeChangeStart handler skip the confirm during the
-  // post-submit router.push — at that point the draft is already
-  // resetLocal'd on the server, but React hasn't re-rendered to clear
-  // shouldWarnOnLeave yet, so the closure would still trip otherwise.
+  // Lets the blocker skip the confirm during the post-submit navigation — at
+  // that point the draft is already resetLocal'd on the server, but React
+  // hasn't re-rendered to clear shouldWarnOnLeave yet, so the blocker would
+  // still trip otherwise.
   const isSubmittingRef = useRef(false);
-  useEffect(() => {
-    if (!shouldWarnOnLeave) return;
-    const handler = (url: string) => {
-      if (isSubmittingRef.current) return;
-      // Skip the confirm if Next.js is firing a no-op (same path).
-      if (router.asPath === url) return;
-      if (window.confirm(t("Leave this page? Your transfer will be discarded."))) {
-        return;
-      }
-      // Throwing a string is Next.js's documented way to cancel a route
-      // change in flight without bubbling an Error to the console.
-      router.events.emit("routeChangeError");
-      throw "routeChange aborted by user";
-    };
-    router.events.on("routeChangeStart", handler);
-    return () => router.events.off("routeChangeStart", handler);
-  }, [shouldWarnOnLeave, router, t]);
+  // Intra-app navigation guard (e.g. clicking another transfer in the
+  // sidebar). `beforeunload` above covers tab close / refresh separately;
+  // we keep `enableBeforeUnload: false` here to avoid stacking two native
+  // prompts on browser unload.
+  useBlocker({
+    shouldBlockFn: () => {
+      if (!shouldWarnOnLeave || isSubmittingRef.current) return false;
+      return !window.confirm(
+        t("Leave this page? Your transfer will be discarded."),
+      );
+    },
+    enableBeforeUnload: false,
+    disabled: !shouldWarnOnLeave,
+  });
   // Metadata inputs / Drive attach / tabs stay locked for the whole
   // submit flow — `busy` gates those. File-level Delete / Cancel actions
   // only need to lock during the non-cancellable finalize window so the
@@ -433,7 +410,7 @@ export function TransferForm() {
         // Link mode: nothing to wait for — go straight to the confirm page.
         // Suppress the route-change confirm; see the ref's declaration.
         isSubmittingRef.current = true;
-        router.push(`/confirm/${result.id}`);
+        navigate({ to: "/confirm/$id", params: { id: result.id } });
       } else {
         // Email mode: enter polling state. The pollQuery effect will navigate
         // once the recipient-invitation task is done (success or partial fail).

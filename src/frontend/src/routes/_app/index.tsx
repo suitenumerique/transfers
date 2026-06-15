@@ -1,11 +1,10 @@
-import type { ReactElement } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+
 import { useAuth } from "@/features/auth";
-import { MainLayout } from "@/features/layouts/components/main/MainLayout";
 import { HomeLanding } from "@/features/transfers/components/HomeLanding";
 import { TransferForm } from "@/features/transfers/components/TransferForm";
-import type { NextPageWithLayout } from "./_app";
 
-const HomePage: NextPageWithLayout = () => {
+const HomePage = () => {
   const { user } = useAuth();
 
   if (!user) {
@@ -23,8 +22,6 @@ const HomePage: NextPageWithLayout = () => {
   );
 };
 
-HomePage.getLayout = (page: ReactElement) => {
-  return <MainLayout>{page}</MainLayout>;
-};
-
-export default HomePage;
+export const Route = createFileRoute("/_app/")({
+  component: HomePage,
+});

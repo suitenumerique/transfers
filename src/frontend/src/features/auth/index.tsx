@@ -11,7 +11,7 @@ interface User {
 
 function getApiOrigin() {
   return (
-    process.env.NEXT_PUBLIC_API_ORIGIN ||
+    import.meta.env.NEXT_PUBLIC_API_ORIGIN ||
     (typeof window !== "undefined" ? window.location.origin : "")
   );
 }

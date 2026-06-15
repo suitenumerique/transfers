@@ -50,9 +50,9 @@ bootstrap: ## Prepare the project for local development
 	@echo "║  Transferts — Service de transfert de fichiers souverain                     ║"
 	@echo "║                                                                              ║"
 	@echo "║  Services will be available at:                                                                   ║"
-	@echo "║  • Frontend: http://localhost:8900                                           ║"
-	@echo "║  • API:      http://localhost:8901                                           ║"
-	@echo "║  • Admin:    http://localhost:8901/admin                                     ║"
+	@echo "║  • Frontend: http://localhost:8980                                           ║"
+	@echo "║  • API:      http://localhost:8981                                           ║"
+	@echo "║  • Admin:    http://localhost:8981/admin                                     ║"
 	@echo "╚══════════════════════════════════════════════════════════════════════════════╝"
 	@echo "$(RESET)"
 	@$(MAKE) update
@@ -134,6 +134,10 @@ format-back: ## format back-end python sources
 check-back: ## check back-end python sources
 	@$(COMPOSE_RUN_APP_TOOLS) ruff check . --fix
 .PHONY: check-back
+
+analyze-front: ## analyze frontend bundle sizes (per-chunk + per-package breakdown)
+	@$(COMPOSE) run --rm frontend-tools npm run analyze
+.PHONY: analyze-front
 
 typecheck-front: ## run the frontend type checker
 	@$(COMPOSE) run --rm frontend-tools npm run ts:check

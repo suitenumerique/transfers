@@ -23,7 +23,7 @@ PYTHONPATH=/app
 # Mail
 DJANGO_EMAIL_BRAND_NAME="La Suite territoriale"
 DJANGO_EMAIL_HOST="mailcatcher"
-DJANGO_EMAIL_LOGO_IMG="http://localhost:8900/assets/logo-suite-numerique.png"
+DJANGO_EMAIL_LOGO_IMG="http://localhost:8980/assets/logo-suite-numerique.png"
 DJANGO_EMAIL_PORT=1025
 
 # S3 Object Storage
@@ -31,7 +31,7 @@ AWS_S3_ENDPOINT_URL=http://objectstorage:9000
 AWS_S3_ACCESS_KEY_ID=transferts
 AWS_S3_SECRET_ACCESS_KEY=password
 AWS_S3_SIGNATURE_VERSION=s3v4
-AWS_S3_DOMAIN_REPLACE=http://localhost:8906
+AWS_S3_DOMAIN_REPLACE=http://localhost:8986
 
 # Transfers storage bucket
 TRANSFERS_BUCKET_NAME=transferts
@@ -58,11 +58,11 @@ OIDC_OP_LOGOUT_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/session/e
 OIDC_RP_SIGN_ALGO=RS256
 OIDC_RP_SCOPES="openid email"
 
-LOGIN_REDIRECT_URL=http://localhost:8900
-LOGIN_REDIRECT_URL_FAILURE=http://localhost:8900
-LOGOUT_REDIRECT_URL=http://localhost:8900
+LOGIN_REDIRECT_URL=http://localhost:8980
+LOGIN_REDIRECT_URL_FAILURE=http://localhost:8980
+LOGOUT_REDIRECT_URL=http://localhost:8980
 
-OIDC_REDIRECT_ALLOWED_HOSTS=["http://localhost:8900"]
+OIDC_REDIRECT_ALLOWED_HOSTS=["http://localhost:8980"]
 OIDC_AUTH_REQUEST_EXTRA_PARAMS={"acr_values": "eidas1"}
 
 # Drive integration — leave blank to hide the "Attach from Drive" button.

@@ -1,13 +1,8 @@
-import Link from "next/link";
-import { useRouter } from "next/router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import {
-  LaGaufreV2,
-  ProConnectButton,
-  QuestionMark,
-  Spinner,
-} from "@gouvfr-lasuite/ui-kit";
+import { LaGaufreV2, ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
+import { QuestionMark } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
 import { login, useAuth } from "@/features/auth";
 import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
@@ -32,12 +27,11 @@ function getErrorReason(error: unknown): DownloadErrorReason {
   return "not_found";
 }
 
-export default function DownloadPage() {
+function DownloadPage() {
   const { t } = useTranslation();
-  const router = useRouter();
+  const { token } = Route.useParams();
   const config = useConfig();
   const { user } = useAuth();
-  const token = router.query.token as string | undefined;
 
   const { data, isLoading, isError, error } = useDownloadTransfer(token);
 
@@ -67,7 +61,7 @@ export default function DownloadPage() {
     <div className="download-page">
       <header className="download-page__topbar">
         <Link
-          href="/"
+          to="/"
           className="download-page__brand"
           aria-label={t("Transferts")}
         >
@@ -110,3 +104,7 @@ export default function DownloadPage() {
     </div>
   );
 }
+
+export const Route = createFileRoute("/t/$token")({
+  component: DownloadPage,
+});

@@ -1,27 +1,25 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
-import nextTypescript from "eslint-config-next/typescript";
-
-
+import reactHooks from "eslint-plugin-react-hooks";
+import tseslint from "typescript-eslint";
 
 const eslintConfig = defineConfig([
-  ...nextCoreWebVitals,
-  ...nextTypescript,
-  globalIgnores(["out/**", "next-env.d.ts", ".next/**"]),
-  { ignores: ["src/features/api/gen/**/*.ts"] },
+  globalIgnores(["dist/**", "src/routes.gen.ts", "scripts/**"]),
+  ...tseslint.configs.recommended,
+  reactHooks.configs.flat.recommended,
   {
     rules: {
-      "react-hooks/exhaustive-deps": "off",
-      "react-hooks/refs": "off",
       "no-console": ["error", { allow: ["error", "warn"] }],
       "@typescript-eslint/no-unused-vars": "error",
+      "@typescript-eslint/no-empty-object-type": "off",
+      "react-hooks/exhaustive-deps": "off",
+      "react-hooks/refs": "off",
       "react-hooks/set-state-in-effect": "warn",
       // Ref mutations in event handlers (e.g. isSubmittingRef) are a
       // legitimate escape hatch; the React Compiler rule over-flags them.
       // Kept as a warning, consistent with the other compiler rules above.
       "react-hooks/immutability": "warn",
-    }
-  }
+    },
+  },
 ]);
 
 export default eslintConfig;
