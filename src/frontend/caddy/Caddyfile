@@ -39,17 +39,24 @@
 			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
 
-		# SPA fallback: any unmatched request returns index.html so the
-		# client-side router (TanStack Router) can resolve the path.
-		try_files {path} /index.html
+		# Serve static assets. Missing files fall through to handle_errors
+		# below, which applies the SPA fallback for document navigations only.
 		file_server
 	}
 
 	handle_errors {
+		# SPA fallback: serve index.html for missing document navigations so the
+		# client-side router (TanStack Router) can resolve the path. Scoped to
+		# requests that accept HTML, so missing static assets (JS/CSS chunks)
+		# keep their 404 instead of getting a 200 index.html — chunk-load
+		# failures and stale-cache issues stay visible.
 		@spa_404 expression `{err.status_code} == 404`
 		handle @spa_404 {
-			rewrite * /index.html
-			file_server
+			@html header Accept *text/html*
+			handle @html {
+				rewrite * /index.html
+				file_server
+			}
 		}
 	}
 }

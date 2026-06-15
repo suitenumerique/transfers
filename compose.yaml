@@ -99,7 +99,7 @@ services:
       - env.d/development/backend.defaults
       - env.d/development/backend.local
     ports:
-      - "8981:8000"
+      - "8989:8000"
     depends_on:
       postgresql:
         condition: service_healthy

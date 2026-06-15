@@ -79,8 +79,13 @@ for (const c of chunks) {
   console.log(`  ${fmt(c.raw).padStart(9)}  ${fmt(c.gz).padStart(8)}  ${String(c.mods.length).padStart(5)}  ${path.basename(c.chunk)}`);
 }
 
-const TOP_N = Number(process.env.ANALYZE_TOP_N ?? 10);
-const TOP_BUCKETS = Number(process.env.ANALYZE_TOP_BUCKETS ?? 8);
+const toPositiveInt = (value, fallback) => {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+};
+
+const TOP_N = toPositiveInt(process.env.ANALYZE_TOP_N, 10);
+const TOP_BUCKETS = toPositiveInt(process.env.ANALYZE_TOP_BUCKETS, 8);
 
 console.log(`\nTOP ${TOP_N} CHUNKS BY GZ — top ${TOP_BUCKETS} contributors each`);
 console.log(bar);

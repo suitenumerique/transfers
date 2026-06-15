@@ -18,7 +18,7 @@ npm run preview  # serve the production build locally
 
 ## Layout
 
-```
+```text
 src/
 ├── routes/                 # TanStack Router file-based routes
 │   ├── __root.tsx          # Providers (Query, Cunningham, Config, Auth)
