@@ -8,6 +8,7 @@ const DEFAULT_LANGUAGES: [string, string][] = [["fr-FR","Français"],["en-US","E
 function isLanguageList(value: unknown): value is [string, string][] {
   return (
     Array.isArray(value) &&
+    value.length > 0 &&
     value.every(
       (item) =>
         Array.isArray(item) &&
