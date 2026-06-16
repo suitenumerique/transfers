@@ -345,7 +345,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
 
     files = serializers.SerializerMethodField()
     owner_name = serializers.CharField(source="owner.full_name", read_only=True)
-    owner_email = serializers.CharField(source="owner.email", read_only=True)
+    is_owner = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Transfer
@@ -355,11 +355,25 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "created_at",
             "files",
             "owner_name",
-            "owner_email",
+            "is_owner",
             "sharing_mode",
             "auto_archive_on_download",
         ]
         read_only_fields = fields
+
+    @extend_schema_field({"type": "boolean"})
+    def get_is_owner(self, obj) -> bool:
+        # The download payload is served to anyone holding the link
+        # (``AllowAny``), so we must not leak the owner's identity email.
+        # The frontend only needs a boolean to tailor the auto-archive
+        # copy ("…by another user." for the owner), so we resolve it
+        # server-side from the authenticated session instead.
+        request = self.context.get("request")
+        return bool(
+            request
+            and request.user.is_authenticated
+            and request.user.id == obj.owner_id
+        )
 
     def get_files(self, obj):
         # Every TransferFile attached to a Transfer is complete by

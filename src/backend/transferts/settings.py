@@ -672,7 +672,8 @@ class Production(Base):
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_HSTS_SECONDS = 60
+    # 1 year — the minimum the HSTS preload list accepts.
+    SECURE_HSTS_SECONDS = 31_536_000
     SECURE_HSTS_PRELOAD = True
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_SSL_REDIRECT = True

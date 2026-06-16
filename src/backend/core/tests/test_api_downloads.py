@@ -28,9 +28,22 @@ class TestDownloadTransferView:
         assert response.data["title"] == t.title
         assert len(response.data["files"]) == 1
         assert "owner_name" in response.data
-        assert "owner_email" in response.data
+        # The owner's identity email must never reach the public payload.
+        assert "owner_email" not in response.data
+        # Anonymous visitor → not the owner.
+        assert response.data["is_owner"] is False
 
         assert_single_event(t.id, TransferEventType.LINK_OPENED)
+
+    def test_is_owner_true_for_authenticated_owner(
+        self, authenticated_client, transfer_with_file
+    ):
+        # is_owner is resolved server-side from the session (no owner email
+        # leaks to the client); the transfer owner sees it set to True.
+        t = transfer_with_file
+        response = authenticated_client.get(f"{DOWNLOADS_URL}/{t.public_token}/")
+        assert response.status_code == 200
+        assert response.data["is_owner"] is True
 
     def test_get_expired_transfer(self, api_client):
         t = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))

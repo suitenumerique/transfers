@@ -5,7 +5,24 @@
 
 :{$PORT} {
 	root * {$TRANSFERTS_FRONTEND_ROOT:/app}
-	header -Server
+
+	# Security headers on every response Caddy emits (HTML + assets). The
+	# Django backend sets its own on /api/* responses; these cover the
+	# statically-exported frontend, including the /t/<token> download page.
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		# The download page carries the secret token in its URL path. With
+		# same-origin we never send a Referer cross-origin, so the token can't
+		# leak to the LaGaufre origins via the Referer header.
+		Referrer-Policy "same-origin"
+		# Strict CSP: a compromised LaGaufre script update must not be able to
+		# exfiltrate a recipient's download token. Only self + the two known
+		# suite.anct.gouv.fr origins (widget JS + its services API) are allowed.
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://static.suite.anct.gouv.fr; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://static.suite.anct.gouv.fr; font-src 'self' data:; connect-src 'self' https://static.suite.anct.gouv.fr https://operateurs.suite.anct.gouv.fr; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	}
 
 	route {
 		# Health checks

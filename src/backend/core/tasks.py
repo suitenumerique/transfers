@@ -49,7 +49,13 @@ def deactivate_expired_transfers_task():
 
     count = 0
     for transfer in transfers_to_deactivate:
-        transfer.deactivate(DeactivationReason.EXPIRED)
+        # deactivate() returns False when another feed (manual / first
+        # download) already moved the row out of ACTIVE between the query
+        # above and now. Only record the expiry audit event when the transfer gets
+        # deactivated HERE, otherwise the log would claim an expiry that never 
+        # happened.
+        if not transfer.deactivate(DeactivationReason.EXPIRED):
+            continue
 
         TransferEvent.objects.create(
             transfer_id=transfer.id,
@@ -260,7 +266,18 @@ def delete_pending_transfer_files_task():
         try:
             deleted_files = list(transfer.files.all())
 
-            transfer.delete_s3_objects()
+            if not transfer.delete_s3_objects():
+                # At least one object failed to delete. Flipping to
+                # DEACTIVATED here would strand those bytes forever: the
+                # orphan sweep can't reclaim them while the TransferFile
+                # rows still list the keys as known. Leave the row
+                # PENDING_FILE_DELETION so the next run retries the wipe.
+                logger.warning(
+                    "Transfer %s: some S3 objects failed to delete; "
+                    "leaving it PENDING_FILE_DELETION for the next run",
+                    transfer.id,
+                )
+                continue
 
             with transaction.atomic():
                 transfer.status = TransferStatus.DEACTIVATED

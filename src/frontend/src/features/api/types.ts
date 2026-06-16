@@ -86,7 +86,7 @@ export interface DownloadTransferFull {
   created_at: string;
   files: { id: string; filename: string; size: number; mime_type: string }[];
   owner_name: string;
-  owner_email: string;
+  is_owner: boolean;
   sharing_mode: SharingMode;
   auto_archive_on_download: boolean;
 }

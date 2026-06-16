@@ -54,7 +54,7 @@ function DownloadPage() {
         <p className="download-page__status">{messages[reason]}</p>
       );
     }
-    return <DownloadView transfer={data} token={token!} isOwner={user?.email?.toLowerCase() === data.owner_email?.toLowerCase()} />;
+    return <DownloadView transfer={data} token={token!} isOwner={data.is_owner} />;
   };
 
   return (
