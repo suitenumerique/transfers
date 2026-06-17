@@ -4,6 +4,8 @@ import { Alert, Button, Input, VariantType } from "@gouvfr-lasuite/cunningham-re
 import { Checkmark, Copy, Doc, Download, Globe } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
+import { RelativeDate } from "@/features/ui/components/relative-date";
+import { isExpired } from "@/features/utils/date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import { FileItem } from "./FileItem";
 
@@ -13,17 +15,12 @@ interface DownloadViewProps {
   isOwner?: boolean;
 }
 
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
-}
-
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const totalSize = transfer.files.reduce((a, f) => a + f.size, 0);
-  const days = daysUntil(transfer.expires_at);
+  const expired = isExpired(transfer.expires_at);
   const downloadUrl =
     typeof window !== "undefined" ? window.location.href : "";
 
@@ -64,9 +61,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </span>
         <span className="download-view__meta-sep">·</span>
         <span>
-          {days > 0
-            ? t("Expires in {{count}} days", { count: days })
-            : t("Expired")}
+          {expired ? t("Expired") : t("Expires")}{" "}
+          <RelativeDate iso={transfer.expires_at} />
         </span>
         <span className="download-view__meta-sep">·</span>
         <span>{t("{{count}} file", { count: transfer.files.length })}</span>
