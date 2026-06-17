@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
@@ -6,6 +6,7 @@ import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
+import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
@@ -27,15 +28,6 @@ const EVENT_LABELS: Record<string, string> = {
   file_deleted: "File {{filename}} deleted",
 };
 
-function formatActivityDate(iso: string): string {
-  return new Date(iso).toLocaleString("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 // Turn "amed.benarfa@email.fr" into "Amed Ben Arfa" — purely cosmetic so the
 // avatar picks a deterministic color per person. Falls back to the raw email
 // when the local-part is uninformative (single segment, digits-only, etc.).
@@ -47,16 +39,6 @@ function displayNameFromEmail(email: string): string {
     .filter(Boolean)
     .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
   return parts.length >= 2 ? parts.join(" ") : email;
-}
-
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
-}
-
-function daysBetween(startIso: string, endIso: string): number {
-  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
-  return Math.max(0, Math.round(ms / (24 * 60 * 60 * 1000)));
 }
 
 export function TransferDetail({
@@ -123,17 +105,23 @@ export function TransferDetail({
   );
 
   // Meta summary: single line, single reason. For non-active transfers the
-  // "why is it dead" signal replaces the raw expiry countdown (which is
-  // noise once the transfer is terminal). The deactivation_reason column
-  // on the server is the source of truth — we no longer infer it from a
-  // mix of status + flags on the client.
-  let metaReason: string;
+  // "why is it dead" signal replaces the expiry date (which is noise once the
+  // transfer is terminal). The deactivation_reason column on the server is the
+  // source of truth — we no longer infer it from a mix of status + flags on
+  // the client. Active/expired show the expiry as a relative date (+ hover).
+  let metaReason: ReactNode;
   if (isActive) {
-    metaReason = t("Expires in {{count}} days", { count: daysUntil(transfer.expires_at) });
+    metaReason = (
+      <>
+        {t("Expires")} <RelativeDate iso={transfer.expires_at} />
+      </>
+    );
   } else if (transfer.deactivation_reason === "expired") {
-    metaReason = t("Expired after {{count}} days", {
-      count: daysBetween(transfer.created_at, transfer.expires_at),
-    });
+    metaReason = (
+      <>
+        {t("Expired")} <RelativeDate iso={transfer.expires_at} />
+      </>
+    );
   } else if (transfer.deactivation_reason === "first_download") {
     metaReason = t("Deactivated after download");
   } else if (transfer.deactivation_reason === "manual" || !transfer.deactivation_reason) {
@@ -383,7 +371,7 @@ export function TransferDetail({
                     <span>{label}</span>
                   </div>
                   <div className="transfer-detail__history-date">
-                    {formatActivityDate(ev.created_at)}
+                    <RelativeDate iso={ev.created_at} />
                   </div>
                   <div className="transfer-detail__history-actor">{by}</div>
                 </div>
