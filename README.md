@@ -8,7 +8,7 @@ Initially forked from [suitenumerique/messages](https://github.com/suitenumeriqu
 
 - **Backend**: Django + DRF, PostgreSQL, Celery/Redis, S3 (RustFS in dev)
 - **Frontend**: React (Vite + TanStack Router)
-- **Auth**: ProConnect via OIDC
+- **Auth**: ProConnect via OIDC (a local Keycloak stands in for it in dev)
 
 ## Development
 
@@ -22,6 +22,11 @@ Services:
 - Admin: http://localhost:8981/admin
 - Mail: http://localhost:8984
 - S3 Console: http://localhost:8987
+- Keycloak (dev OIDC): http://localhost:8902 (`admin` / `admin`)
+
+**Signing in:** open the frontend, click _Sign in_, and use a seeded test user
+(`agent@collectivite.fr` / `transferts`). Dev runs the real OIDC flow against a
+local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/authentication.md).
 
 ## Configurable limits
 

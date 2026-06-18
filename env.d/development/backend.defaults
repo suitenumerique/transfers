@@ -42,28 +42,38 @@ TRANSFER_MAX_TOTAL_SIZE=21474836480
 
 OIDC_CREATE_USER=True
 
-# OIDC endpoints — public URLs for ProConnect (AgentConnect integration
-# env). Safe to commit; the sensitive parts (client id + secret) stay in
-# backend.local. These are also required at boot: mozilla-django-oidc
-# validates `OIDC_RP_SIGN_ALGO=RS256` needs either JWKS or a key, else
-# it raises ImproperlyConfigured and the app never starts (including on
-# CI where .local is empty).
-OIDC_OP_JWKS_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/jwks
-OIDC_OP_AUTHORIZATION_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/authorize
-OIDC_OP_TOKEN_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/token
-OIDC_OP_USER_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/userinfo
-OIDC_OP_LOGOUT_ENDPOINT=https://fca.integ01.dev-agentconnect.fr/api/v2/session/end
-# OIDC_RP_CLIENT_ID=          # set in backend.local
-# OIDC_RP_CLIENT_SECRET=      # set in backend.local
+# OIDC endpoints — point at the LOCAL Keycloak (see the `keycloak` service in
+# compose.yaml), so dev works without a real ProConnect instance. The flow is
+# the genuine OIDC code flow, just against a self-hosted provider.
+#
+# Split hostnames on purpose:
+#   - authorize/logout → localhost:8902  (the BROWSER is redirected here)
+#   - token/userinfo/jwks → keycloak:8802 (the BACKEND calls these in-network;
+#     localhost:8902 is unreachable from inside the backend container)
+# Keycloak runs with --hostname=http://localhost:8902, so the issuer/URLs it
+# stamps stay consistent regardless of which host answered the request.
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/auth
+OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/userinfo
+OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/certs
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/logout
+
+# Dev client + secret are committed on purpose — they only match the local
+# realm imported from src/keycloak/realm.json, never anything real.
+OIDC_RP_CLIENT_ID=transferts
+OIDC_RP_CLIENT_SECRET=transferts-dev-secret
 OIDC_RP_SIGN_ALGO=RS256
-OIDC_RP_SCOPES="openid email"
+OIDC_RP_SCOPES="openid email profile"
+# Keycloak emits given_name/family_name (not first_name/last_name). NB:
+# django-configurations ListValue splits on commas — these must be a bare
+# comma-separated list, NOT JSON, or each entry gets mangled.
+OIDC_USERINFO_FULLNAME_FIELDS=given_name,family_name
 
 LOGIN_REDIRECT_URL=http://localhost:8980
 LOGIN_REDIRECT_URL_FAILURE=http://localhost:8980
 LOGOUT_REDIRECT_URL=http://localhost:8980
 
-OIDC_REDIRECT_ALLOWED_HOSTS=["http://localhost:8980"]
-OIDC_AUTH_REQUEST_EXTRA_PARAMS={"acr_values": "eidas1"}
+OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:8980,http://localhost:8981
 
 # Drive integration — leave blank to hide the "Attach from Drive" button.
 # Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)
