@@ -44,6 +44,8 @@ class TestDownloadTransferView:
         response = authenticated_client.get(f"{DOWNLOADS_URL}/{t.public_token}/")
         assert response.status_code == 200
         assert response.data["is_owner"] is True
+        # Even for the owner, the raw email must not leak into the payload.
+        assert "owner_email" not in response.data
 
     def test_get_expired_transfer(self, api_client):
         t = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))

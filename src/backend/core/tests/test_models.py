@@ -63,6 +63,12 @@ class TestUserManagerDuplicateEmail:
         # Two accounts whose emails differ only by case (email isn't unique).
         older = UserFactory(sub="sub-older", email="dup@example.fr")
         newer = UserFactory(sub="sub-newer", email="DUP@example.fr")
+        # created_at is auto_now_add (constructor values are ignored), so pin
+        # the order with a bulk update — keeps "oldest wins" deterministic
+        # regardless of insert timing or timestamp resolution.
+        now = timezone.now()
+        User.objects.filter(pk=older.pk).update(created_at=now - timedelta(minutes=1))
+        User.objects.filter(pk=newer.pk).update(created_at=now)
 
         with patch("core.models.logger") as mock_logger:
             user = User.objects.get_user_by_sub_or_email(
