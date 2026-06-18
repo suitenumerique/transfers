@@ -295,3 +295,11 @@ body {
 .text-nowrap {
   white-space: nowrap;
 }
+
+// Tooltips are purely informational — never let their popup capture the
+// pointer. Otherwise, in dense lists (e.g. the transfer activity log) an open
+// tooltip overlaps the row below and makes it impossible to hover the next
+// item, and the tooltip lingers because the cursor is "still over it".
+.c__tooltip {
+  pointer-events: none;
+}
