@@ -90,13 +90,17 @@ class UserManager(auth_models.UserManager):
                 except self.model.MultipleObjectsReturned:
                     # Pre-existing duplicates differing only by case — pick a
                     # stable one rather than 500, but surface it: it's a
-                    # data-quality issue an admin should reconcile.
-                    logger.warning(
-                        "Multiple users share email %r (case-insensitive); "
-                        "selected the oldest. Reconcile these duplicate accounts.",
-                        email,
+                    # data-quality issue an admin should reconcile. We log the
+                    # user ids (not the email) to keep PII out of the logs.
+                    duplicates = list(
+                        self.filter(email__iexact=email).order_by("created_at")
                     )
-                    return self.filter(email__iexact=email).order_by("created_at").first()
+                    logger.warning(
+                        "Duplicate accounts share one email (case-insensitive); "
+                        "selected the oldest. Reconcile these user ids: %s",
+                        ", ".join(str(user.pk) for user in duplicates),
+                    )
+                    return duplicates[0]
             elif (
                 self.filter(email__iexact=email).exists()
                 and not settings.OIDC_ALLOW_DUPLICATE_EMAILS
