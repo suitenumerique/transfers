@@ -53,6 +53,46 @@ services:
     volumes:
       - objectstorage-data:/data
 
+  # Local OIDC provider for dev — stands in for ProConnect so the real OIDC
+  # login flow works without an external instance. --hostname pins every URL
+  # Keycloak issues (issuer, authorize, token…) to localhost:8902 so they stay
+  # consistent whether the browser (localhost:8902) or the backend
+  # (keycloak:8802, in-network) talks to it. Realm + a test user are imported
+  # from src/keycloak/realm.json. Admin console: http://localhost:8902 (admin/admin).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.1
+    command:
+      - start-dev
+      - --import-realm
+      - --http-enabled=true
+      - --http-port=8802
+      - --hostname=http://localhost:8902
+      - --hostname-admin=http://localhost:8902
+      - --proxy-headers=xforwarded
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      # Expose /health on the management port (9000) so the healthcheck below
+      # can confirm Keycloak is fully up (realm import included).
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./src/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8902:8802"
+    # The Keycloak image ships no curl/wget, so we probe /health/ready with
+    # bash's /dev/tcp. Ready only flips true once startup + realm import finish,
+    # which lets backend-dev gate on `service_healthy`.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/localhost/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3"
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+
   backend-base:
     build:
       context: src/backend
@@ -88,6 +128,8 @@ services:
         condition: service_started
       mailcatcher:
         condition: service_started
+      keycloak:
+        condition: service_healthy
 
   backend-db:
     extends: backend-base
