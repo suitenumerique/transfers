@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { enUS, fr } from "date-fns/locale";
 import type { TFunction } from "i18next";
 import {
@@ -38,57 +38,60 @@ describe("localeFor", () => {
 });
 
 describe("formatSmartDate", () => {
-  it("today → relative distance, both directions and locales", () => {
-    const twoHoursAgo = new Date(2026, 5, 17, 10, 0, 0).toISOString();
-    const inTwoHours = new Date(2026, 5, 17, 14, 0, 0).toISOString();
-    expect(formatSmartDate(twoHoursAgo, "en-US", t)).toMatch(/ago$/);
-    expect(formatSmartDate(twoHoursAgo, "fr-FR", t)).toMatch(/^il y a/);
-    expect(formatSmartDate(inTwoHours, "en-US", t)).toMatch(/^in /);
-    expect(formatSmartDate(inTwoHours, "fr-FR", t)).toMatch(/^dans /);
+  it("today → exact relative distance, both directions and locales", () => {
+    const threeHoursAgo = new Date(2026, 5, 17, 9, 0, 0).toISOString();
+    const inThreeHours = new Date(2026, 5, 17, 15, 0, 0).toISOString();
+    // Exact wording, no fuzzy "environ"/"about" (we use the strict variant).
+    expect(formatSmartDate(threeHoursAgo, "fr-FR", t)).toBe("il y a 3 heures");
+    expect(formatSmartDate(threeHoursAgo, "en-US", t)).toBe("3 hours ago");
+    expect(formatSmartDate(inThreeHours, "fr-FR", t)).toBe("dans 3 heures");
+    expect(formatSmartDate(inThreeHours, "en-US", t)).toBe("in 3 hours");
   });
 
-  it("yesterday → 'Yesterday at <time>' with localized time", () => {
+  it("within a minute → 'just now' (no useless seconds)", () => {
+    const thirtySecAgo = new Date(2026, 5, 17, 11, 59, 30).toISOString();
+    const fortySecAhead = new Date(2026, 5, 17, 12, 0, 40).toISOString();
+    expect(formatSmartDate(thirtySecAgo, "fr-FR", t)).toBe("just now");
+    expect(formatSmartDate(fortySecAhead, "en-US", t)).toBe("just now");
+    // Just over a minute → a real distance, not "just now".
+    const seventySecAgo = new Date(2026, 5, 17, 11, 58, 50).toISOString();
+    expect(formatSmartDate(seventySecAgo, "en-US", t)).not.toBe("just now");
+  });
+
+  it("yesterday → lowercase 'yesterday at <time>' with localized time", () => {
     const d = new Date(2026, 5, 16, 9, 30, 0);
     expect(formatSmartDate(d.toISOString(), "en-US", t)).toBe(
-      `Yesterday at ${format(d, "p", { locale: enUS })}`,
+      `yesterday at ${format(d, "p", { locale: enUS })}`,
     );
     expect(formatSmartDate(d.toISOString(), "fr-FR", t)).toBe(
-      `Yesterday at ${format(d, "p", { locale: fr })}`,
+      `yesterday at ${format(d, "p", { locale: fr })}`,
     );
   });
 
-  it("tomorrow → 'Tomorrow at <time>'", () => {
+  it("tomorrow → lowercase 'tomorrow at <time>'", () => {
     const d = new Date(2026, 5, 18, 16, 0, 0);
     expect(formatSmartDate(d.toISOString(), "en-US", t)).toBe(
-      `Tomorrow at ${format(d, "p", { locale: enUS })}`,
+      `tomorrow at ${format(d, "p", { locale: enUS })}`,
     );
   });
 
-  it("≥ 2 days in the past → relative distance ('il y a X jours', never 'avant-hier')", () => {
-    const fiveDaysAgo = new Date(2026, 5, 12, 8, 0, 0);
-    expect(formatSmartDate(fiveDaysAgo.toISOString(), "fr-FR", t)).toBe(
-      formatDistanceToNow(fiveDaysAgo, {
-        addSuffix: true,
-        includeSeconds: true,
-        locale: fr,
-      }),
-    );
-    expect(formatSmartDate(fiveDaysAgo.toISOString(), "fr-FR", t)).toMatch(
-      /^il y a /,
-    );
+  it("≥ 2 calendar days in the past → calendar-day count", () => {
+    // fake t() only interpolates, so we assert the (en) key shape + count.
+    const fiveDaysAgo = new Date(2026, 5, 12, 8, 0, 0).toISOString();
+    expect(formatSmartDate(fiveDaysAgo, "en-US", t)).toBe("5 days ago");
   });
 
-  it("≥ 2 days in the future → relative distance (countdown)", () => {
-    const tenDaysAhead = new Date(2026, 5, 27, 8, 0, 0);
-    expect(formatSmartDate(tenDaysAhead.toISOString(), "fr-FR", t)).toBe(
-      formatDistanceToNow(tenDaysAhead, {
-        addSuffix: true,
-        includeSeconds: true,
-        locale: fr,
-      }),
-    );
-    expect(formatSmartDate(tenDaysAhead.toISOString(), "fr-FR", t)).toMatch(
-      /^dans /,
+  it("≥ 2 calendar days in the future → calendar-day countdown", () => {
+    const tenDaysAhead = new Date(2026, 5, 27, 8, 0, 0).toISOString();
+    expect(formatSmartDate(tenDaysAhead, "en-US", t)).toBe("in 10 days");
+  });
+
+  it("47 h ago → '2 days ago', not '1 day ago' (that's yesterday's slot)", () => {
+    // 15 June 13:00 vs NOW 17 June 12:00 = 47 h elapsed but 2 calendar days.
+    const fortySevenHoursAgo = new Date(2026, 5, 15, 13, 0, 0).toISOString();
+    expect(formatSmartDate(fortySevenHoursAgo, "en-US", t)).toBe("2 days ago");
+    expect(formatSmartDate(fortySevenHoursAgo, "en-US", t)).not.toBe(
+      "1 day ago",
     );
   });
 });
