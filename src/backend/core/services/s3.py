@@ -12,6 +12,7 @@ Two-tier helper API:
 
 import logging
 from functools import cache
+from urllib.parse import quote
 
 from django.conf import settings
 
@@ -90,6 +91,28 @@ def sign_upload_part(key: str, upload_id: str, part_number: int) -> str:
     )
 
 
+def _content_disposition(filename: str) -> str:
+    """Build an RFC 6266 ``Content-Disposition`` value for ``filename``.
+
+    A user-supplied filename can contain quotes, control chars or non-ASCII
+    (``report.pdf"; filename=invoice.exe``), which would break out of a naive
+    ``filename="…"`` token and let a sender spoof the saved name. We emit an
+    ASCII-sanitised ``filename`` token (quotes/backslashes/control chars
+    stripped) for legacy clients plus a percent-encoded ``filename*`` that
+    carries the exact UTF-8 name for modern browsers, which take precedence.
+    """
+    ascii_fallback = (
+        filename.encode("ascii", "ignore")
+        .decode("ascii")
+        .replace("\\", "")
+        .replace('"', "")
+    )
+    # Strip control characters that would otherwise survive the ASCII encode.
+    ascii_fallback = "".join(c for c in ascii_fallback if c >= " ") or "download"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
+
+
 def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     """Return a presigned GET URL that triggers a browser download.
 
@@ -104,7 +127,7 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
         Params={
             "Bucket": settings.TRANSFERS_BUCKET_NAME,
             "Key": key,
-            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentDisposition": _content_disposition(filename),
             "ResponseContentType": content_type or "application/octet-stream",
         },
         ExpiresIn=settings.TRANSFER_PRESIGNED_URL_EXPIRY,
@@ -191,10 +214,17 @@ def best_effort_abort_multipart_uploads_from_files(files) -> None:
             )
 
 
-def best_effort_delete_objects_from_files(files) -> None:
+def best_effort_delete_objects_from_files(files) -> bool:
     """Best-effort delete across ``files`` (queryset or list of ``TransferFile``).
     Files without ``s3_key`` are skipped; per-file ``ClientError`` is logged
-    and swallowed."""
+    and swallowed.
+
+    Returns ``True`` iff every object with an ``s3_key`` was deleted without
+    error — callers that own a data-deletion guarantee (the purge task) use
+    this to decide whether the row may move to its terminal DEACTIVATED state
+    or must stay PENDING_FILE_DELETION for a retry.
+    """
+    all_deleted = True
     for tf in files:
         if not tf.s3_key:
             continue
@@ -202,3 +232,5 @@ def best_effort_delete_objects_from_files(files) -> None:
             delete_object(tf.s3_key)
         except botocore.exceptions.ClientError:
             logger.exception("Failed to delete S3 object %s", tf.s3_key)
+            all_deleted = False
+    return all_deleted

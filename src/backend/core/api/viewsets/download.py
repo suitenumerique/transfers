@@ -126,7 +126,9 @@ class DownloadTransferView(APIView):
             return denied
 
         _record_visitor_event(transfer, TransferEventType.LINK_OPENED, request)
-        serializer = DownloadTransferSerializer(transfer)
+        serializer = DownloadTransferSerializer(
+            transfer, context={"request": request}
+        )
         return Response(serializer.data)
 
 
@@ -175,6 +177,17 @@ class DownloadFileView(APIView):
         # the bytes once that deadline has passed — long enough for the
         # in-flight GET we're about to redirect to to finish, even on a
         # 20 GiB file and a slow connection.
+        #
+        # Caveat — this is "first *access*", not "first completed download".
+        # FILE_DOWNLOADED is recorded the moment we hand out the presigned
+        # URL, before the S3 bytes are streamed: a link-preview bot, mail/AV
+        # prefetcher, crawler or an open-then-cancel can therefore trip the
+        # deactivation before the real recipient saves the file. We accept
+        # that tradeoff because the feature is strictly opt-in
+        # (``auto_archive_on_download``, default False) and the grace window
+        # keeps the bytes around for the actual download to finish. Tying
+        # deactivation to genuine completion would require S3 access logs /
+        # bucket notifications, which is out of scope here.
         #
         # select_for_update serialises concurrent last-file downloads so
         # only one caller wins the ACTIVE→PENDING_FILE_DELETION transition

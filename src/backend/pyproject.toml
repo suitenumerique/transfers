@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.urls]
-"Repository" = "https://github.com/Nastaliss/transferts"
+"Repository" = "https://github.com/suitenumerique/transfers"
 
 [project.optional-dependencies]
 dev = [

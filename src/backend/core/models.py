@@ -1,5 +1,6 @@
 """Models for the transferts core application."""
 
+import logging
 import secrets
 import uuid
 from datetime import timedelta
@@ -22,6 +23,8 @@ from core.enums import (
     TransferStatus,
     UserAbilities,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DuplicateEmailError(Exception):
@@ -78,11 +81,28 @@ class UserManager(auth_models.UserManager):
 
             if settings.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION:
                 try:
-                    return self.get(email=email)
+                    # Match case-insensitively: an OIDC provider may echo the
+                    # same address with different casing across logins, and a
+                    # case-sensitive lookup would mint a duplicate account.
+                    return self.get(email__iexact=email)
                 except self.model.DoesNotExist:
                     pass
+                except self.model.MultipleObjectsReturned:
+                    # Pre-existing duplicates differing only by case — pick a
+                    # stable one rather than 500, but surface it: it's a
+                    # data-quality issue an admin should reconcile. We log the
+                    # user ids (not the email) to keep PII out of the logs.
+                    duplicates = list(
+                        self.filter(email__iexact=email).order_by("created_at")
+                    )
+                    logger.warning(
+                        "Duplicate accounts share one email (case-insensitive); "
+                        "selected the oldest. Reconcile these user ids: %s",
+                        ", ".join(str(user.pk) for user in duplicates),
+                    )
+                    return duplicates[0]
             elif (
-                self.filter(email=email).exists()
+                self.filter(email__iexact=email).exists()
                 and not settings.OIDC_ALLOW_DUPLICATE_EMAILS
             ):
                 raise DuplicateEmailError(
@@ -96,7 +116,7 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
     """User model to work with OIDC only authentication."""
 
     sub_validator = validators.RegexValidator(
-        regex=r"^[\w.@+-:]+\Z",
+        regex=r"^[\w.@+\-:]+\Z",
         message=(
             "Enter a valid sub. This value may contain only letters, "
             "numbers, and @/./+/-/_/: characters."
@@ -293,16 +313,20 @@ class Transfer(BaseModel):
             )
         return bool(updated)
 
-    def delete_s3_objects(self) -> None:
+    def delete_s3_objects(self) -> bool:
         """Delete every S3 object attached to this transfer.
 
         Best-effort: failures on an individual file are logged by the S3
         wrapper and swallowed. Used when tearing down a transfer whose
         bytes are no longer needed (deactivation cleanup).
+
+        Returns ``True`` iff every object was deleted without error, so the
+        purge task can keep a transfer PENDING_FILE_DELETION for retry when
+        S3 hiccups instead of declaring the bytes gone.
         """
         from core.services import s3
 
-        s3.best_effort_delete_objects_from_files(self.files.all())
+        return s3.best_effort_delete_objects_from_files(self.files.all())
 
 
 class TransferRecipient(BaseModel):
