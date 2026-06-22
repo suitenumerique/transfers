@@ -56,13 +56,32 @@ class ScanResultWebhookView(APIView):
             logger.warning("Scan webhook with bad secret for file %s", file_id)
             return Response({"detail": "Invalid secret."}, status=403)
 
-        new_status = self._status_from_payload(request.data)
+        payload = request.data
+        new_status = self._status_from_payload(payload)
+        error_kind = self._error_kind_from_payload(payload, new_status)
 
         models.TransferFile.objects.filter(id=transfer_file.id).update(
-            scan_status=new_status
+            scan_status=new_status, scan_error_kind=error_kind
         )
-        logger.info("Scan result for file %s: %s", file_id, new_status)
+        logger.info(
+            "Scan result for file %s: %s%s",
+            file_id,
+            new_status,
+            f" ({error_kind})" if error_kind else "",
+        )
         return Response(status=200)
+
+    @staticmethod
+    def _error_kind_from_payload(payload, status) -> str:
+        """Sub-classify an ERROR as 'file' (unscannable — the user must remove
+        it) or 'transient' (retryable). Ambiguous bodies default to transient
+        so a passing outage isn't blamed on the file; empty for non-error
+        statuses so a recovered file clears any stale kind.
+        """
+        if status != ScanStatus.ERROR or not isinstance(payload, dict):
+            return ""
+        kind = payload.get("error_kind")
+        return kind if kind in ("transient", "file") else "transient"
 
     @staticmethod
     def _status_from_payload(payload) -> str:

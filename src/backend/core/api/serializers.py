@@ -82,7 +82,15 @@ class TransferRecipientSerializer(serializers.ModelSerializer):
 class TransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
-        fields = ["id", "filename", "size", "mime_type", "created_at", "scan_status"]
+        fields = [
+            "id",
+            "filename",
+            "size",
+            "mime_type",
+            "created_at",
+            "scan_status",
+            "scan_error_kind",
+        ]
         read_only_fields = fields
 
 
@@ -222,6 +230,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
             "state",
             "source_url",
             "scan_status",
+            "scan_error_kind",
         ]
         read_only_fields = fields
 

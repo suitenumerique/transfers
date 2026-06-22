@@ -940,15 +940,21 @@
   // neutral when done). Plain button chrome — no border, just a color
   // swap on hover.
   &__file-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-    padding: 4px var(--c--globals--spacings--2xs);
+    padding: var(--c--globals--spacings--2xs);
     background: transparent;
     border: 0;
-    font: inherit;
-    font-size: var(--c--globals--font--sizes--sm);
-    font-weight: 500;
     color: var(--c--contextuals--content--semantic--neutral--secondary);
     cursor: pointer;
+
+    > svg {
+      display: block;
+      width: 18px;
+      height: 18px;
+    }
 
     &:hover:not(:disabled) {
       color: var(--c--contextuals--content--semantic--neutral--primary);
@@ -973,8 +979,9 @@
 // Shared file row — single-line card used by the upload form (during /
 // after upload) and by the transfer detail / recap (as the downloadable
 // file list). Same layout everywhere: [icon] [name · size · extras]·······
-// [action]. Row chrome stays neutral; status is conveyed by the leading
-// icon's color and the right-hand action, never by row tinting.
+// [action]. Row chrome stays neutral except for the blocking error state
+// (virus / scan failure), which tints the whole row red since it blocks the
+// transfer — status otherwise lives in the leading icon and the action.
 .file-item {
   display: flex;
   align-items: center;
@@ -1001,10 +1008,14 @@
     }
   }
 
-  &--done &__icon {
-    color: var(
-      --c--contextuals--content--semantic--success--primary,
-      #18753c
+  &--error {
+    border-color: var(
+      --c--contextuals--border--semantic--error--primary,
+      #ce0500
+    );
+    background: var(
+      --c--contextuals--background--semantic--error--secondary,
+      #fef4f4
     );
   }
 
@@ -1065,10 +1076,7 @@
     }
 
     &--clean {
-      color: var(
-        --c--contextuals--content--semantic--success--primary,
-        #18753c
-      );
+      color: var(--c--contextuals--content--semantic--neutral--secondary);
     }
 
     &--pending {
@@ -1085,6 +1093,13 @@
 
     &--info {
       color: var(--c--contextuals--content--semantic--neutral--secondary);
+    }
+
+    &--warning {
+      color: var(
+        --c--contextuals--content--semantic--warning--primary,
+        #b34000
+      );
     }
   }
 }

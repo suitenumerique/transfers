@@ -1,10 +1,11 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile } from "../api/useDownload";
@@ -47,6 +48,7 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
+  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
@@ -161,22 +163,26 @@ export function TransferDetail({
   const scanBadge = (status: ScanStatus) => {
     if (status === "clean") {
       return (
-        <span
-          className="file-item__scan file-item__scan--clean"
-          title={t("Scanned — no virus found")}
-        >
-          <CheckmarkShield />
-        </span>
+        <Tooltip content={t("Scanned, no virus found")} placement="top">
+          <span className="file-item__scan file-item__scan--clean">
+            <CheckmarkShield />
+          </span>
+        </Tooltip>
       );
     }
     if (status === "too_large") {
       return (
-        <span
-          className="file-item__scan file-item__scan--info"
-          title={t("File too large to be scanned for viruses")}
+        <Tooltip
+          content={t(
+            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
+            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+          )}
+          placement="top"
         >
-          {t("Not scanned (too large)")}
-        </span>
+          <span className="file-item__scan file-item__scan--warning">
+            <Warning />
+          </span>
+        </Tooltip>
       );
     }
     return null;

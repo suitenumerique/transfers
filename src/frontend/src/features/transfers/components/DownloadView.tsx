@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Input, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe } from "@gouvfr-lasuite/ui-kit/icons";
+import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -62,22 +62,25 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   const scanBadge = (status: ScanStatus) => {
     if (status === "clean") {
       return (
-        <span
-          className="file-item__scan file-item__scan--clean"
-          title={t("Scanned — no virus found")}
-        >
-          <CheckmarkShield />
-        </span>
+        <Tooltip content={t("Scanned, no virus found")} placement="top">
+          <span className="file-item__scan file-item__scan--clean">
+            <CheckmarkShield />
+          </span>
+        </Tooltip>
       );
     }
     if (status === "too_large") {
       return (
-        <span
-          className="file-item__scan file-item__scan--info"
-          title={t("File too large to be scanned for viruses")}
+        <Tooltip
+          content={t(
+            "This file was not scanned for viruses because it is too large.",
+          )}
+          placement="top"
         >
-          {t("Not scanned (too large)")}
-        </span>
+          <span className="file-item__scan file-item__scan--warning">
+            <Warning />
+          </span>
+        </Tooltip>
       );
     }
     return null;

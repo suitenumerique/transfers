@@ -428,18 +428,22 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 )
 
             # Antivirus gate (fail closed): a draft only becomes a transfer once
-            # every file is CLEAN. A virus is a hard block. A file whose scan
-            # errored (clamd/scanner hiccup) is re-submitted and kept polling so
-            # a transient failure doesn't brick the draft — the client's overall
-            # timeout bounds the retries. A broken scanner thus never sends, but
-            # recovers on its own once it's back.
+            # every file is CLEAN. Two hard blocks: a virus, and a file that
+            # can't be scanned (error_kind="file") — a retry won't help, the
+            # user must remove it. A *transient* error (clamd/scanner hiccup) is
+            # re-submitted and kept polling so a passing failure doesn't brick
+            # the draft — the client's overall timeout bounds the retries. A
+            # broken scanner thus never sends, but recovers on its own.
             if settings.CLAMAV_SCAN_ENABLED:
-                infected, errored, scanning = [], [], []
+                infected, unscannable, transient_errored, scanning = [], [], [], []
                 for f in files:
                     if f.scan_status == ScanStatus.INFECTED:
                         infected.append(str(f.id))
                     elif f.scan_status == ScanStatus.ERROR:
-                        errored.append(f)
+                        if f.scan_error_kind == "file":
+                            unscannable.append(str(f.id))
+                        else:
+                            transient_errored.append(f)
                     elif f.scan_status == ScanStatus.PENDING:
                         scanning.append(str(f.id))
 
@@ -451,9 +455,24 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             "blocked_file_ids": infected,
                         }
                     )
-                for f in errored:
+                if unscannable:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "One or more files could not be scanned.",
+                            "reason": "scan_file_error",
+                            "blocked_file_ids": unscannable,
+                        }
+                    )
+                for f in transient_errored:
                     f.scan_status = ScanStatus.PENDING
-                    f.save(update_fields=["scan_status", "updated_at"])
+                    f.scan_error_kind = ""
+                    f.save(
+                        update_fields=[
+                            "scan_status",
+                            "scan_error_kind",
+                            "updated_at",
+                        ]
+                    )
                     transaction.on_commit(
                         lambda fid=str(f.id): submit_scan_task.delay(fid)
                     )

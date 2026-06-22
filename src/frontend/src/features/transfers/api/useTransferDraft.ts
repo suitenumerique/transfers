@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
 import type {
+  ScanErrorKind,
   ScanStatus,
   SharingMode,
   TransferDetail,
@@ -54,6 +55,9 @@ export interface DraftFile {
   // Antivirus verdict, polled once the upload is done. Undefined until the
   // first poll lands. "pending" while clamd is scanning.
   scanStatus?: ScanStatus;
+  // When scanStatus is "error": "file" (unscannable, must remove) vs
+  // "transient" (retryable). Drives which message the form shows.
+  scanErrorKind?: ScanErrorKind;
   error?: string;
 }
 
@@ -132,6 +136,7 @@ interface DraftDetailResponse {
     state: "uploading" | "importing" | "done";
     source_url: string;
     scan_status: ScanStatus;
+    scan_error_kind: ScanErrorKind;
   }>;
 }
 
@@ -370,7 +375,12 @@ export function useTransferDraft(): TransferDraftHandle {
     const needsScan = files.some(
       (f) =>
         f.state === "done" &&
-        (f.scanStatus === undefined || f.scanStatus === "pending"),
+        (f.scanStatus === undefined ||
+          f.scanStatus === "pending" ||
+          // A transient error auto-retries (reaper / finalize) — keep polling
+          // so it flips to clean once the scanner recovers. A file-bound error
+          // is terminal, so it doesn't keep us polling.
+          (f.scanStatus === "error" && f.scanErrorKind !== "file")),
     );
     if (!needsScan) return;
     const id = draftIdRef.current;
@@ -388,11 +398,22 @@ export function useTransferDraft(): TransferDraftHandle {
         const next = filesRef.current.map((f) => {
           if (!f.backendId) return f;
           const server = byBackendId.get(f.backendId);
-          if (!server || server.scan_status === f.scanStatus) return f;
-          return { ...f, scanStatus: server.scan_status };
+          if (
+            !server ||
+            (server.scan_status === f.scanStatus &&
+              server.scan_error_kind === (f.scanErrorKind ?? ""))
+          )
+            return f;
+          return {
+            ...f,
+            scanStatus: server.scan_status,
+            scanErrorKind: server.scan_error_kind,
+          };
         });
         const mutated = next.some(
-          (f, i) => filesRef.current[i]?.scanStatus !== f.scanStatus,
+          (f, i) =>
+            filesRef.current[i]?.scanStatus !== f.scanStatus ||
+            filesRef.current[i]?.scanErrorKind !== f.scanErrorKind,
         );
         if (mutated) writeFiles(next);
       } catch {

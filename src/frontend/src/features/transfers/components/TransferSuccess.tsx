@@ -54,7 +54,7 @@ export function TransferSuccess({
       {scanned && (
         <p className="transfer-success__scan">
           <CheckmarkShield />
-          {t("Files scanned — no virus found")}
+          {t("Files scanned, no virus found")}
         </p>
       )}
       {isLink ? (

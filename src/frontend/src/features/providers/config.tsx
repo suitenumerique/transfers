@@ -16,6 +16,10 @@ export interface AppConfig {
   TRANSFER_MAX_FILE_SIZE: number;
   TRANSFER_MAX_TOTAL_SIZE: number;
   TRANSFER_MAX_FILES_PER_TRANSFER: number;
+  // Files larger than this are flagged "too large" and skip the antivirus
+  // scan entirely (never submitted). 2 GB in prod (= clamav cap), smaller in
+  // dev. Surfaced so the UI can name the limit in the "not scanned" tooltip.
+  SCAN_MAX_FILE_SIZE: number;
   TRANSFER_EXPIRY_CHOICES: number[];
   TRANSFER_DEFAULT_EXPIRY_DAYS: number;
   // External help URL — sidebar's "?" footer button opens it in a new tab.

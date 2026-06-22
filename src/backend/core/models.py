@@ -433,6 +433,14 @@ class TransferFile(BaseModel):
         "is CLEAN; the download path fails closed on anything else. Driven by "
         "the clamav file-scanner service's webhook callback.",
     )
+    scan_error_kind = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        help_text="Set only when scan_status is ERROR. 'transient' = an "
+        "infrastructure failure that a retry may clear; 'file' = the file "
+        "itself can't be scanned, so the user must remove it.",
+    )
     scan_job_id = models.CharField(
         max_length=64,
         blank=True,
