@@ -8,6 +8,7 @@ from socket import gethostbyname, gethostname
 import dj_database_url
 import sentry_sdk
 from configurations import Configuration, values
+from django.core.exceptions import ImproperlyConfigured
 from sentry_sdk.integrations.django import DjangoIntegration
 
 logger = logging.getLogger(__name__)
@@ -602,6 +603,24 @@ class Base(Configuration):
                 f"TRANSFER_DEFAULT_EXPIRY_DAYS ({cls.TRANSFER_DEFAULT_EXPIRY_DAYS}) "
                 f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
+
+        # Fail fast: scanning enabled but its endpoints/credentials unset would
+        # otherwise surface only later, as silently-skipped scans in the worker.
+        if cls.CLAMAV_SCAN_ENABLED:
+            missing = [
+                name
+                for name in (
+                    "CLAMAV_SERVICE_URL",
+                    "CLAMAV_API_KEY",
+                    "SCAN_WEBHOOK_BASE_URL",
+                )
+                if not getattr(cls, name)
+            ]
+            if missing:
+                raise ImproperlyConfigured(
+                    "CLAMAV_SCAN_ENABLED is set but these required settings are "
+                    f"empty: {', '.join(missing)}."
+                )
 
 
 class Build(Base):

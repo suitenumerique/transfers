@@ -4,8 +4,9 @@ The scanner POSTs the result of an asynchronous scan here once it finishes.
 The endpoint is unauthenticated in the Django sense (the scanner has no
 account) but protected by a per-file opaque secret minted at submission time
 and echoed back in the query string — compared in constant time before any
-state change. The handler is idempotent: replaying the same callback (e.g. a
-scanner retry) simply re-writes the same ``scan_status``.
+state change. Updates are guarded to PENDING files, so a terminal verdict is
+final: a replayed or duplicate callback (a scanner retry, or a second scan job
+from the reaper) is a 200 no-op rather than an overwrite.
 """
 
 import hmac
@@ -60,9 +61,20 @@ class ScanResultWebhookView(APIView):
         new_status = self._status_from_payload(payload)
         error_kind = self._error_kind_from_payload(payload, new_status)
 
-        models.TransferFile.objects.filter(id=transfer_file.id).update(
-            scan_status=new_status, scan_error_kind=error_kind
-        )
+        # Only a PENDING file is mutable — every legitimate result lands while a
+        # scan is in flight. Guarding on it makes a terminal verdict final, so a
+        # stale or duplicate callback (scanner retry, or a second reaper job)
+        # can't overwrite it: fail closed, a virus stays a virus.
+        updated = models.TransferFile.objects.filter(
+            id=transfer_file.id, scan_status=ScanStatus.PENDING
+        ).update(scan_status=new_status, scan_error_kind=error_kind)
+        if not updated:
+            logger.info(
+                "Scan result for file %s ignored — already %s",
+                file_id,
+                transfer_file.scan_status,
+            )
+            return Response(status=200)
         logger.info(
             "Scan result for file %s: %s%s",
             file_id,

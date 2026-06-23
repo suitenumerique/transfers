@@ -450,7 +450,14 @@ export function TransferForm() {
         );
         return;
       }
-      // Other errors already surface via draft.error / per-file state.
+      // Catch-all: a finalize 5xx, a network drop, or any unexpected failure.
+      // Upload/import failures already show on the file row via draft.error;
+      // this keeps a finalize-side failure from silently re-enabling the button
+      // with no feedback.
+      console.error("Transfer submission failed:", err);
+      setSubmitError(
+        t("An error occurred while sending the transfer. Please try again."),
+      );
     }
   };
 

@@ -1057,6 +1057,7 @@
   &__scan {
     display: inline-flex;
     align-items: center;
+
     // The parent `__label` aligns its items on the text baseline (right for
     // name / size), but this badge is icon-led — pin it to the row's vertical
     // centre instead so the icon doesn't ride above the text line.

@@ -429,9 +429,10 @@ class TransferFile(BaseModel):
         max_length=10,
         choices=ScanStatus.choices,
         default=ScanStatus.PENDING,
-        help_text="Antivirus scan state. A file is only downloadable once it "
-        "is CLEAN; the download path fails closed on anything else. Driven by "
-        "the clamav file-scanner service's webhook callback.",
+        help_text="Antivirus scan state. A file is downloadable when CLEAN or "
+        "scan-exempt (SKIPPED / TOO_LARGE); the download path fails closed on "
+        "anything else. Driven by the clamav file-scanner service's webhook "
+        "callback.",
     )
     scan_error_kind = models.CharField(
         max_length=10,

@@ -38,10 +38,13 @@ export function TransferSuccess({
   };
 
   const isLink = transfer.sharing_mode === "link";
-  // Only true when the instance actually scans (files are "clean", not the
-  // "skipped" state of an AV-disabled instance). Reassures the sender the
-  // transfer passed the virus check before going out.
-  const scanned = transfer.files.some((f) => f.scan_status === "clean");
+  // Only true when *every* file was actually scanned clean — not the "skipped"
+  // state of an AV-disabled instance, nor a "too_large" file that bypassed the
+  // scan. Reassures the sender the whole transfer passed the virus check before
+  // going out, so we don't over-claim on a mixed clean / not-scanned list.
+  const scanned =
+    transfer.files.length > 0 &&
+    transfer.files.every((f) => f.scan_status === "clean");
 
   return (
     <div className="transfer-success" role="status">

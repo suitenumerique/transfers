@@ -10,6 +10,7 @@
   "This file was not scanned for viruses because it is too large.": "This file was not scanned for viruses because it is too large.",
   "Scanning your files for viruses before sending…": "Scanning your files for viruses before sending…",
   "The antivirus scan is taking too long. Please try again.": "The antivirus scan is taking too long. Please try again.",
+  "An error occurred while sending the transfer. Please try again.": "An error occurred while sending the transfer. Please try again.",
   "Antivirus scan in progress…": "Antivirus scan in progress…",
   "Available once the antivirus scan passes": "Available once the antivirus scan passes",
   "Blocked: a virus was detected in this file": "Blocked: a virus was detected in this file",

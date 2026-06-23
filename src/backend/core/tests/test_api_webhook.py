@@ -98,11 +98,25 @@ class TestScanResultWebhook:
         f.refresh_from_db()
         assert f.scan_error_kind == "transient"
 
-    def test_recovery_clears_stale_kind(self, api_client):
-        # A file that previously errored (file kind) comes back CLEAN on a
-        # re-scan — the stale kind must be wiped, not left dangling.
-        f = self._file(scan_status=ScanStatus.ERROR, scan_error_kind="file")
+    def test_terminal_state_not_overwritten(self, api_client):
+        # Once a file reaches a terminal verdict it is no longer PENDING, so a
+        # stale or duplicate callback must not move it (fail closed).
+        f = self._file(scan_status=ScanStatus.INFECTED)
         resp = _post(api_client, f.id, "s3cr3t", {"status": "done", "malware": False})
+        assert resp.status_code == 200
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.INFECTED
+
+    def test_duplicate_callback_cannot_flip_clean(self, api_client):
+        # A second scan job (e.g. a reaper re-submit after a slow webhook) that
+        # reports an error must not unset an already-CLEAN file.
+        f = self._file(scan_status=ScanStatus.CLEAN)
+        resp = _post(
+            api_client,
+            f.id,
+            "s3cr3t",
+            {"status": "error", "error_kind": "transient"},
+        )
         assert resp.status_code == 200
         f.refresh_from_db()
         assert f.scan_status == ScanStatus.CLEAN

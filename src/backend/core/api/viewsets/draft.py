@@ -428,7 +428,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 )
 
             # Antivirus gate (fail closed): a draft only becomes a transfer once
-            # every file is CLEAN. Two hard blocks: a virus, and a file that
+            # every file has a non-blocking status — CLEAN, or scan-exempt
+            # (SKIPPED / TOO_LARGE). Two hard blocks: a virus, and a file that
             # can't be scanned (error_kind="file") — a retry won't help, the
             # user must remove it. A *transient* error (clamd/scanner hiccup) is
             # re-submitted and kept polling so a passing failure doesn't brick

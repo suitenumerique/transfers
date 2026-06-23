@@ -10,6 +10,7 @@
   "This file was not scanned for viruses because it is too large.": "Ce fichier n'a pas été analysé car il est trop volumineux.",
   "Scanning your files for viruses before sending…": "Analyse antivirus de vos fichiers avant l'envoi…",
   "The antivirus scan is taking too long. Please try again.": "L'analyse antivirus prend trop de temps. Veuillez réessayer.",
+  "An error occurred while sending the transfer. Please try again.": "Une erreur est survenue lors de l'envoi du transfert. Veuillez réessayer.",
   "Antivirus scan in progress…": "Analyse antivirus en cours…",
   "Available once the antivirus scan passes": "Disponible une fois l'analyse antivirus réussie",
   "Blocked: a virus was detected in this file": "Bloqué : un virus a été détecté dans ce fichier",
