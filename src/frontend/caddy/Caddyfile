@@ -21,7 +21,7 @@
 		# Strict CSP: a compromised LaGaufre script update must not be able to
 		# exfiltrate a recipient's download token. Only self + the two known
 		# suite.anct.gouv.fr origins (widget JS + its services API) are allowed.
-		Content-Security-Policy "default-src 'self'; script-src 'self' https://static.suite.anct.gouv.fr; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://static.suite.anct.gouv.fr; font-src 'self' data:; connect-src 'self' https://static.suite.anct.gouv.fr https://operateurs.suite.anct.gouv.fr; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://static.suite.anct.gouv.fr; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://static.suite.anct.gouv.fr; font-src 'self' data:; connect-src 'self' https://static.suite.anct.gouv.fr https://operateurs.suite.anct.gouv.fr {$TRANSFERTS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	}
 
 	route {
