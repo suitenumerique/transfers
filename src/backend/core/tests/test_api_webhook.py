@@ -17,7 +17,6 @@ import pytest
 
 from core.enums import ScanStatus
 from core.factories import TransferDraftFactory, TransferFileFactory
-from core.models import TransferFile
 
 WEBHOOK_URL = "/api/v1.0/webhooks/scan-result/"
 DRAFTS_URL = "/api/v1.0/drafts/"

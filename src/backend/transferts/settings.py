@@ -5,10 +5,11 @@ import os
 import tomllib
 from socket import gethostbyname, gethostname
 
+from django.core.exceptions import ImproperlyConfigured
+
 import dj_database_url
 import sentry_sdk
 from configurations import Configuration, values
-from django.core.exceptions import ImproperlyConfigured
 from sentry_sdk.integrations.django import DjangoIntegration
 
 logger = logging.getLogger(__name__)

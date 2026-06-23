@@ -320,7 +320,7 @@ def submit_scan_task(self, transfer_file_id):
         logger.warning(
             "Scan submission failed for TransferFile %s: %s", transfer_file_id, exc
         )
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
     job_id = ""
     try:
