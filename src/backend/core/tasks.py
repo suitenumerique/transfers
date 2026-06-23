@@ -293,10 +293,15 @@ def submit_scan_task(self, transfer_file_id):
         return
 
     # Mint the per-file callback secret on first submit; reuse it on retries so
-    # the webhook URL stays stable across attempts.
+    # the webhook URL stays stable across attempts. The conditional update only
+    # matches while the secret is still empty, so concurrent submissions (e.g. a
+    # reaper re-submit racing the initial one) converge on a single value instead
+    # of each minting its own.
     if not tf.webhook_secret:
-        tf.webhook_secret = secrets.token_urlsafe(32)
-        tf.save(update_fields=["webhook_secret", "updated_at"])
+        TransferFile.objects.filter(id=tf.id, webhook_secret="").update(
+            webhook_secret=secrets.token_urlsafe(32), updated_at=timezone.now()
+        )
+        tf.refresh_from_db(fields=["webhook_secret"])
 
     scan_url = s3.sign_scan_url(tf.s3_key)
     webhook_url = (
