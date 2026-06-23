@@ -121,6 +121,16 @@ class TestScanResultWebhook:
         assert f.scan_status == ScanStatus.CLEAN
         assert f.scan_error_kind == ""
 
+    def test_error_terminal_state_not_overwritten(self, api_client):
+        # ERROR is terminal too: a stale or duplicate clean callback must not
+        # flip an already-errored file to CLEAN.
+        f = self._file(scan_status=ScanStatus.ERROR, scan_error_kind="file")
+        resp = _post(api_client, f.id, "s3cr3t", {"status": "done", "malware": False})
+        assert resp.status_code == 200
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.ERROR
+        assert f.scan_error_kind == "file"
+
     def test_malformed_body_fails_closed(self, api_client):
         # A non-dict body must not unlock a download: it maps to ERROR.
         f = self._file()
