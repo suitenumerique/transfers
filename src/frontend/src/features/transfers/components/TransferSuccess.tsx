@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
-import { ArrowUpCircle, ArrowUpDown, Checkmark, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 
@@ -38,6 +38,13 @@ export function TransferSuccess({
   };
 
   const isLink = transfer.sharing_mode === "link";
+  // Only true when *every* file was actually scanned clean — not the "skipped"
+  // state of an AV-disabled instance, nor a "too_large" file that bypassed the
+  // scan. Reassures the sender the whole transfer passed the virus check before
+  // going out, so we don't over-claim on a mixed clean / not-scanned list.
+  const scanned =
+    transfer.files.length > 0 &&
+    transfer.files.every((f) => f.scan_status === "clean");
 
   return (
     <div className="transfer-success" role="status">
@@ -47,6 +54,12 @@ export function TransferSuccess({
       <h1 className="transfer-success__title">
         {isLink ? t("Transfer ready") : t("Transfer sent")}
       </h1>
+      {scanned && (
+        <p className="transfer-success__scan">
+          <CheckmarkShield />
+          {t("Files scanned, no virus found")}
+        </p>
+      )}
       {isLink ? (
         <>
           <p className="transfer-success__body">

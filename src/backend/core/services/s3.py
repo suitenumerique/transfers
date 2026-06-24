@@ -134,6 +134,31 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     )
 
 
+def sign_scan_url(key: str) -> str:
+    """Return a presigned GET URL for the antivirus scanner to fetch the file.
+
+    Signed with the *internal* client (``get_s3_client`` → ``AWS_S3_ENDPOINT_URL``),
+    NOT the browser-facing ``_get_presigning_client``. The scanner runs as a
+    container on the shared Docker network and reaches the object storage at
+    its internal hostname (``objectstorage:9000`` in dev); a URL signed against
+    the browser host (``localhost:8906``) would be unreachable from inside the
+    scanner container. In prod both clients resolve to the same public endpoint,
+    so this is equivalent there.
+
+    Uses a dedicated, longer TTL than a browser download: the scan request may
+    sit in the scanner's own queue before the file is actually fetched.
+    """
+    client = get_s3_client()
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Key": key,
+        },
+        ExpiresIn=settings.SCAN_PRESIGNED_URL_EXPIRY,
+    )
+
+
 def upload_part_bytes(key: str, upload_id: str, part_number: int, body: bytes) -> str:
     """Upload a single part of a multipart upload server-side. Returns the
     part's ``ETag`` as a double-quoted string, ready to feed back to

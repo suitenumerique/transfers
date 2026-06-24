@@ -30,6 +30,7 @@ class ConfigView(drf.views.APIView):
             "TRANSFER_MAX_FILE_SIZE": settings.TRANSFER_MAX_FILE_SIZE,
             "TRANSFER_MAX_TOTAL_SIZE": settings.TRANSFER_MAX_TOTAL_SIZE,
             "TRANSFER_MAX_FILES_PER_TRANSFER": settings.TRANSFER_MAX_FILES_PER_TRANSFER,
+            "SCAN_MAX_FILE_SIZE": settings.SCAN_MAX_FILE_SIZE,
             "TRANSFER_EXPIRY_CHOICES": settings.TRANSFER_EXPIRY_CHOICES,
             "TRANSFER_DEFAULT_EXPIRY_DAYS": settings.TRANSFER_DEFAULT_EXPIRY_DAYS,
             "HELP_URL": getattr(settings, "HELP_URL", ""),

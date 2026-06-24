@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail } from "@gouvfr-lasuite/ui-kit/icons";
-import { apiFetch } from "@/features/api/client";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ApiError, apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
@@ -340,6 +340,8 @@ export function TransferForm() {
   const anyError = draft.files.some((f) => f.state === "error");
   const awaitingUploads = draft.isAwaitingUploads;
   const finalizing = draft.isFinalizing;
+  const scanning = draft.isScanning;
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Warn before any kind of departure while a draft has files or uploads
   // in flight. Two separate guards because the events don't overlap:
@@ -398,6 +400,7 @@ export function TransferForm() {
       return;
     }
 
+    setSubmitError(null);
     try {
       const result = await draft.submit({
         title,
@@ -418,8 +421,43 @@ export function TransferForm() {
       }
     } catch (err) {
       // A cancel is a deliberate user action — stay on the form silently.
-      // Other errors already surface via draft.error / per-file state.
       if (err instanceof SubmitCancelledError) return;
+      // Antivirus gate: a blocked file (virus / scan error) or a scan that
+      // never resolved (scanner down) — surface a clear, dedicated message.
+      if (
+        err instanceof ApiError &&
+        (err.body as { reason?: string })?.reason === "scan_blocked"
+      ) {
+        setSubmitError(
+          t("A virus was detected. This transfer was blocked and not sent."),
+        );
+        return;
+      }
+      if (
+        err instanceof ApiError &&
+        (err.body as { reason?: string })?.reason === "scan_file_error"
+      ) {
+        setSubmitError(
+          t(
+            "A file could not be scanned and was blocked. Remove it to send the transfer.",
+          ),
+        );
+        return;
+      }
+      if (err instanceof Error && err.message === "scan_timeout") {
+        setSubmitError(
+          t("The antivirus scan is taking too long. Please try again."),
+        );
+        return;
+      }
+      // Catch-all: a finalize 5xx, a network drop, or any unexpected failure.
+      // Upload/import failures already show on the file row via draft.error;
+      // this keeps a finalize-side failure from silently re-enabling the button
+      // with no feedback.
+      console.error("Transfer submission failed:", err);
+      setSubmitError(
+        t("An error occurred while sending the transfer. Please try again."),
+      );
     }
   };
 
@@ -434,10 +472,23 @@ export function TransferForm() {
   // of an armed auto-create, the user clicks Delete/Cancel on a file row
   // (those stay enabled while awaitingUploads, and their handler disarms
   // the pending finalize).
+  // A virus is surfaced per-file the moment the scan resolves — block the send
+  // right there rather than letting the user click through to a finalize 422.
+  // A still-scanning file does NOT disable the button: clicking arms the
+  // create, which waits for the scan (finalize polls) just like it waits for
+  // in-flight uploads.
+  const anyInfected = draft.files.some((f) => f.scanStatus === "infected");
+  // A file-bound scan error is a hard block too (retry won't help). A
+  // *transient* scan error is not — clicking Create re-submits it.
+  const anyUnscannable = draft.files.some(
+    (f) => f.scanStatus === "error" && f.scanErrorKind === "file",
+  );
   const submitDisabled =
     busy ||
     !hasFiles ||
     anyError ||
+    anyInfected ||
+    anyUnscannable ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
 
   return (
@@ -517,11 +568,16 @@ export function TransferForm() {
                 // `state` on FileItem drives the icon color (default /
                 // success / error). The "uploading" and "importing" stages
                 // keep the brand default — they're transient.
+                // Red (blocking) row for a failed upload, a virus, or a file
+                // that can't be scanned. A *transient* scan error stays neutral
+                // — it's retryable, not a hard block.
                 const itemState =
-                  df.state === "done"
-                    ? "done"
-                    : df.state === "error"
-                      ? "error"
+                  df.state === "error" ||
+                  df.scanStatus === "infected" ||
+                  (df.scanStatus === "error" && df.scanErrorKind === "file")
+                    ? "error"
+                    : df.state === "done"
+                      ? "done"
                       : "default";
                 const extras = (
                   <>
@@ -546,6 +602,74 @@ export function TransferForm() {
                         {df.error ?? t("Error creating transfer.")}
                       </span>
                     )}
+                    {isDone &&
+                      (df.scanStatus === undefined ||
+                        df.scanStatus === "pending" ||
+                        // A transient error is still "in progress" from the
+                        // user's view — it auto-retries, nothing to act on.
+                        (df.scanStatus === "error" &&
+                          df.scanErrorKind !== "file")) && (
+                        <Tooltip
+                          content={t("Antivirus scan in progress…")}
+                          placement="top"
+                        >
+                          <span className="file-item__scan file-item__scan--pending">
+                            <Spinner />
+                            {t("Scanning…")}
+                          </span>
+                        </Tooltip>
+                      )}
+                    {isDone && df.scanStatus === "clean" && (
+                      <Tooltip
+                        content={t("Scanned, no virus found")}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--clean">
+                          <CheckmarkShield />
+                        </span>
+                      </Tooltip>
+                    )}
+                    {isDone && df.scanStatus === "infected" && (
+                      <Tooltip
+                        content={t(
+                          "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
+                        )}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--blocked">
+                          <WarningFilled />
+                          {t("Virus detected")}
+                        </span>
+                      </Tooltip>
+                    )}
+                    {isDone &&
+                      df.scanStatus === "error" &&
+                      df.scanErrorKind === "file" && (
+                        <Tooltip
+                          content={t(
+                            "This file could not be scanned (it may be corrupt). Remove it to send the transfer.",
+                          )}
+                          placement="top"
+                        >
+                          <span className="file-item__scan file-item__scan--blocked">
+                            <WarningFilled />
+                            {t("Could not be scanned")}
+                          </span>
+                        </Tooltip>
+                      )}
+                    {isDone && df.scanStatus === "too_large" && (
+                      <Tooltip
+                        content={t(
+                          "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
+                          { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+                        )}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--warning">
+                          <Warning />
+                        </span>
+                      </Tooltip>
+                    )}
                   </>
                 );
                 const action = (
@@ -561,8 +685,10 @@ export function TransferForm() {
                       void draft.removeFile(df.key);
                     }}
                     disabled={fileActionsDisabled}
+                    aria-label={isUploading ? t("Cancel") : t("Delete")}
+                    title={isUploading ? t("Cancel") : t("Delete")}
                   >
-                    {isUploading ? t("Cancel") : t("Delete")}
+                    <Trash />
                   </button>
                 );
                 return (
@@ -723,7 +849,9 @@ export function TransferForm() {
               )
             }
           >
-            {finalizing
+            {scanning
+              ? t("Checking for viruses…")
+              : finalizing
               ? t("Sending...")
               : awaitingUploads
                 ? sharingMode === "email"
@@ -738,10 +866,16 @@ export function TransferForm() {
 
           {busy && (
             <p className="transfer-form__submit-hint" role="status">
-              {t(
-                "Your transfer will be created once the upload finishes. Keep this tab open.",
-              )}
+              {scanning
+                ? t("Scanning your files for viruses before sending…")
+                : t(
+                    "Your transfer will be created once the upload finishes. Keep this tab open.",
+                  )}
             </p>
+          )}
+
+          {submitError && (
+            <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
         </section>
       </div>

@@ -52,6 +52,28 @@ class TransferEventType(models.TextChoices):
     FILE_DELETED = "file_deleted"
 
 
+class ScanStatus(models.TextChoices):
+    """Antivirus scan state of a file.
+
+    A file is born ``PENDING`` and is only downloadable once it reaches
+    ``CLEAN``. ``INFECTED`` and ``ERROR`` are terminal blocks — the download
+    path fails closed on anything that isn't ``CLEAN`` or ``SKIPPED``.
+    ``SKIPPED`` means scanning was disabled on this instance: the file was
+    never scanned, so it carries no "clean" claim, but stays downloadable.
+    Transitions are driven by the clamav file-scanner webhook, never the user.
+    """
+
+    PENDING = "pending", "Pending"
+    CLEAN = "clean", "Clean"
+    INFECTED = "infected", "Infected"
+    ERROR = "error", "Error"
+    SKIPPED = "skipped", "Skipped"
+    # File exceeds the antivirus size limit (clamd caps ~4 GB; the service is
+    # tighter). Not scanned, but still downloadable — like SKIPPED, with an
+    # honest "too large to scan" label instead of a clean claim.
+    TOO_LARGE = "too_large", "Too large to scan"
+
+
 class SharingMode(models.TextChoices):
     """How the transfer link is shared."""
 

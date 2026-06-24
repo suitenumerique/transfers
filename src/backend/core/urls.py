@@ -10,6 +10,7 @@ from core.api.viewsets.download import DownloadFileView, DownloadTransferView
 from core.api.viewsets.draft import TransferDraftViewSet
 from core.api.viewsets.transfer import TransferViewSet
 from core.api.viewsets.user import UserViewSet
+from core.api.viewsets.webhook import ScanResultWebhookView
 from core.authentication.urls import urlpatterns as oidc_urls
 
 router = DefaultRouter()
@@ -38,5 +39,12 @@ urlpatterns = [
         f"api/{settings.API_VERSION}/downloads/<str:public_token>/files/<uuid:file_id>/download/",
         DownloadFileView.as_view(),
         name="download-file",
+    ),
+    # Inbound webhook from the clamav file-scanner (no auth — protected by a
+    # per-file secret in the query string).
+    path(
+        f"api/{settings.API_VERSION}/webhooks/scan-result/",
+        ScanResultWebhookView.as_view(),
+        name="scan-result-webhook",
     ),
 ]

@@ -5,6 +5,8 @@ import os
 import tomllib
 from socket import gethostbyname, gethostname
 
+from django.core.exceptions import ImproperlyConfigured
+
 import dj_database_url
 import sentry_sdk
 from configurations import Configuration, values
@@ -175,6 +177,57 @@ class Base(Configuration):
     TRANSFER_PURGE_DELAY_HOURS = values.PositiveIntegerValue(
         6,
         environ_name="TRANSFER_PURGE_DELAY_HOURS",
+        environ_prefix=None,
+    )
+
+    # Antivirus scanning (clamav file-scanner service)
+    # ------------------------------------------------
+    # When enabled, every file that completes its upload is submitted to the
+    # external file-scanner service for an asynchronous virus scan; the
+    # result comes back via the scan-result webhook and gates downloads.
+    # Disabled by default so the service runs standalone without the scanner.
+    CLAMAV_SCAN_ENABLED = values.BooleanValue(
+        False, environ_name="CLAMAV_SCAN_ENABLED", environ_prefix=None
+    )
+    # Base URL of the file-scanner REST service, reachable from the backend
+    # AND worker containers (e.g. http://clamav_rest:8090 on the shared
+    # Docker network). No trailing slash.
+    CLAMAV_SERVICE_URL = values.Value(
+        "", environ_name="CLAMAV_SERVICE_URL", environ_prefix=None
+    )
+    # API key presented to the file-scanner as the X-API-Key header.
+    CLAMAV_API_KEY = values.Value(
+        "", environ_name="CLAMAV_API_KEY", environ_prefix=None
+    )
+    # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
+    # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
+    # sendable, but flagged "not scanned" rather than claimed clean. Keep this
+    # at or below the scanner's own max_url_size (2 GB).
+    SCAN_MAX_FILE_SIZE = values.PositiveIntegerValue(
+        2 * 1024 * 1024 * 1024,  # 2 GB
+        environ_name="SCAN_MAX_FILE_SIZE",
+        environ_prefix=None,
+    )
+    # Public base URL of THIS service as seen by the scanner container, used
+    # to build the webhook callback URL (e.g. http://backend-dev:8000 on the
+    # shared Docker network). No trailing slash.
+    SCAN_WEBHOOK_BASE_URL = values.Value(
+        "", environ_name="SCAN_WEBHOOK_BASE_URL", environ_prefix=None
+    )
+    # Lifetime of the presigned GET URL handed to the scanner. Longer than a
+    # browser download's: the scan request may queue on the scanner side
+    # before the file is fetched.
+    SCAN_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
+        3600,  # 1 hour
+        environ_name="SCAN_PRESIGNED_URL_EXPIRY",
+        environ_prefix=None,
+    )
+    # Files still PENDING this long after their upload completed are assumed to
+    # have lost their scan result (the scanner is stateless / webhook-only) and
+    # are re-submitted by ``reap_stale_pending_scans_task``.
+    SCAN_PENDING_REAP_MINUTES = values.PositiveIntegerValue(
+        15,
+        environ_name="SCAN_PENDING_REAP_MINUTES",
         environ_prefix=None,
     )
 
@@ -551,6 +604,24 @@ class Base(Configuration):
                 f"TRANSFER_DEFAULT_EXPIRY_DAYS ({cls.TRANSFER_DEFAULT_EXPIRY_DAYS}) "
                 f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
+
+        # Fail fast: scanning enabled but its endpoints/credentials unset would
+        # otherwise surface only later, as silently-skipped scans in the worker.
+        if cls.CLAMAV_SCAN_ENABLED:
+            missing = [
+                name
+                for name in (
+                    "CLAMAV_SERVICE_URL",
+                    "CLAMAV_API_KEY",
+                    "SCAN_WEBHOOK_BASE_URL",
+                )
+                if not getattr(cls, name)
+            ]
+            if missing:
+                raise ImproperlyConfigured(
+                    "CLAMAV_SCAN_ENABLED is set but these required settings are "
+                    f"empty: {', '.join(missing)}."
+                )
 
 
 class Build(Base):

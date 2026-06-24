@@ -8,6 +8,7 @@ import pytest
 from moto import mock_aws
 from rest_framework.test import APIClient
 
+from core.enums import ScanStatus
 from core.factories import TransferFactory, TransferFileFactory, UserFactory
 from core.models import TransferEvent, TransferFile
 from core.services import s3 as s3_module
@@ -98,6 +99,10 @@ def transfer_with_file(transfer):
         filename="doc.pdf",
         size=1024,
         upload_completed_at=_tz.now(),
+        # A finalized transfer's files have passed the scan gate (CLEAN /
+        # SKIPPED / TOO_LARGE) — never PENDING. Default to CLEAN so the
+        # unconditional download gate lets them through.
+        scan_status=ScanStatus.CLEAN,
     )
     return transfer
 

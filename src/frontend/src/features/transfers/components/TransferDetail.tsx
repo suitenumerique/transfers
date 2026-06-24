@@ -1,10 +1,11 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, ModalSize, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
-import type { TransferDetail as TransferDetailType } from "@/features/api/types";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile } from "../api/useDownload";
@@ -47,6 +48,7 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
+  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
@@ -149,6 +151,41 @@ export function TransferDetail({
   const handleDeactivateConfirm = () => {
     deactivateModal.close();
     deactivateTransfer.mutate(transfer.id);
+  };
+
+  // Sender-side mirror of the recipient's antivirus badge. The recap shows
+  // the same state the recipient sees so that, when a recipient flags an
+  // infected file, the sender can confirm it from their own view. The
+  // useTransfer query polls while anything is "pending", so a freshly
+  // uploaded file flips from "scanning…" to clean/blocked without a reload.
+  // A finalized transfer's files are always clean (scan gates creation), so the
+  // recap badge is just the "validated" mark. "skipped" (scanning off) = none.
+  const scanBadge = (status: ScanStatus) => {
+    if (status === "clean") {
+      return (
+        <Tooltip content={t("Scanned, no virus found")} placement="top">
+          <span className="file-item__scan file-item__scan--clean">
+            <CheckmarkShield />
+          </span>
+        </Tooltip>
+      );
+    }
+    if (status === "too_large") {
+      return (
+        <Tooltip
+          content={t(
+            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
+            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+          )}
+          placement="top"
+        >
+          <span className="file-item__scan file-item__scan--warning">
+            <Warning />
+          </span>
+        </Tooltip>
+      );
+    }
+    return null;
   };
 
   return (
@@ -270,26 +307,38 @@ export function TransferDetail({
         className="transfer-detail__file-list"
         aria-label={t("Files ({{count}})", { count: transfer.files.length })}
       >
-        {transfer.files.map((file) => (
-          <FileItem
-            key={file.id}
-            icon={<Doc />}
-            name={file.filename}
-            size={formatFileSize(file.size)}
-            state="done"
-            action={
-              <Button
-                color="neutral"
-                variant="tertiary"
-                icon={<Download />}
-                onClick={() => handleDownload(file.id)}
-                disabled={!isActive || !transfer.public_token}
-                aria-label={t("Download {{name}}", { name: file.filename })}
-                title={t("Download")}
-              />
-            }
-          />
-        ))}
+        {transfer.files.map((file) => {
+          const downloadable =
+            file.scan_status === "clean" ||
+            file.scan_status === "skipped" ||
+            file.scan_status === "too_large";
+          return (
+            <FileItem
+              key={file.id}
+              icon={<Doc />}
+              name={file.filename}
+              size={formatFileSize(file.size)}
+              state={
+                file.scan_status === "infected" ||
+                file.scan_status === "error"
+                  ? "error"
+                  : "done"
+              }
+              extras={scanBadge(file.scan_status)}
+              action={
+                <Button
+                  color="neutral"
+                  variant="tertiary"
+                  icon={<Download />}
+                  onClick={() => handleDownload(file.id)}
+                  disabled={!isActive || !transfer.public_token || !downloadable}
+                  aria-label={t("Download {{name}}", { name: file.filename })}
+                  title={t("Download")}
+                />
+              }
+            />
+          );
+        })}
       </ul>
 
       {isActive && (

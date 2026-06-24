@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
-import type { SharingMode, TransferDetail } from "@/features/api/types";
+import type {
+  ScanErrorKind,
+  ScanStatus,
+  SharingMode,
+  TransferDetail,
+} from "@/features/api/types";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Eager-upload draft handle.
@@ -47,6 +52,12 @@ export interface DraftFile {
   loaded: number;
   total: number;
   state: DraftFileState;
+  // Antivirus verdict, polled once the upload is done. Undefined until the
+  // first poll lands. "pending" while clamd is scanning.
+  scanStatus?: ScanStatus;
+  // When scanStatus is "error": "file" (unscannable, must remove) vs
+  // "transient" (retryable). Drives which message the form shows.
+  scanErrorKind?: ScanErrorKind;
   error?: string;
 }
 
@@ -79,6 +90,9 @@ export interface TransferDraftHandle {
   //   The draft is being turned into a Transfer server-side — no way back.
   isAwaitingUploads: boolean;
   isFinalizing: boolean;
+  // True while finalize is blocked on the antivirus scan (backend returns 202
+  // until every file is clean). Drives the "checking for viruses" loading step.
+  isScanning: boolean;
   error: string | null;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
@@ -121,6 +135,8 @@ interface DraftDetailResponse {
     mime_type: string;
     state: "uploading" | "importing" | "done";
     source_url: string;
+    scan_status: ScanStatus;
+    scan_error_kind: ScanErrorKind;
   }>;
 }
 
@@ -134,6 +150,15 @@ export function fileKey(f: File): string {
 }
 
 const POLL_INTERVAL_MS = 200;
+// Finalize is gated by the antivirus scan: the backend answers 202 while files
+// are still being scanned. Re-poll on that interval, give up after the max.
+const SCAN_POLL_INTERVAL_MS = 2000;
+const SCAN_MAX_WAIT_MS = 120000;
+
+interface ScanPendingResponse {
+  reason: "scan_pending";
+  pending_file_ids: string[];
+}
 
 export function useTransferDraft(): TransferDraftHandle {
   const queryClient = useQueryClient();
@@ -141,6 +166,7 @@ export function useTransferDraft(): TransferDraftHandle {
   const [files, setFiles] = useState<DraftFile[]>([]);
   const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -326,6 +352,69 @@ export function useTransferDraft(): TransferDraftHandle {
           const prev = filesRef.current[i];
           return prev && (prev.state !== f.state || prev.loaded !== f.loaded);
         });
+        if (mutated) writeFiles(next);
+      } catch {
+        // Transient errors are fine — the next tick will catch the state.
+      }
+    };
+
+    const handle = window.setInterval(tick, 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [files, writeFiles]);
+
+  // --- Scan poller ---
+  // Once a file's upload is done, its antivirus verdict lands asynchronously
+  // (webhook → scan_status). Poll the draft so the form shows "clean" / "virus
+  // detected" per file as soon as the scan resolves, without waiting for the
+  // user to hit Create. Runs while any done file is still PENDING (or unknown).
+  useEffect(() => {
+    const needsScan = files.some(
+      (f) =>
+        f.state === "done" &&
+        (f.scanStatus === undefined ||
+          f.scanStatus === "pending" ||
+          // A transient error auto-retries (reaper / finalize) — keep polling
+          // so it flips to clean once the scanner recovers. A file-bound error
+          // is terminal, so it doesn't keep us polling.
+          (f.scanStatus === "error" && f.scanErrorKind !== "file")),
+    );
+    if (!needsScan) return;
+    const id = draftIdRef.current;
+    if (!id) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
+        if (cancelled) return;
+
+        const byBackendId = new Map(resp.files.map((f) => [f.id, f]));
+        const next = filesRef.current.map((f) => {
+          if (!f.backendId) return f;
+          const server = byBackendId.get(f.backendId);
+          if (
+            !server ||
+            (server.scan_status === f.scanStatus &&
+              server.scan_error_kind === (f.scanErrorKind ?? ""))
+          )
+            return f;
+          return {
+            ...f,
+            scanStatus: server.scan_status,
+            scanErrorKind: server.scan_error_kind,
+          };
+        });
+        const mutated = next.some(
+          (f, i) =>
+            filesRef.current[i]?.scanStatus !== f.scanStatus ||
+            filesRef.current[i]?.scanErrorKind !== f.scanErrorKind,
+        );
         if (mutated) writeFiles(next);
       } catch {
         // Transient errors are fine — the next tick will catch the state.
@@ -646,13 +735,30 @@ export function useTransferDraft(): TransferDraftHandle {
         // finalize is the one write that creates the Transfer with its
         // title / sharing mode / recipients / expiry in a single atomic
         // step. The returned Transfer has a *different* id from the draft.
-        const finalized = await apiFetch<TransferDetail>(
-          `/drafts/${id}/finalize/`,
-          {
-            method: "POST",
-            body: JSON.stringify(metadata),
-          },
-        );
+        // Finalize is antivirus-gated: 200 = transfer created, 202 = files
+        // still scanning (poll again), 4xx with reason "scan_blocked" = a file
+        // was rejected (thrown by apiFetch, surfaced to the caller).
+        const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
+        let finalized: TransferDetail;
+        for (;;) {
+          const resp = await apiFetch<TransferDetail | ScanPendingResponse>(
+            `/drafts/${id}/finalize/`,
+            {
+              method: "POST",
+              body: JSON.stringify(metadata),
+            },
+          );
+          if (resp && (resp as ScanPendingResponse).reason === "scan_pending") {
+            if (Date.now() > scanDeadline) {
+              throw new Error("scan_timeout");
+            }
+            setIsScanning(true);
+            await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
+            continue;
+          }
+          finalized = resp as TransferDetail;
+          break;
+        }
 
         queryClient.invalidateQueries({ queryKey: ["transfers"] });
         resetLocal();
@@ -660,6 +766,7 @@ export function useTransferDraft(): TransferDraftHandle {
       } finally {
         setAwaitingUploads(false);
         setIsFinalizing(false);
+        setIsScanning(false);
         cancelSubmitRef.current = false;
       }
     },
@@ -677,6 +784,7 @@ export function useTransferDraft(): TransferDraftHandle {
     files,
     isAwaitingUploads,
     isFinalizing,
+    isScanning,
     error,
     addFile,
     attachFromDrive,

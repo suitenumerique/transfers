@@ -32,9 +32,9 @@ from core.api.serializers import (
     TransferDetailSerializer,
 )
 from core.api.utils import log_agent_event
-from core.enums import SharingMode, TransferEventType
+from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
-from core.tasks import import_drive_file_task
+from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
 
@@ -307,13 +307,29 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
+                    # No scan coming → mark SKIPPED (downloadable, no "clean"
+                    # claim), else it stays PENDING forever (perpetual spinner +
+                    # blocked download). Scanning on → PENDING until the webhook.
+                    if not settings.CLAMAV_SCAN_ENABLED:
+                        transfer_file.scan_status = ScanStatus.SKIPPED
+                    elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
+                        transfer_file.scan_status = ScanStatus.TOO_LARGE
                     transfer_file.save(
                         update_fields=[
                             "upload_completed_at",
                             "upload_id",
+                            "scan_status",
                             "updated_at",
                         ]
                     )
+                    # on_commit so the scanner never races the transaction.
+                    # PENDING ⟺ AV on AND within size limit (the only case that
+                    # needs a scan — SKIPPED / TOO_LARGE were set above).
+                    if transfer_file.scan_status == ScanStatus.PENDING:
+                        file_id = str(transfer_file.id)
+                        transaction.on_commit(
+                            lambda fid=file_id: submit_scan_task.delay(fid)
+                        )
 
         if error_detail is not None:
             raise drf.exceptions.ValidationError(error_detail)
@@ -410,6 +426,68 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         "pending_file_ids": pending,
                     }
                 )
+
+            # Antivirus gate (fail closed): a draft only becomes a transfer once
+            # every file has a non-blocking status — CLEAN, or scan-exempt
+            # (SKIPPED / TOO_LARGE). Two hard blocks: a virus, and a file that
+            # can't be scanned (error_kind="file") — a retry won't help, the
+            # user must remove it. A *transient* error (clamd/scanner hiccup) is
+            # re-submitted and kept polling so a passing failure doesn't brick
+            # the draft — the client's overall timeout bounds the retries. A
+            # broken scanner thus never sends, but recovers on its own.
+            if settings.CLAMAV_SCAN_ENABLED:
+                infected, unscannable, transient_errored, scanning = [], [], [], []
+                for f in files:
+                    if f.scan_status == ScanStatus.INFECTED:
+                        infected.append(str(f.id))
+                    elif f.scan_status == ScanStatus.ERROR:
+                        if f.scan_error_kind == "file":
+                            unscannable.append(str(f.id))
+                        else:
+                            transient_errored.append(f)
+                    elif f.scan_status == ScanStatus.PENDING:
+                        scanning.append(str(f.id))
+
+                if infected:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "The antivirus scan blocked one or more files.",
+                            "reason": "scan_blocked",
+                            "blocked_file_ids": infected,
+                        }
+                    )
+                if unscannable:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "One or more files could not be scanned.",
+                            "reason": "scan_file_error",
+                            "blocked_file_ids": unscannable,
+                        }
+                    )
+                for f in transient_errored:
+                    f.scan_status = ScanStatus.PENDING
+                    f.scan_error_kind = ""
+                    f.save(
+                        update_fields=[
+                            "scan_status",
+                            "scan_error_kind",
+                            "updated_at",
+                        ]
+                    )
+                    transaction.on_commit(
+                        lambda fid=str(f.id): submit_scan_task.delay(fid)
+                    )
+                    scanning.append(str(f.id))
+
+                if scanning:
+                    return drf.response.Response(
+                        {
+                            "detail": "Files are still being scanned for viruses.",
+                            "reason": "scan_pending",
+                            "pending_file_ids": scanning,
+                        },
+                        status=202,
+                    )
 
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,
