@@ -134,9 +134,44 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # guards: count=1 and total_size = this single file's size,
                 # which the serializer already bounded to the per-file limit
                 # (and per-file ≤ total by invariant).
-                draft = models.TransferDraft.objects.create(owner=request.user)
+                # E2E params are honoured here only; subsequent add-file calls
+                # ignore them — the mode is locked the moment the draft exists.
+                draft = models.TransferDraft.objects.create(
+                    owner=request.user,
+                    e2e_encrypted=data.get("e2e_encrypted", False),
+                    encryption_chunk_size=data.get("encryption_chunk_size"),
+                )
             else:
                 draft = self._get_locked_draft(draft_id)
+
+                # The draft's E2E mode is locked at creation; reject mismatched
+                # follow-up calls instead of letting a plaintext file slip into
+                # an encrypted draft (or vice versa).
+                if data.get("e2e_encrypted", False) != draft.e2e_encrypted:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "e2e_encrypted": (
+                                "Cannot change encryption mode once a draft has "
+                                "been started."
+                            )
+                        }
+                    )
+                # Same lock on chunk size: the recipient's SW computes part
+                # boundaries from one constant value across all files in the
+                # transfer. A follow-up call that ships a different value
+                # would silently de-sync the boundaries.
+                if (
+                    draft.e2e_encrypted
+                    and data["encryption_chunk_size"] != draft.encryption_chunk_size
+                ):
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "encryption_chunk_size": (
+                                "Cannot change chunk size once a draft has "
+                                "been started."
+                            )
+                        }
+                    )
 
                 # Cumulative guards against drip-feed bypass: the serializer
                 # only sees one file at a time, so totals are recomputed from
@@ -170,6 +205,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 draft=draft,
                 filename=data["filename"],
                 size=data["size"],
+                plaintext_size=data.get("plaintext_size") if draft.e2e_encrypted else None,
                 mime_type=data["mime_type"],
                 source_url=data.get("source_url", ""),
             )
@@ -310,7 +346,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     # No scan coming → mark SKIPPED (downloadable, no "clean"
                     # claim), else it stays PENDING forever (perpetual spinner +
                     # blocked download). Scanning on → PENDING until the webhook.
-                    if not settings.CLAMAV_SCAN_ENABLED:
+                    # E2E ciphertext can't be scanned (we don't have the key),
+                    # so the gate is bypassed wholesale — same SKIPPED status.
+                    if draft.e2e_encrypted or not settings.CLAMAV_SCAN_ENABLED:
                         transfer_file.scan_status = ScanStatus.SKIPPED
                     elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
                         transfer_file.scan_status = ScanStatus.TOO_LARGE
@@ -410,6 +448,30 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         with transaction.atomic():
             draft = self._get_locked_draft(pk)
 
+            # key_fragment is only meaningful when the draft is E2E and the
+            # transfer is being sent by email; the serializer already gates
+            # it against link mode. Cross-check against the draft's mode
+            # here: requiring it when expected catches a buggy client that
+            # would otherwise post emails without a decryption link, and
+            # rejecting it when not expected matches the rest of the E2E
+            # parameter hygiene.
+            mode = metadata.get("sharing_mode", SharingMode.LINK)
+            posted_fragment = metadata.get("key_fragment", "")
+            if mode == SharingMode.EMAIL:
+                if draft.e2e_encrypted and not posted_fragment:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "key_fragment": (
+                                "Required when finalizing an E2E draft in "
+                                "email mode."
+                            )
+                        }
+                    )
+                if not draft.e2e_encrypted and posted_fragment:
+                    raise drf.exceptions.ValidationError(
+                        {"key_fragment": "Only allowed for E2E drafts."}
+                    )
+
             files = list(draft.files.all())
             if not files:
                 raise drf.exceptions.ValidationError(
@@ -496,6 +558,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
                 auto_archive_on_download=metadata["auto_archive_on_download"],
+                e2e_encrypted=draft.e2e_encrypted,
+                encryption_chunk_size=draft.encryption_chunk_size,
             )
             models.TransferFile.objects.filter(draft=draft).update(
                 transfer=transfer, draft=None
@@ -512,8 +576,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             if transfer.sharing_mode == SharingMode.EMAIL:
                 from core.tasks import send_recipient_invitations_task
 
+                # E2E + email: the key fragment travels via Celery kwarg
+                # to the send task. Not persisted on Transfer — once emails
+                # are sent it lives only in the recipients' inboxes.
+                key_fragment = (
+                    metadata.get("key_fragment", "") if transfer.e2e_encrypted else ""
+                )
                 transaction.on_commit(
-                    lambda: send_recipient_invitations_task.delay(str(transfer.id))
+                    lambda fragment=key_fragment: send_recipient_invitations_task.delay(
+                        str(transfer.id), key_fragment=fragment
+                    )
                 )
 
             draft.delete()

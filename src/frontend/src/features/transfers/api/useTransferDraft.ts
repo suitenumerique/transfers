@@ -7,6 +7,12 @@ import type {
   SharingMode,
   TransferDetail,
 } from "@/features/api/types";
+import {
+  ciphertextSize,
+  encryptChunk,
+  generateTransferKey,
+  PLAINTEXT_CHUNK_SIZE,
+} from "../upload/e2eCrypto";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Eager-upload draft handle.
@@ -82,6 +88,11 @@ export interface DrivePickedItem {
 export interface TransferDraftHandle {
   draftId: string | null;
   files: DraftFile[];
+  // URL-safe base64 of the AES-256 key when the draft is E2E-encrypted.
+  // Generated lazily on the first add-file call when the caller passes
+  // `e2eEncrypted: true`. The caller appends it to the finalized
+  // transfer's URL fragment so the recipient can decrypt.
+  e2eKeyFragment: string | null;
   // Two-phase submit state:
   // - `isAwaitingUploads`: user clicked Send but uploads are still running.
   //   Auto-finalize is armed but cancellable via `cancelSubmit()` or by
@@ -94,6 +105,17 @@ export interface TransferDraftHandle {
   // until every file is clean). Drives the "checking for viruses" loading step.
   isScanning: boolean;
   error: string | null;
+  // Lock the draft as E2E-encrypted. Honoured only on the first add-file
+  // call (the mode is set when the draft is born and can't change after).
+  // Generates a random key kept in-memory + surfaced via `e2eKeyFragment`.
+  setE2eEncrypted: (on: boolean) => void;
+  e2eEncrypted: boolean;
+  // Bigger-hammer mode change: tear down the existing draft + any uploads,
+  // flip the mode, and re-register every file from the local File refs
+  // (re-encrypting in the process if the new mode is E2E). Rejects with
+  // `restart_blocked_drive` if any file in the draft was imported from
+  // Drive — those have no local File to replay.
+  restartWithMode: (newMode: boolean) => Promise<void>;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
   removeFile: (key: string) => void;
@@ -168,6 +190,13 @@ export function useTransferDraft(): TransferDraftHandle {
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [e2eEncrypted, setE2eEncryptedState] = useState(false);
+  const [e2eKeyFragment, setE2eKeyFragment] = useState<string | null>(null);
+  // CryptoKey is opaque and non-serialisable; kept off React state so we
+  // don't churn the tree when it lands (the fragment string is the only
+  // value the UI cares about).
+  const e2eKeyRef = useRef<CryptoKey | null>(null);
+  const e2eEncryptedRef = useRef(false);
 
   // Refs mirror state so async work can observe the freshest list without
   // waiting for the next render.
@@ -211,7 +240,29 @@ export function useTransferDraft(): TransferDraftHandle {
     draftInitPromiseRef.current = null;
     setDraftId(null);
     writeFiles([]);
+    // Per-draft crypto state goes (a fresh draft will mint a new key)
+    // but the E2E *intent* sticks — removing the last file shouldn't
+    // silently flip the user's encryption preference off, and a new
+    // submit-cycle starts on a fresh mount with the default anyway.
+    e2eKeyRef.current = null;
+    setE2eKeyFragment(null);
   }, [writeFiles]);
+
+  const setE2eEncrypted = useCallback(
+    (on: boolean) => {
+      // Once the draft exists, the mode is frozen — the backend rejects
+      // mismatched follow-up add-file calls. Silently ignore the toggle
+      // rather than tear the draft down behind the user.
+      if (draftIdRef.current !== null) return;
+      e2eEncryptedRef.current = on;
+      setE2eEncryptedState(on);
+      if (!on) {
+        e2eKeyRef.current = null;
+        setE2eKeyFragment(null);
+      }
+    },
+    [],
+  );
 
   const abortDraft = useCallback(async () => {
     if (currentUploaderRef.current) {
@@ -246,6 +297,28 @@ export function useTransferDraft(): TransferDraftHandle {
     const key = next.key;
     const localFile = next.file;
 
+    // E2E mode: encrypt each plaintext chunk before it leaves the browser.
+    // The crypto chunk size MUST equal the multipart chunk size — one S3
+    // part = one self-contained AES-GCM chunk (IV ‖ ciphertext ‖ tag), so
+    // the recipient's SW can decrypt sequentially without any boundary
+    // metadata beyond chunk_size + plaintext_size.
+    const e2eKey = e2eEncryptedRef.current ? e2eKeyRef.current : null;
+    const transformChunk = e2eKey
+      ? async (blob: Blob) => {
+          const buf = await blob.arrayBuffer();
+          const ct = await encryptChunk(e2eKey, buf);
+          // Cast: Blob's `BlobPart` widened to `Uint8Array<ArrayBuffer>`
+          // in current lib.dom.d.ts; our ct is `Uint8Array<ArrayBufferLike>`
+          // by inference, identical at runtime.
+          return new Blob([ct as unknown as BlobPart], {
+            type: "application/octet-stream",
+          });
+        }
+      : undefined;
+    const ciphertextTotal = e2eKey
+      ? ciphertextSize(localFile.size, chunkSize)
+      : localFile.size;
+
     const uploader = new MultipartUploader({
       file: localFile,
       chunkSize,
@@ -268,6 +341,8 @@ export function useTransferDraft(): TransferDraftHandle {
       onProgress: (loaded, total) => {
         updateFile(key, { loaded, total });
       },
+      transformChunk,
+      totalSize: ciphertextTotal,
     });
     currentUploaderRef.current = uploader;
     updateFile(key, { state: "uploading" });
@@ -435,6 +510,18 @@ export function useTransferDraft(): TransferDraftHandle {
       knownDraftId: string | null,
     ): Promise<string | null> => {
       try {
+        // `size` is what S3 will store. For E2E we declare the post-encryption
+        // size so the backend's head_object check passes; plaintext_size
+        // tracks the file's pre-encryption size for the recipient UI.
+        const e2eOn = e2eEncryptedRef.current && !draftFile.sourceUrl;
+        if (e2eOn && !e2eKeyRef.current) {
+          const { cryptoKey, fragment } = await generateTransferKey();
+          e2eKeyRef.current = cryptoKey;
+          setE2eKeyFragment(fragment);
+        }
+        const declaredSize = e2eOn
+          ? ciphertextSize(draftFile.size, PLAINTEXT_CHUNK_SIZE)
+          : draftFile.size;
         const resp = await apiFetch<AddFileResponse>(
           "/drafts/add-file/",
           {
@@ -442,10 +529,19 @@ export function useTransferDraft(): TransferDraftHandle {
             body: JSON.stringify({
               ...(knownDraftId ? { draft_id: knownDraftId } : {}),
               filename: draftFile.name,
-              size: draftFile.size,
+              size: declaredSize,
               mime_type: draftFile.mimeType || "application/octet-stream",
               ...(draftFile.sourceUrl
                 ? { source_url: draftFile.sourceUrl }
+                : {}),
+              // E2E params only matter on the call that births the draft;
+              // the backend ignores them on follow-ups (the mode is locked).
+              ...(e2eOn
+                ? {
+                    e2e_encrypted: true,
+                    encryption_chunk_size: PLAINTEXT_CHUNK_SIZE,
+                    plaintext_size: draftFile.size,
+                  }
                 : {}),
             }),
           },
@@ -738,6 +834,16 @@ export function useTransferDraft(): TransferDraftHandle {
         // Finalize is antivirus-gated: 200 = transfer created, 202 = files
         // still scanning (poll again), 4xx with reason "scan_blocked" = a file
         // was rejected (thrown by apiFetch, surfaced to the caller).
+        // E2E + email: pass the URL fragment along so the email task can
+        // embed the full decryption link. Skipped for link mode (the
+        // sender's browser owns the fragment) and for non-E2E transfers.
+        const fragment = e2eKeyFragment;
+        const finalizeBody = {
+          ...metadata,
+          ...(fragment && metadata.sharing_mode === "email"
+            ? { key_fragment: fragment }
+            : {}),
+        };
         const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
         let finalized: TransferDetail;
         for (;;) {
@@ -745,7 +851,7 @@ export function useTransferDraft(): TransferDraftHandle {
             `/drafts/${id}/finalize/`,
             {
               method: "POST",
-              body: JSON.stringify(metadata),
+              body: JSON.stringify(finalizeBody),
             },
           );
           if (resp && (resp as ScanPendingResponse).reason === "scan_pending") {
@@ -770,7 +876,7 @@ export function useTransferDraft(): TransferDraftHandle {
         cancelSubmitRef.current = false;
       }
     },
-    [queryClient, resetLocal, setAwaitingUploads],
+    [queryClient, resetLocal, setAwaitingUploads, e2eKeyFragment],
   );
 
   const cancelSubmit = useCallback(() => {
@@ -779,6 +885,32 @@ export function useTransferDraft(): TransferDraftHandle {
     }
   }, []);
 
+  const restartWithMode = useCallback(
+    async (newMode: boolean): Promise<void> => {
+      // Snapshot the local Files first — abortDraft() empties filesRef
+      // by way of resetLocal, and we need the originals to re-feed
+      // addFile after the wipe.
+      const snapshot = filesRef.current.map((f) => f.file).filter((f): f is File => f !== null);
+      // Imports from Drive have `file === null` (the bytes live server-
+      // side and were never in the browser). Refuse to replay if any
+      // are present, since we'd silently drop them.
+      if (snapshot.length !== filesRef.current.length) {
+        const err = new Error("restart_blocked_drive");
+        err.name = "RestartBlockedError";
+        throw err;
+      }
+      await abortDraft();
+      // abortDraft -> resetLocal cleared draftIdRef, so setE2eEncrypted
+      // is allowed to flip the intent. The cryptoKey is also reset so
+      // the next registerFile mints a fresh one.
+      setE2eEncrypted(newMode);
+      for (const f of snapshot) {
+        addFile(f);
+      }
+    },
+    [abortDraft, setE2eEncrypted, addFile],
+  );
+
   return {
     draftId,
     files,
@@ -786,6 +918,10 @@ export function useTransferDraft(): TransferDraftHandle {
     isFinalizing,
     isScanning,
     error,
+    e2eEncrypted,
+    e2eKeyFragment,
+    setE2eEncrypted,
+    restartWithMode,
     addFile,
     attachFromDrive,
     removeFile,

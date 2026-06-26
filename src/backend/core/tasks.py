@@ -449,8 +449,15 @@ def delete_pending_transfer_files_task():
 
 
 @shared_task
-def send_recipient_invitations_task(transfer_id):
-    """Send invitation emails to all recipients of an email-mode transfer."""
+def send_recipient_invitations_task(transfer_id, key_fragment=""):
+    """Send invitation emails to all recipients of an email-mode transfer.
+
+    ``key_fragment`` is the URL-safe base64 of the E2E decryption key, passed
+    through as a task kwarg when the transfer is encrypted. It's appended to
+    the download URL inside the email body so the recipient can decrypt
+    client-side. Nothing about it is persisted — once this task returns, the
+    key only exists in the recipients' inboxes.
+    """
     try:
         transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
     except Transfer.DoesNotExist:
@@ -458,7 +465,7 @@ def send_recipient_invitations_task(transfer_id):
 
     for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
         try:
-            send_recipient_invitation(transfer, recipient)
+            send_recipient_invitation(transfer, recipient, key_fragment=key_fragment)
             recipient.email_sent_at = timezone.now()
             recipient.save(update_fields=["email_sent_at", "updated_at"])
             TransferEvent.objects.create(

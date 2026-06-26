@@ -677,6 +677,317 @@ class TestDraftFinalize:
 
 
 @pytest.mark.django_db
+class TestDraftE2eEncryption:
+    """End-to-end encryption: flag set on the first add-file, propagated to
+    the Transfer at finalize, scan skipped throughout. The backend treats
+    encrypted bytes as opaque — these tests cover the bookkeeping, not the
+    crypto itself (which is browser-side)."""
+
+    CHUNK = 25 * 1024 * 1024
+    OVERHEAD = 28  # IV + GCM tag per chunk
+
+    def _add_e2e_file(
+        self, client, *, draft_id=None, plaintext_size=1000, filename="a.bin"
+    ):
+        ciphertext_size = plaintext_size + self.OVERHEAD  # single chunk
+        body = {
+            "filename": filename,
+            "size": ciphertext_size,
+            "plaintext_size": plaintext_size,
+            "e2e_encrypted": True,
+            "encryption_chunk_size": self.CHUNK,
+        }
+        if draft_id is not None:
+            body["draft_id"] = str(draft_id)
+        return client.post(ADD_FILE_URL, body, format="json")
+
+    def test_first_add_file_locks_draft_as_e2e(
+        self, patched_s3, authenticated_client
+    ):
+        resp = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        assert resp.status_code == 201, resp.data
+
+        draft = TransferDraft.objects.get(id=resp.data["draft_id"])
+        assert draft.e2e_encrypted is True
+        assert draft.encryption_chunk_size == self.CHUNK
+
+        tf = draft.files.get()
+        assert tf.size == 1024 + self.OVERHEAD
+        assert tf.plaintext_size == 1024
+
+    def test_followup_add_file_must_match_mode(
+        self, patched_s3, authenticated_client
+    ):
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        # Same draft, plaintext attempt → rejected.
+        resp = _add_file(
+            authenticated_client,
+            draft_id=initiate.data["draft_id"],
+            filename="b.bin",
+            size=2048,
+        )
+        assert resp.status_code == 400
+        assert "e2e_encrypted" in resp.data
+
+    def test_rejects_e2e_without_plaintext_size(
+        self, patched_s3, authenticated_client
+    ):
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "filename": "a.bin",
+                "size": 2048,
+                "e2e_encrypted": True,
+                "encryption_chunk_size": self.CHUNK,
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "plaintext_size" in resp.data
+
+    def test_rejects_e2e_without_chunk_size(
+        self, patched_s3, authenticated_client
+    ):
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "filename": "a.bin",
+                "size": 2048,
+                "plaintext_size": 1024,
+                "e2e_encrypted": True,
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "encryption_chunk_size" in resp.data
+
+    def test_rejects_e2e_with_drive_source(
+        self, patched_s3, authenticated_client
+    ):
+        # Drive imports happen server-side — we wouldn't have a key to
+        # encrypt with. The frontend hides the option but the backend
+        # enforces the invariant.
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "filename": "a.bin",
+                "size": 2048,
+                "plaintext_size": 1024,
+                "e2e_encrypted": True,
+                "encryption_chunk_size": self.CHUNK,
+                "source_url": "https://drive.example.com/x",
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "source_url" in resp.data
+
+    def test_rejects_plaintext_size_when_not_e2e(
+        self, patched_s3, authenticated_client
+    ):
+        # plaintext_size is meaningful only when bytes on S3 are ciphertext.
+        # Accepting it on a plaintext draft would let a client poison the
+        # file row with a size that does not match what is in storage.
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "filename": "a.bin",
+                "size": 2048,
+                "plaintext_size": 1024,
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "plaintext_size" in resp.data
+
+    def test_rejects_chunk_size_when_not_e2e(
+        self, patched_s3, authenticated_client
+    ):
+        # Same reasoning for encryption_chunk_size: it propagates to the
+        # Transfer at finalize, so accepting it without E2E would set a
+        # value that has no bearing on what S3 actually holds.
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "filename": "a.bin",
+                "size": 2048,
+                "encryption_chunk_size": self.CHUNK,
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "encryption_chunk_size" in resp.data
+
+    def test_rejects_chunk_size_mismatch_on_followup(
+        self, patched_s3, authenticated_client
+    ):
+        # The recipient's SW assumes one constant chunk size across all
+        # files. A follow-up call that ships a different value silently
+        # de-syncs decryption boundaries, so the backend refuses it.
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "draft_id": initiate.data["draft_id"],
+                "filename": "b.bin",
+                "size": 2048 + self.OVERHEAD,
+                "plaintext_size": 2048,
+                "e2e_encrypted": True,
+                "encryption_chunk_size": self.CHUNK + 1,
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "encryption_chunk_size" in resp.data
+
+    def test_complete_upload_skips_scan_on_e2e(
+        self, patched_s3, authenticated_client, settings
+    ):
+        # Scan would be on if this were a plaintext draft, but E2E
+        # ciphertext can't be scanned. The file lands SKIPPED so the
+        # finalize gate doesn't block it and the download path lets it
+        # through.
+        settings.CLAMAV_SCAN_ENABLED = True
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        with patch(
+            "core.api.viewsets.draft.submit_scan_task.delay"
+        ) as scan_mock:
+            resp = _complete_upload(
+                authenticated_client,
+                initiate.data["draft_id"],
+                initiate.data["transfer_file_id"],
+            )
+        assert resp.status_code == 204, resp.data
+        scan_mock.assert_not_called()
+
+        tf = TransferFile.objects.get(id=initiate.data["transfer_file_id"])
+        from core.enums import ScanStatus
+
+        assert tf.scan_status == ScanStatus.SKIPPED
+
+    def test_finalize_propagates_e2e_fields_to_transfer(
+        self, patched_s3, authenticated_client
+    ):
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate.data["draft_id"],
+            initiate.data["transfer_file_id"],
+        )
+        resp = _finalize(authenticated_client, initiate.data["draft_id"])
+        assert resp.status_code == 200, resp.data
+
+        transfer = Transfer.objects.get(id=resp.data["id"])
+        assert transfer.e2e_encrypted is True
+        assert transfer.encryption_chunk_size == self.CHUNK
+        tf = transfer.files.get()
+        assert tf.plaintext_size == 1024
+
+        # API echoes the fields back so the recipient page can drive the SW.
+        assert resp.data["e2e_encrypted"] is True
+        assert resp.data["encryption_chunk_size"] == self.CHUNK
+
+    def test_finalize_passes_key_fragment_to_email_task(
+        self, patched_s3, authenticated_client
+    ):
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate.data["draft_id"],
+            initiate.data["transfer_file_id"],
+        )
+        # The viewset imports the task lazily inside the finalize method,
+        # so the symbol isn't on the viewset module — patch the canonical
+        # location on core.tasks instead. The lazy import resolves to the
+        # same task object so `delay` lands on the mock either way.
+        # ``captureOnCommitCallbacks(execute=True)`` is needed because the
+        # delay() call sits inside a ``transaction.on_commit`` lambda; the
+        # default pytest-django transaction never commits in tests so the
+        # callback would otherwise never fire.
+        from django.test import TestCase as _TC
+
+        with (
+            patch("core.tasks.send_recipient_invitations_task.delay") as send_mock,
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            resp = _finalize(
+                authenticated_client,
+                initiate.data["draft_id"],
+                sharing_mode="email",
+                recipients=["a@b.fr"],
+                key_fragment="abc123",
+            )
+        assert resp.status_code == 200, resp.data
+        send_mock.assert_called_once()
+        # kwarg, not positional — the task signature is `(transfer_id,
+        # key_fragment="")`, and the viewset uses the kwarg form.
+        assert send_mock.call_args.kwargs["key_fragment"] == "abc123"
+
+    def test_finalize_rejects_key_fragment_in_link_mode(
+        self, patched_s3, authenticated_client
+    ):
+        # link mode means the browser keeps the fragment; posting it to the
+        # backend would be a needless leak. Serializer rejects it.
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate.data["draft_id"],
+            initiate.data["transfer_file_id"],
+        )
+        resp = _finalize(
+            authenticated_client,
+            initiate.data["draft_id"],
+            sharing_mode="link",
+            key_fragment="abc123",
+        )
+        assert resp.status_code == 400
+        assert "key_fragment" in resp.data
+
+    def test_finalize_rejects_missing_key_fragment_for_e2e_email(
+        self, patched_s3, authenticated_client
+    ):
+        # Without the fragment the email goes out with a download URL
+        # missing the #key, recipient can't decrypt. Catch it at finalize
+        # so the client sees a clear 400 instead of broken emails.
+        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate.data["draft_id"],
+            initiate.data["transfer_file_id"],
+        )
+        resp = _finalize(
+            authenticated_client,
+            initiate.data["draft_id"],
+            sharing_mode="email",
+            recipients=["a@b.fr"],
+            # key_fragment omitted on purpose
+        )
+        assert resp.status_code == 400
+        assert "key_fragment" in resp.data
+
+    def test_finalize_rejects_key_fragment_for_non_e2e_email(
+        self, patched_s3, authenticated_client
+    ):
+        # A plaintext transfer has no key to share, so a posted fragment
+        # would just be noise; reject to keep the parameter hygiene.
+        initiate = _initiate_with_file(authenticated_client, size=2048)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        resp = _finalize(
+            authenticated_client,
+            initiate["draft_id"],
+            sharing_mode="email",
+            recipients=["a@b.fr"],
+            key_fragment="abc123",
+        )
+        assert resp.status_code == 400
+        assert "key_fragment" in resp.data
+
+
+@pytest.mark.django_db
 class TestDraftRemoveFile:
     """POST /drafts/{id}/remove-file/."""
 
