@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Checkbox, Input, LabelledBox, Modal, ModalSize, Switch, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Lock, Mail, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError, apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
@@ -192,6 +192,12 @@ export function TransferForm() {
     null,
   );
   const expiryMenu = useDropdownMenu();
+  // Mode-switch confirm: gates a destructive restart-uploads action when
+  // the user flips E2E while files are already queued. ``pendingMode``
+  // stashes the target value between "open the modal" and "user confirms".
+  const restartModeModal = useModal();
+  const [pendingMode, setPendingMode] = useState<boolean | null>(null);
+  const [restartError, setRestartError] = useState<string | null>(null);
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
   // leave bytes hanging in S3 for 24h (the server cleanup cron catches it
@@ -401,6 +407,12 @@ export function TransferForm() {
     }
 
     setSubmitError(null);
+    // Snapshot the E2E fragment before submit() runs `resetLocal` and
+    // clears it. The confirm page receives it via the navigation hash
+    // so it can render the working link once and only once: refresh of
+    // the confirm URL drops the fragment, matching our "show the link
+    // now, we don't store it" model.
+    const fragmentToCarry = draft.e2eKeyFragment;
     try {
       const result = await draft.submit({
         title,
@@ -410,10 +422,14 @@ export function TransferForm() {
         auto_archive_on_download: autoArchiveOnDownload,
       });
       if (result.sharing_mode === "link") {
-        // Link mode: nothing to wait for — go straight to the confirm page.
+        // Link mode: nothing to wait for, go straight to the confirm page.
         // Suppress the route-change confirm; see the ref's declaration.
         isSubmittingRef.current = true;
-        navigate({ to: "/confirm/$id", params: { id: result.id } });
+        navigate({
+          to: "/confirm/$id",
+          params: { id: result.id },
+          ...(fragmentToCarry ? { hash: fragmentToCarry } : {}),
+        });
       } else {
         // Email mode: enter polling state. The pollQuery effect will navigate
         // once the recipient-invitation task is done (success or partial fail).
@@ -527,13 +543,47 @@ export function TransferForm() {
                 maxSize={config.TRANSFER_MAX_TOTAL_SIZE}
               />
             )}
+            {/* Primary mode switch — Cunningham toggle sitting inside the
+                header so it reads as part of the title block. The choice
+                is locked the moment the first file lands on the backend
+                draft, hence `disabled` once `hasFiles`. */}
+            <div
+              className="transfer-form__mode-switch"
+              title={busy ? t("Cannot change mode while sending.") : undefined}
+            >
+              <Switch
+                label={t("End-to-end encryption")}
+                checked={draft.e2eEncrypted}
+                onChange={(e) => {
+                  const next = e.currentTarget.checked;
+                  setRestartError(null);
+                  if (!hasFiles) {
+                    draft.setE2eEncrypted(next);
+                    return;
+                  }
+                  // Files already queued — flipping the mode means
+                  // discarding their (en)crypted bytes on S3 and
+                  // re-uploading from the local File refs. Ask first.
+                  setPendingMode(next);
+                  restartModeModal.open();
+                }}
+                disabled={busy}
+              />
+            </div>
+            {draft.e2eEncrypted && (
+              <p className="transfer-form__mode-hint">
+                {t(
+                  "Files are encrypted in your browser. The decryption key stays on your device and is never sent to our servers. Antivirus scanning is skipped.",
+                )}
+              </p>
+            )}
           </header>
 
           <FileDropZone
             onChange={handleFilesChange}
             errorMessage={fileError}
           />
-          {config.DRIVE && (
+          {config.DRIVE && !draft.e2eEncrypted && (
             <DriveAttachButton
               variant="link"
               onPick={handleDrivePick}
@@ -581,6 +631,16 @@ export function TransferForm() {
                       : "default";
                 const extras = (
                   <>
+                    {draft.e2eEncrypted && (
+                      <Tooltip
+                        content={t("End-to-end encrypted file")}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--encrypted">
+                          <Lock />
+                        </span>
+                      </Tooltip>
+                    )}
                     {isUploading && (
                       <span
                         className="file-item__pct"
@@ -603,10 +663,9 @@ export function TransferForm() {
                       </span>
                     )}
                     {isDone &&
-                      (df.scanStatus === undefined ||
-                        df.scanStatus === "pending" ||
+                      (df.scanStatus === "pending" ||
                         // A transient error is still "in progress" from the
-                        // user's view — it auto-retries, nothing to act on.
+                        // user's view, it auto-retries, nothing to act on.
                         (df.scanStatus === "error" &&
                           df.scanErrorKind !== "file")) && (
                         <Tooltip
@@ -729,7 +788,7 @@ export function TransferForm() {
               }`}
               onClick={() => {
                 setSharingMode("email");
-                // Switching sharing mode is a draft-level change — disarm
+                // Switching sharing mode is a draft-level change, disarm
                 // any pending auto-finalize so the user re-confirms.
                 draft.cancelSubmit();
               }}
@@ -737,6 +796,21 @@ export function TransferForm() {
             >
               <Mail />
               <span>{t("Email")}</span>
+              {draft.e2eEncrypted && (
+                <Tooltip
+                  content={t(
+                    "The encryption key is included in the email body and is visible to mail servers. Prefer link mode shared over a secure channel.",
+                  )}
+                  placement="top"
+                >
+                  <span
+                    className="transfer-form__tab-warning"
+                    aria-label={t("Warning")}
+                  >
+                    <Warning />
+                  </span>
+                </Tooltip>
+              )}
             </button>
             <button
               type="button"
@@ -877,8 +951,78 @@ export function TransferForm() {
           {submitError && (
             <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
+          {restartError && (
+            <Alert type={VariantType.ERROR}>{restartError}</Alert>
+          )}
         </section>
       </div>
+
+      <Modal
+        size={ModalSize.SMALL}
+        isOpen={restartModeModal.isOpen}
+        onClose={() => {
+          restartModeModal.close();
+          setPendingMode(null);
+        }}
+        title={
+          pendingMode
+            ? t("Turn on end-to-end encryption?")
+            : t("Turn off end-to-end encryption?")
+        }
+        rightActions={
+          <>
+            <Button
+              color="neutral"
+              variant="secondary"
+              onClick={() => {
+                restartModeModal.close();
+                setPendingMode(null);
+              }}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              color="brand"
+              onClick={async () => {
+                if (pendingMode === null) return;
+                const target = pendingMode;
+                restartModeModal.close();
+                setPendingMode(null);
+                try {
+                  await draft.restartWithMode(target);
+                } catch (err) {
+                  if (
+                    err instanceof Error &&
+                    err.message === "restart_blocked_drive"
+                  ) {
+                    setRestartError(
+                      t(
+                        "Files imported from Drive can't be re-uploaded. Remove them first to switch modes.",
+                      ),
+                    );
+                  } else {
+                    setRestartError(
+                      t(
+                        "Couldn't re-upload the files. Please remove them and start over.",
+                      ),
+                    );
+                  }
+                }
+              }}
+            >
+              {t("Continue")}
+            </Button>
+          </>
+        }
+      >
+        {pendingMode
+          ? t(
+              "This will trigger a re-upload of the files, encrypted in your browser.",
+            )
+          : t(
+              "This will trigger a re-upload of the files, unencrypted.",
+            )}
+      </Modal>
     </form>
   );
 }

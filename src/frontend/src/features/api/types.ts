@@ -29,12 +29,17 @@ export interface TransferListItem {
   downloaded: boolean;
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
+  e2e_encrypted: boolean;
 }
 
 export interface TransferFile {
   id: string;
   filename: string;
   size: number;
+  // Plaintext size for E2E-encrypted files; null otherwise. UIs should
+  // fall back to `size` when null. For E2E, `size` is the ciphertext size
+  // that sits in S3 (plaintext + per-chunk GCM overhead).
+  plaintext_size: number | null;
   mime_type: string;
   created_at: string;
   scan_status: ScanStatus;
@@ -61,6 +66,8 @@ export interface TransferDetail {
   recipients: TransferRecipient[];
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
+  e2e_encrypted: boolean;
+  encryption_chunk_size: number | null;
 }
 
 export interface TransferEvent {
@@ -98,6 +105,7 @@ export interface DownloadTransferFile {
   id: string;
   filename: string;
   size: number;
+  plaintext_size: number | null;
   mime_type: string;
   scan_status: ScanStatus;
 }
@@ -111,4 +119,6 @@ export interface DownloadTransferFull {
   is_owner: boolean;
   sharing_mode: SharingMode;
   auto_archive_on_download: boolean;
+  e2e_encrypted: boolean;
+  encryption_chunk_size: number | null;
 }

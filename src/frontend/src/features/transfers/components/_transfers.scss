@@ -522,6 +522,22 @@
   }
 }
 
+// Discreet warning marker next to the "Email" tab label when E2E is on:
+// surfaces the SMTP-leak caveat without taking a full Alert's space.
+.transfer-form__tab-warning {
+  display: inline-flex;
+  align-items: center;
+  color: var(
+    --c--contextuals--content--semantic--warning--primary,
+    #b34000
+  );
+
+  > svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
 // Hint shown under the submit button while waiting for uploads to
 // finish — reassures the user that leaving the tab kills the upload.
 .transfer-form__submit-hint {
@@ -826,14 +842,38 @@
   &__files-header {
     display: flex;
     flex-direction: column;
-    gap: var(--c--globals--spacings--xs);
+    // Tighter than the files-col gap (xs/8px → 2xs/6px) so the title and
+    // its companion controls (gauge, encryption mode toggle, hint) read
+    // as a single header block, while still leaving a clear visual break
+    // above the dropzone.
+    gap: var(--c--globals--spacings--2xs);
   }
 
-  &__files-title {
+  // `.app-content h1` in styles/globals.scss adds `margin-bottom: 1.5rem`
+  // (24px) to any H1 — including this one. We need that out of the way
+  // so the header's internal gap is what spaces the title from the gauge
+  // / mode toggle below it. Match the global selector's specificity by
+  // qualifying with `.app-content`.
+  .app-content &__files-title {
     margin: 0;
     font-size: var(--c--globals--font--sizes--h4, 1.375rem);
     font-weight: 700;
     letter-spacing: -0.2px;
+  }
+
+  // Wrapper around the E2E Cunningham Switch — the native `title` on
+  // the div surfaces the "locked once a file is added" tooltip without
+  // having to monkey with the Switch's internals.
+  &__mode-switch {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+
+  &__mode-hint {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--xs);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    line-height: 1.4;
   }
 
   &__gauge {
@@ -1102,6 +1142,13 @@
         #b34000
       );
     }
+
+    // E2E-encrypted file marker. Same shape as the scan badges but in
+    // the brand colour to distinguish "encrypted" (a property of the
+    // file) from "scan passed" (a state).
+    &--encrypted {
+      color: var(--c--contextuals--content--semantic--brand--primary);
+    }
   }
 }
 
@@ -1158,6 +1205,16 @@
       width: 16px;
       height: 16px;
     }
+  }
+
+  // Dotted underline hint on the E2E "link to share" body copy: the
+  // whole sentence is the Tooltip trigger, so a discreet cue tells the
+  // reader more is available on hover (no separate info icon that
+  // would dangle on a new line when the text wraps).
+  &__e2e-tip {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
   }
 
   // Doubled-class selector beats `.app-content h1 { margin-bottom: 1.5rem }`
