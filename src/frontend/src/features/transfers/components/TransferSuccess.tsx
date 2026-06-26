@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
+import { Button, Input, Tooltip } from "@gouvfr-lasuite/cunningham-react";
 import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -12,19 +12,31 @@ function daysUntil(iso: string): number {
 
 export function TransferSuccess({
   transfer,
+  e2eFragment,
   onNewTransfer,
   onGoToDetail,
 }: {
   transfer: TransferDetail;
+  // For E2E link-mode finalizes only: the fragment is forwarded once from
+  // the form via navigation hash and stripped from the visible URL. Null
+  // for non-E2E, for email mode, and for any re-render where the user
+  // arrived at /confirm/<id> without the fragment (refresh, bookmark).
+  e2eFragment: string | null;
   onNewTransfer: () => void;
   onGoToDetail: () => void;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
-  const downloadUrl = transfer.public_token
+  const baseUrl = transfer.public_token
     ? `${window.location.origin}/t/${transfer.public_token}`
     : "";
+  const downloadUrl =
+    baseUrl && (!transfer.e2e_encrypted || e2eFragment)
+      ? transfer.e2e_encrypted
+        ? `${baseUrl}#${e2eFragment}`
+        : baseUrl
+      : "";
 
   const handleCopy = async () => {
     if (!downloadUrl) return;
@@ -61,38 +73,61 @@ export function TransferSuccess({
         </p>
       )}
       {isLink ? (
-        <>
+        downloadUrl ? (
+          <>
+            <p className="transfer-success__body">
+              {transfer.e2e_encrypted ? (
+                <Tooltip
+                  content={t(
+                    "Encryption happens in your browser. The key is embedded in this link and never reaches our servers. Anyone with the link can read the files.",
+                  )}
+                  placement="top"
+                >
+                  <span className="transfer-success__e2e-tip">
+                    {t(
+                      "Link to share. Copy it now, we won't show it again:",
+                    )}
+                  </span>
+                </Tooltip>
+              ) : (
+                t("Download link to share:")
+              )}
+            </p>
+            <div className="transfer-success__link-box">
+              <Input
+                readOnly
+                hideLabel
+                label={t("Download link")}
+                value={downloadUrl}
+                variant="classic"
+                fullWidth
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <Button
+                type="button"
+                size="small"
+                color="neutral"
+                variant="tertiary"
+                icon={copied ? <Checkmark /> : <Copy />}
+                onClick={handleCopy}
+                aria-label={copied ? t("Link copied!") : t("Copy link")}
+                title={copied ? t("Link copied!") : t("Copy link")}
+              />
+            </div>
+            <p className="transfer-success__expiry">
+              {t("This link expires")}{" "}
+              <strong>
+                <RelativeDate iso={transfer.expires_at} />
+              </strong>
+            </p>
+          </>
+        ) : (
           <p className="transfer-success__body">
-            {t("Download link to share:")}
+            {t(
+              "This link is not available on this device. Use the copy you saved when you created the transfer.",
+            )}
           </p>
-          <div className="transfer-success__link-box">
-            <Input
-              readOnly
-              hideLabel
-              label={t("Download link")}
-              value={downloadUrl}
-              variant="classic"
-              fullWidth
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <Button
-              type="button"
-              size="small"
-              color="neutral"
-              variant="tertiary"
-              icon={copied ? <Checkmark /> : <Copy />}
-              onClick={handleCopy}
-              aria-label={copied ? t("Link copied!") : t("Copy link")}
-              title={copied ? t("Link copied!") : t("Copy link")}
-            />
-          </div>
-          <p className="transfer-success__expiry">
-            {t("This link expires")}{" "}
-            <strong>
-              <RelativeDate iso={transfer.expires_at} />
-            </strong>
-          </p>
-        </>
+        )
       ) : (
         <p className="transfer-success__body transfer-success__body--email">
           {t(

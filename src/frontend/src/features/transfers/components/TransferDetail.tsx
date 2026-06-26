@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
@@ -94,11 +94,21 @@ export function TransferDetail({
   };
   const isRetrying = resendTransfer.isPending || isAwaitingRetry;
 
-  const downloadUrl = transfer.public_token
+  // E2E: the working link only ever existed on the success screen post-
+  // finalize (via the navigation hash). We don't persist it anywhere, so
+  // the detail page can never reconstruct it. For non-E2E the bare token
+  // is enough — same URL the recipient receives.
+  const baseUrl = transfer.public_token
     ? `${window.location.origin}/t/${transfer.public_token}`
     : "";
+  const downloadUrl = transfer.e2e_encrypted ? "" : baseUrl;
   const isPublicLink = transfer.sharing_mode === "link";
-  const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
+  // For E2E, ``size`` is the ciphertext sitting in S3. The user-facing
+  // total should be the plaintext bytes they'll eventually save to disk.
+  const totalSize = transfer.files.reduce(
+    (sum, f) => sum + (f.plaintext_size ?? f.size),
+    0,
+  );
   const isActive = transfer.status === "active";
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
@@ -145,6 +155,10 @@ export function TransferDetail({
 
   const handleDownload = (fileId: string) => {
     if (!transfer.public_token) return;
+    // For E2E we don't hold the key on the detail page (intentionally),
+    // so the download button is disabled below. Non-E2E uses the plain
+    // backend redirect.
+    if (transfer.e2e_encrypted) return;
     downloadFile(transfer.public_token, fileId);
   };
 
@@ -221,6 +235,22 @@ export function TransferDetail({
             </span>
           </>
         )}
+        {transfer.e2e_encrypted && (
+          <>
+            <span className="transfer-detail__meta-sep">·</span>
+            <Tooltip
+              content={t(
+                "This transfer is end-to-end encrypted. The decryption key was only available when you created the transfer; we don't keep it.",
+              )}
+              placement="top"
+            >
+              <span className="transfer-detail__meta-item transfer-detail__meta-item--e2e">
+                <Lock />
+                {t("End-to-end encrypted")}
+              </span>
+            </Tooltip>
+          </>
+        )}
       </div>
 
       {downloadUrl && (
@@ -235,7 +265,7 @@ export function TransferDetail({
             onFocus={(e) => e.currentTarget.select()}
           />
           {/* Link stays visible on deactivated transfers for reference,
-              but copying is disabled — the URL no longer resolves. */}
+              but copying is disabled, the URL no longer resolves. */}
           <Button
             size="small"
             color="neutral"
@@ -317,23 +347,48 @@ export function TransferDetail({
               key={file.id}
               icon={<Doc />}
               name={file.filename}
-              size={formatFileSize(file.size)}
+              size={formatFileSize(file.plaintext_size ?? file.size)}
               state={
                 file.scan_status === "infected" ||
                 file.scan_status === "error"
                   ? "error"
                   : "done"
               }
-              extras={scanBadge(file.scan_status)}
+              extras={
+                <>
+                  {transfer.e2e_encrypted && (
+                    <Tooltip
+                      content={t("End-to-end encrypted file")}
+                      placement="top"
+                    >
+                      <span className="file-item__scan file-item__scan--encrypted">
+                        <Lock />
+                      </span>
+                    </Tooltip>
+                  )}
+                  {scanBadge(file.scan_status)}
+                </>
+              }
               action={
                 <Button
                   color="neutral"
                   variant="tertiary"
                   icon={<Download />}
                   onClick={() => handleDownload(file.id)}
-                  disabled={!isActive || !transfer.public_token || !downloadable}
+                  disabled={
+                    !isActive ||
+                    !transfer.public_token ||
+                    !downloadable ||
+                    transfer.e2e_encrypted
+                  }
                   aria-label={t("Download {{name}}", { name: file.filename })}
-                  title={t("Download")}
+                  title={
+                    transfer.e2e_encrypted
+                      ? t(
+                          "Open the original link to download an end-to-end encrypted file.",
+                        )
+                      : t("Download")
+                  }
                 />
               }
             />

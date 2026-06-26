@@ -230,6 +230,14 @@ class DownloadFileView(APIView):
                             actor_type=ActorType.AGENT,
                         )
 
+        # E2E callers (the decryption Service Worker) need the URL as data,
+        # not a 302 — a cross-origin redirect from fetch() strips
+        # credentials and trips CORS preflight quirks on Firefox. Opt into
+        # JSON with ``?as=json`` so the SW can do a fresh anonymous GET to
+        # the presigned URL on its own.
+        if request.query_params.get("as") == "json":
+            return Response({"url": url})
+
         # Redirect the browser straight to S3 so the download bytes never
         # transit through a Django worker. The presigned URL's short expiry
         # limits the shelf life of the URL if it leaks (browser history,

@@ -86,6 +86,7 @@ class TransferFileSerializer(serializers.ModelSerializer):
             "id",
             "filename",
             "size",
+            "plaintext_size",
             "mime_type",
             "created_at",
             "scan_status",
@@ -142,6 +143,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
+            "e2e_encrypted",
         ]
         read_only_fields = fields
 
@@ -169,6 +171,8 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
+            "e2e_encrypted",
+            "encryption_chunk_size",
         ]
         read_only_fields = fields
 
@@ -181,7 +185,7 @@ class DraftAddFileSerializer(serializers.Serializer):
     draft is born as a side-effect of the first ``add-file`` call, and
     every subsequent drop passes back ``draft_id`` to bind to the same
     draft. Transfer-level metadata (title, sharing_mode, recipients,
-    expires_in_days, sensitive) is set only at finalize time, and populates
+    expires_in_days) is set only at finalize time, and populates
     the freshly-created ``Transfer`` there — see ``TransferFinalizeSerializer``.
 
     Two attach modes coexist: browser-side multipart upload (no
@@ -192,16 +196,34 @@ class DraftAddFileSerializer(serializers.Serializer):
     Per-file size is checked here; cumulative limits (file count, total
     draft size) live in the viewset because they depend on what the target
     draft already holds.
+
+    ``e2e_encrypted`` + ``encryption_chunk_size`` flag the *whole draft* as
+    end-to-end encrypted. They're only honoured on the call that creates
+    the draft (``draft_id`` omitted); subsequent add-file calls ignore
+    them, since the mode is fixed once any file has landed. ``plaintext_size``
+    is per-file metadata — required when E2E so the recipient's Service Worker
+    can compute ``Content-Length`` for the streamed download.
     """
 
     draft_id = serializers.UUIDField(required=False, allow_null=True)
     filename = serializers.CharField(max_length=255, required=True)
+    # ``size`` is the size of what will land in S3 — ciphertext for E2E,
+    # plaintext otherwise. The frontend computes the ciphertext expansion
+    # before declaring; the head_object check at complete-upload validates
+    # against this value as-is.
     size = serializers.IntegerField(min_value=1, required=True)
+    plaintext_size = serializers.IntegerField(
+        min_value=1, required=False, allow_null=True, default=None
+    )
     mime_type = serializers.CharField(
         max_length=255, required=False, allow_blank=True, default=""
     )
     source_url = serializers.URLField(
         max_length=2048, required=False, allow_blank=True, default=""
+    )
+    e2e_encrypted = serializers.BooleanField(required=False, default=False)
+    encryption_chunk_size = serializers.IntegerField(
+        min_value=1, required=False, allow_null=True, default=None
     )
 
     def validate_size(self, value):
@@ -211,6 +233,52 @@ class DraftAddFileSerializer(serializers.Serializer):
                 f"File exceeds maximum size of {max_go} Go."
             )
         return value
+
+    def validate(self, attrs):
+        if attrs.get("e2e_encrypted"):
+            if not attrs.get("encryption_chunk_size"):
+                raise serializers.ValidationError(
+                    {
+                        "encryption_chunk_size": (
+                            "Required when e2e_encrypted is true."
+                        )
+                    }
+                )
+            if not attrs.get("plaintext_size"):
+                raise serializers.ValidationError(
+                    {"plaintext_size": "Required when e2e_encrypted is true."}
+                )
+            # Drive import + E2E doesn't make sense — the bytes are fetched
+            # server-side and we wouldn't have a key to encrypt with. The
+            # frontend hides the Drive button when E2E is on; this is a
+            # belt-and-suspenders.
+            if attrs.get("source_url"):
+                raise serializers.ValidationError(
+                    {
+                        "source_url": (
+                            "Drive import is not supported for E2E-encrypted "
+                            "transfers."
+                        )
+                    }
+                )
+        else:
+            # encryption_chunk_size lands on the draft and propagates to the
+            # Transfer at finalize; plaintext_size lands on the file row.
+            # Accepting non-null values when E2E is off would let a client
+            # store metadata that contradicts the bytes actually in S3.
+            if attrs.get("encryption_chunk_size") is not None:
+                raise serializers.ValidationError(
+                    {
+                        "encryption_chunk_size": (
+                            "Only allowed when e2e_encrypted is true."
+                        )
+                    }
+                )
+            if attrs.get("plaintext_size") is not None:
+                raise serializers.ValidationError(
+                    {"plaintext_size": "Only allowed when e2e_encrypted is true."}
+                )
+        return attrs
 
 
 class DraftFileStateSerializer(serializers.ModelSerializer):
@@ -295,6 +363,17 @@ class DraftFinalizeSerializer(serializers.Serializer):
     # delete + status DEACTIVATED) once every file has been downloaded at
     # least once.
     auto_archive_on_download = serializers.BooleanField(required=False, default=False)
+    # E2E + email mode only: the URL-safe base64 of the decryption key the
+    # browser generated. The backend hands it straight to the email task as
+    # a task kwarg and never writes it to the database — it transits Redis
+    # for the few seconds the task needs to render the email and then is
+    # gone. WARNING: this is a deliberate, scoped relaxation of "the key
+    # never reaches our infra". The email itself carries the full link
+    # with fragment to the recipients, so every SMTP / mailbox provider in
+    # the chain sees the key too. For air-gapped E2E, use link mode.
+    key_fragment = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=128
+    )
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -306,6 +385,14 @@ class DraftFinalizeSerializer(serializers.Serializer):
         if mode == SharingMode.LINK and recipients:
             raise serializers.ValidationError(
                 {"recipients": "Recipients are not allowed in link mode."}
+            )
+        # key_fragment only makes sense in email mode: in link mode the
+        # browser owns the fragment and never posts it to us. Rejecting it
+        # here prevents a client from leaking the key to our backend by
+        # mistake in link mode.
+        if mode != SharingMode.EMAIL and attrs.get("key_fragment"):
+            raise serializers.ValidationError(
+                {"key_fragment": "Only allowed in email mode."}
             )
         return attrs
 
@@ -343,7 +430,14 @@ class DraftCompleteUploadSerializer(serializers.Serializer):
 class DownloadTransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
-        fields = ["id", "filename", "size", "mime_type", "scan_status"]
+        fields = [
+            "id",
+            "filename",
+            "size",
+            "plaintext_size",
+            "mime_type",
+            "scan_status",
+        ]
         read_only_fields = fields
 
 
@@ -368,6 +462,8 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "is_owner",
             "sharing_mode",
             "auto_archive_on_download",
+            "e2e_encrypted",
+            "encryption_chunk_size",
         ]
         read_only_fields = fields
 

@@ -251,6 +251,21 @@ class Transfer(BaseModel):
         "through every recipient (whether their delivery succeeded or not). "
         "The frontend polls this to know when to leave the 'sending…' state.",
     )
+    # End-to-end encryption — when true, file bytes in S3 are AES-GCM
+    # ciphertext, the key was generated client-side and lives only in the
+    # download URL fragment (never sent to us). Antivirus scan is skipped
+    # (we can't scan what we can't read). The backend treats encrypted bytes
+    # as opaque; chunk size + per-file plaintext size are persisted because
+    # the recipient's Service Worker needs them to decrypt + set
+    # Content-Length, but neither lets us read the bytes.
+    e2e_encrypted = models.BooleanField(default=False)
+    encryption_chunk_size = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Plaintext bytes per crypto chunk; ciphertext part on S3 "
+        "is this + 28 bytes (12-byte IV + 16-byte GCM tag). Null when the "
+        "transfer is not E2E-encrypted.",
+    )
 
     class Meta:
         db_table = "core_transfer"
@@ -366,6 +381,12 @@ class TransferDraft(BaseModel):
         on_delete=models.CASCADE,
         related_name="drafts",
     )
+    # Mirror of the corresponding fields on Transfer — set on the first
+    # add-file call and copied over at finalize. Held on the draft so the
+    # complete-upload path can decide whether to skip the scan without
+    # waiting for finalize.
+    e2e_encrypted = models.BooleanField(default=False)
+    encryption_chunk_size = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "core_transfer_draft"
@@ -399,7 +420,16 @@ class TransferFile(BaseModel):
         blank=True,
     )
     filename = models.CharField(max_length=255)
+    # Size of the bytes that land in S3. For E2E transfers this is the
+    # ciphertext size (plaintext + chunk_count * 28-byte GCM overhead); the
+    # plaintext size for UI display lives in ``plaintext_size``.
     size = models.PositiveBigIntegerField()
+    plaintext_size = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Decoded file size before encryption. Null when the parent "
+        "transfer is not E2E-encrypted — UIs should fall back to ``size``.",
+    )
     mime_type = models.CharField(max_length=255, blank=True, default="")
     s3_key = models.CharField(max_length=512)
 

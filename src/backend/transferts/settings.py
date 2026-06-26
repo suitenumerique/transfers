@@ -651,14 +651,6 @@ class Development(Base):
 
     SESSION_COOKIE_NAME = "transferts_sessionid"
 
-    # Dev-only switch: mount a GET endpoint that hands back a session
-    # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined
-    # only in Development so production can't even read the flag from an
-    # attacker-controlled env.
-    DEV_AUTH_BYPASS = values.BooleanValue(
-        default=False, environ_name="DEV_AUTH_BYPASS", environ_prefix=None
-    )
-
     USE_SWAGGER = True
     SESSION_CACHE_ALIAS = "session"
 

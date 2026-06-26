@@ -3,7 +3,14 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 const eslintConfig = defineConfig([
-  globalIgnores(["dist/**", "src/routes.gen.ts", "scripts/**"]),
+  globalIgnores([
+    "dist/**",
+    "src/routes.gen.ts",
+    "scripts/**",
+    // Leftover from the pre-Vite Next.js dev build; the directory predates
+    // the migration to Vite + TanStack Router and is not regenerated.
+    ".next/**",
+  ]),
   ...tseslint.configs.recommended,
   reactHooks.configs.flat.recommended,
   {
