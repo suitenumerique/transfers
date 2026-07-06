@@ -234,9 +234,13 @@ class DownloadFileView(APIView):
         # not a 302 — a cross-origin redirect from fetch() strips
         # credentials and trips CORS preflight quirks on Firefox. Opt into
         # JSON with ``?as=json`` so the SW can do a fresh anonymous GET to
-        # the presigned URL on its own.
+        # the presigned URL on its own. The body carries a short-lived but
+        # download-credential-equivalent URL, so forbid every cache layer
+        # (browser, CDN, intermediate proxy) from retaining it.
         if request.query_params.get("as") == "json":
-            return Response({"url": url})
+            response = Response({"url": url})
+            response["Cache-Control"] = "no-store"
+            return response
 
         # Redirect the browser straight to S3 so the download bytes never
         # transit through a Django worker. The presigned URL's short expiry

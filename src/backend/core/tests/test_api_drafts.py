@@ -686,16 +686,28 @@ class TestDraftE2eEncryption:
     CHUNK = 25 * 1024 * 1024
     OVERHEAD = 28  # IV + GCM tag per chunk
 
+    def _ciphertext_size(self, plaintext_size: int, chunk_size: int) -> int:
+        """Mirror of the frontend's encrypted-size math: ceil(plaintext/chunk)
+        crypto chunks, each adding OVERHEAD bytes. Used by the helper below
+        so multi-chunk add-file calls declare a ``size`` consistent with the
+        chunk size the backend imposes."""
+        if plaintext_size <= 0:
+            return self.OVERHEAD
+        chunks = -(-plaintext_size // chunk_size)  # ceil division
+        return plaintext_size + chunks * self.OVERHEAD
+
     def _add_e2e_file(
         self, client, *, draft_id=None, plaintext_size=1000, filename="a.bin"
     ):
-        ciphertext_size = plaintext_size + self.OVERHEAD  # single chunk
+        # ``encryption_chunk_size`` is no longer a request body field — the
+        # backend imposes ``settings.TRANSFER_CHUNK_SIZE`` (== ``self.CHUNK``
+        # in this test setup) on E2E drafts. The client only declares the
+        # ciphertext ``size`` it expects to land in S3.
         body = {
             "filename": filename,
-            "size": ciphertext_size,
+            "size": self._ciphertext_size(plaintext_size, self.CHUNK),
             "plaintext_size": plaintext_size,
             "e2e_encrypted": True,
-            "encryption_chunk_size": self.CHUNK,
         }
         if draft_id is not None:
             body["draft_id"] = str(draft_id)
@@ -738,28 +750,11 @@ class TestDraftE2eEncryption:
                 "filename": "a.bin",
                 "size": 2048,
                 "e2e_encrypted": True,
-                "encryption_chunk_size": self.CHUNK,
             },
             format="json",
         )
         assert resp.status_code == 400
         assert "plaintext_size" in resp.data
-
-    def test_rejects_e2e_without_chunk_size(
-        self, patched_s3, authenticated_client
-    ):
-        resp = authenticated_client.post(
-            ADD_FILE_URL,
-            {
-                "filename": "a.bin",
-                "size": 2048,
-                "plaintext_size": 1024,
-                "e2e_encrypted": True,
-            },
-            format="json",
-        )
-        assert resp.status_code == 400
-        assert "encryption_chunk_size" in resp.data
 
     def test_rejects_e2e_with_drive_source(
         self, patched_s3, authenticated_client
@@ -771,10 +766,9 @@ class TestDraftE2eEncryption:
             ADD_FILE_URL,
             {
                 "filename": "a.bin",
-                "size": 2048,
+                "size": self._ciphertext_size(1024, self.CHUNK),
                 "plaintext_size": 1024,
                 "e2e_encrypted": True,
-                "encryption_chunk_size": self.CHUNK,
                 "source_url": "https://drive.example.com/x",
             },
             format="json",
@@ -800,45 +794,62 @@ class TestDraftE2eEncryption:
         assert resp.status_code == 400
         assert "plaintext_size" in resp.data
 
-    def test_rejects_chunk_size_when_not_e2e(
+    def test_multi_chunk_file_accepted(self, patched_s3, authenticated_client):
+        # A file larger than one chunk produces ceil(N/chunk) crypto chunks,
+        # each adding OVERHEAD bytes. Exercise the most off-by-one-prone
+        # case: chunk+1 plaintext bytes ⇒ 2 chunks.
+        plaintext = self.CHUNK + 1
+        resp = self._add_e2e_file(authenticated_client, plaintext_size=plaintext)
+        assert resp.status_code == 201, resp.data
+
+        tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
+        assert tf.plaintext_size == plaintext
+        # 2 chunks ⇒ plaintext + 2 * OVERHEAD bytes of ciphertext land in S3.
+        assert tf.size == plaintext + 2 * self.OVERHEAD
+
+    def test_rejects_size_mismatch_against_e2e_params(
         self, patched_s3, authenticated_client
     ):
-        # Same reasoning for encryption_chunk_size: it propagates to the
-        # Transfer at finalize, so accepting it without E2E would set a
-        # value that has no bearing on what S3 actually holds.
+        # Lying about ``size`` against the canonical chunk size would let a
+        # client poison the file row so the recipient SW computes
+        # decryption boundaries that don't match the bytes in S3. The
+        # serializer recomputes the expected size from
+        # settings.TRANSFER_CHUNK_SIZE and rejects any divergence.
+        plaintext = 1024
+        consistent = self._ciphertext_size(plaintext, self.CHUNK)
         resp = authenticated_client.post(
             ADD_FILE_URL,
             {
                 "filename": "a.bin",
-                "size": 2048,
-                "encryption_chunk_size": self.CHUNK,
+                "size": consistent + 1,  # off by one — should be rejected
+                "plaintext_size": plaintext,
+                "e2e_encrypted": True,
             },
             format="json",
         )
         assert resp.status_code == 400
-        assert "encryption_chunk_size" in resp.data
+        assert "size" in resp.data
 
-    def test_rejects_chunk_size_mismatch_on_followup(
+    def test_rejects_source_url_on_followup_to_e2e_draft(
         self, patched_s3, authenticated_client
     ):
-        # The recipient's SW assumes one constant chunk size across all
-        # files. A follow-up call that ships a different value silently
-        # de-syncs decryption boundaries, so the backend refuses it.
+        # The first add-file fixes the draft as E2E. A follow-up that ships
+        # ``source_url`` must be rejected — Drive imports land plaintext
+        # bytes server-side and would corrupt an encrypted transfer. Two
+        # checks gate this in practice: the e2e_encrypted mode-lock fires
+        # first when the follow-up omits the flag (the realistic shape),
+        # and the source_url-vs-draft-flag guard in the viewset is the
+        # defense-in-depth backstop. Accept either error key.
         initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        resp = authenticated_client.post(
-            ADD_FILE_URL,
-            {
-                "draft_id": initiate.data["draft_id"],
-                "filename": "b.bin",
-                "size": 2048 + self.OVERHEAD,
-                "plaintext_size": 2048,
-                "e2e_encrypted": True,
-                "encryption_chunk_size": self.CHUNK + 1,
-            },
-            format="json",
+        resp = _add_file(
+            authenticated_client,
+            draft_id=initiate.data["draft_id"],
+            filename="b.bin",
+            size=2048,
+            source_url="https://drive.example.com/x",
         )
         assert resp.status_code == 400
-        assert "encryption_chunk_size" in resp.data
+        assert "source_url" in resp.data or "e2e_encrypted" in resp.data
 
     def test_complete_upload_skips_scan_on_e2e(
         self, patched_s3, authenticated_client, settings

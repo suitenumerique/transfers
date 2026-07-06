@@ -136,10 +136,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # (and per-file ≤ total by invariant).
                 # E2E params are honoured here only; subsequent add-file calls
                 # ignore them — the mode is locked the moment the draft exists.
+                # The chunk size is server-imposed (settings.TRANSFER_CHUNK_SIZE)
+                # so the recipient SW can never disagree with the encrypt path
+                # about decryption boundaries.
+                is_e2e = data.get("e2e_encrypted", False)
                 draft = models.TransferDraft.objects.create(
                     owner=request.user,
-                    e2e_encrypted=data.get("e2e_encrypted", False),
-                    encryption_chunk_size=data.get("encryption_chunk_size"),
+                    e2e_encrypted=is_e2e,
+                    encryption_chunk_size=(
+                        settings.TRANSFER_CHUNK_SIZE if is_e2e else None
+                    ),
                 )
             else:
                 draft = self._get_locked_draft(draft_id)
@@ -156,19 +162,18 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             )
                         }
                     )
-                # Same lock on chunk size: the recipient's SW computes part
-                # boundaries from one constant value across all files in the
-                # transfer. A follow-up call that ships a different value
-                # would silently de-sync the boundaries.
-                if (
-                    draft.e2e_encrypted
-                    and data["encryption_chunk_size"] != draft.encryption_chunk_size
-                ):
+                # Drive import lands plaintext bytes server-side, which would
+                # turn an E2E draft into a half-encrypted transfer the SW
+                # cannot decrypt. The serializer rejects ``source_url`` when
+                # ``e2e_encrypted`` is in the body, but follow-up calls drop
+                # that field (the mode is locked), so the gate must also live
+                # here, against the draft's stored flag.
+                if draft.e2e_encrypted and data.get("source_url"):
                     raise drf.exceptions.ValidationError(
                         {
-                            "encryption_chunk_size": (
-                                "Cannot change chunk size once a draft has "
-                                "been started."
+                            "source_url": (
+                                "Drive import is not supported for "
+                                "E2E-encrypted transfers."
                             )
                         }
                     )

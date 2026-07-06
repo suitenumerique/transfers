@@ -11,6 +11,7 @@ import {
   ensureE2eServiceWorker,
   registerE2eKey,
   streamingDownloadUrl,
+  unregisterE2eKey,
 } from "../upload/e2eServiceWorker";
 import { FileItem } from "./FileItem";
 
@@ -75,6 +76,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       // degradation but not a blocker for downloading.
     }
     let cancelled = false;
+    let registered = false;
     (async () => {
       try {
         const sw = await ensureE2eServiceWorker();
@@ -83,6 +85,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           return;
         }
         await registerE2eKey(sw, token, fragment, transfer.files, chunkSize);
+        registered = true;
         if (!cancelled) setE2eState("ready");
       } catch {
         if (!cancelled) setE2eState("error");
@@ -90,6 +93,11 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     })();
     return () => {
       cancelled = true;
+      // Best-effort: drop the key from the SW registry when the user
+      // navigates away. The SW would survive the page on its own and
+      // could be re-used for another transfer in the same tab, so leaving
+      // stale keys around is needless retention.
+      if (registered) unregisterE2eKey(token);
     };
   }, [transfer.e2e_encrypted, transfer.encryption_chunk_size, transfer.files, token]);
 

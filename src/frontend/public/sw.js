@@ -45,13 +45,27 @@ self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
   if (data.type === "e2e-register") {
-    void registerKey(data).then(() => {
-      // Acknowledge so the page knows it's safe to enable the download
-      // button (the SW is now ready to intercept).
-      if (event.source && "postMessage" in event.source) {
-        event.source.postMessage({ type: "e2e-register-ack", token: data.token });
-      }
-    });
+    // Always send back an ack — success or failure — so the page can
+    // resolve the in-flight handshake promise either way instead of
+    // hanging forever (e.g. malformed key bytes ⇒ importKey rejects).
+    void registerKey(data)
+      .then(() => {
+        if (event.source && "postMessage" in event.source) {
+          event.source.postMessage({
+            type: "e2e-register-ack",
+            token: data.token,
+          });
+        }
+      })
+      .catch((err) => {
+        if (event.source && "postMessage" in event.source) {
+          event.source.postMessage({
+            type: "e2e-register-error",
+            token: data.token,
+            message: err && err.message ? String(err.message) : "register failed",
+          });
+        }
+      });
   } else if (data.type === "e2e-unregister") {
     REGISTRY.delete(data.token);
   } else if (data.type === "e2e-ping") {
@@ -144,7 +158,7 @@ async function handleDownload(token, fileId) {
   }
 
   const decrypted = upstream.body.pipeThrough(
-    decryptStream(entry.key, meta.chunkSize, meta.plaintextSize),
+    decryptStream(entry.key, meta.chunkSize, meta.plaintextSize, fileId),
   );
 
   return new Response(decrypted, {
@@ -160,12 +174,16 @@ async function handleDownload(token, fileId) {
   });
 }
 
-function decryptStream(cryptoKey, chunkSize, plaintextSize) {
+function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
+  // Each chunk's AAD is `${fileId}:${partNumber}` and must match what the
+  // uploader bound the GCM tag to — see e2eCrypto.aadForChunk.
   const ciphertextChunkSize = chunkSize + OVERHEAD;
+  const encoder = new TextEncoder();
   let pending = new Uint8Array(0);
   let plaintextRemaining = plaintextSize;
+  let partNumber = 1;
 
   return new TransformStream({
     transform: async (chunk, controller) => {
@@ -182,9 +200,11 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize) {
       ) {
         const ct = pending.subarray(0, ciphertextChunkSize);
         pending = pending.slice(ciphertextChunkSize);
-        const plain = await decryptOne(cryptoKey, ct);
+        const aad = encoder.encode(fileId + ":" + partNumber);
+        const plain = await decryptOne(cryptoKey, ct, aad);
         controller.enqueue(plain);
         plaintextRemaining -= plain.length;
+        partNumber += 1;
       }
     },
     flush: async (controller) => {
@@ -206,7 +226,8 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize) {
           );
           return;
         }
-        const plain = await decryptOne(cryptoKey, pending);
+        const aad = encoder.encode(fileId + ":" + partNumber);
+        const plain = await decryptOne(cryptoKey, pending, aad);
         controller.enqueue(plain);
         plaintextRemaining -= plain.length;
       }
@@ -223,11 +244,11 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize) {
   });
 }
 
-async function decryptOne(key, ciphertextChunk) {
+async function decryptOne(key, ciphertextChunk, additionalData) {
   const iv = ciphertextChunk.subarray(0, IV_BYTES);
   const body = ciphertextChunk.subarray(IV_BYTES);
   const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv, additionalData },
     key,
     body,
   );

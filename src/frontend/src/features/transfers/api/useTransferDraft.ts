@@ -7,11 +7,12 @@ import type {
   SharingMode,
   TransferDetail,
 } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
 import {
+  aadForChunk,
   ciphertextSize,
   encryptChunk,
   generateTransferKey,
-  PLAINTEXT_CHUNK_SIZE,
 } from "../upload/e2eCrypto";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
@@ -191,6 +192,12 @@ interface ScanPendingResponse {
 
 export function useTransferDraft(): TransferDraftHandle {
   const queryClient = useQueryClient();
+  // Canonical chunk size for the whole upload + E2E pipeline. Pulled from
+  // /config/ so we can never disagree with the backend (which imposes its
+  // own ``settings.TRANSFER_CHUNK_SIZE`` on E2E drafts) about where one
+  // crypto chunk ends and the next begins.
+  const config = useConfig();
+  const chunkSizeFromConfig = config.TRANSFER_CHUNK_SIZE;
   const [draftId, setDraftId] = useState<string | null>(null);
   const [files, setFiles] = useState<DraftFile[]>([]);
   const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
@@ -318,12 +325,18 @@ export function useTransferDraft(): TransferDraftHandle {
     // The crypto chunk size MUST equal the multipart chunk size — one S3
     // part = one self-contained AES-GCM chunk (IV ‖ ciphertext ‖ tag), so
     // the recipient's SW can decrypt sequentially without any boundary
-    // metadata beyond chunk_size + plaintext_size.
+    // metadata beyond chunk_size + plaintext_size. The AAD binds each
+    // chunk to its (file, part) position, so storage tampering cannot
+    // swap or reorder chunks without breaking GCM tag verification.
     const e2eKey = e2eEncryptedRef.current ? e2eKeyRef.current : null;
     const transformChunk = e2eKey
-      ? async (blob: Blob) => {
+      ? async (blob: Blob, partNumber: number) => {
           const buf = await blob.arrayBuffer();
-          const ct = await encryptChunk(e2eKey, buf);
+          const ct = await encryptChunk(
+            e2eKey,
+            buf,
+            aadForChunk(backendId, partNumber),
+          );
           // Cast: Blob's `BlobPart` widened to `Uint8Array<ArrayBuffer>`
           // in current lib.dom.d.ts; our ct is `Uint8Array<ArrayBufferLike>`
           // by inference, identical at runtime.
@@ -588,7 +601,7 @@ export function useTransferDraft(): TransferDraftHandle {
           setE2eKeyFragment(fragment);
         }
         const declaredSize = e2eOn
-          ? ciphertextSize(draftFile.size, PLAINTEXT_CHUNK_SIZE)
+          ? ciphertextSize(draftFile.size, chunkSizeFromConfig)
           : draftFile.size;
         const resp = await apiFetch<AddFileResponse>(
           "/drafts/add-file/",
@@ -602,12 +615,13 @@ export function useTransferDraft(): TransferDraftHandle {
               ...(draftFile.sourceUrl
                 ? { source_url: draftFile.sourceUrl }
                 : {}),
-              // E2E params only matter on the call that births the draft;
-              // the backend ignores them on follow-ups (the mode is locked).
+              // E2E flag only matters on the call that births the draft;
+              // follow-ups omit it (the mode is locked on the draft row).
+              // The chunk size is server-imposed, not negotiated, so we
+              // don't ship it either.
               ...(e2eOn
                 ? {
                     e2e_encrypted: true,
-                    encryption_chunk_size: PLAINTEXT_CHUNK_SIZE,
                     plaintext_size: draftFile.size,
                   }
                 : {}),
@@ -688,7 +702,7 @@ export function useTransferDraft(): TransferDraftHandle {
         throw err;
       }
     },
-    [updateFile],
+    [updateFile, chunkSizeFromConfig],
   );
 
   const startRegistration = useCallback(

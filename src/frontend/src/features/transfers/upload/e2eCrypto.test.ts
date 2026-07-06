@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CRYPTO_OVERHEAD_PER_CHUNK,
+  aadForChunk,
   base64UrlDecode,
   base64UrlEncode,
   ciphertextSize,
@@ -22,51 +23,70 @@ import {
   importTransferKey,
 } from "./e2eCrypto";
 
+const AAD = aadForChunk("file-0", 1);
+
 describe("e2eCrypto", () => {
   it("encrypts and decrypts a chunk back to the original plaintext", async () => {
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    const ct = await encryptChunk(cryptoKey, plain);
-    const dec = await decryptChunk(cryptoKey, ct);
+    const ct = await encryptChunk(cryptoKey, plain, AAD);
+    const dec = await decryptChunk(cryptoKey, ct, AAD);
     expect(Array.from(dec)).toEqual(Array.from(plain));
   });
 
   it("produces ciphertext exactly OVERHEAD bytes larger than plaintext", async () => {
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array(1024);
-    const ct = await encryptChunk(cryptoKey, plain);
+    const ct = await encryptChunk(cryptoKey, plain, AAD);
     expect(ct.length).toBe(plain.length + CRYPTO_OVERHEAD_PER_CHUNK);
   });
 
   it("uses a fresh IV per call so identical plaintext gives different ciphertext", async () => {
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array(64);
-    const a = await encryptChunk(cryptoKey, plain);
-    const b = await encryptChunk(cryptoKey, plain);
+    const a = await encryptChunk(cryptoKey, plain, AAD);
+    const b = await encryptChunk(cryptoKey, plain, AAD);
     expect(Array.from(a)).not.toEqual(Array.from(b));
   });
 
   it("rejects a ciphertext whose tag was tampered with", async () => {
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array([1, 2, 3]);
-    const ct = await encryptChunk(cryptoKey, plain);
+    const ct = await encryptChunk(cryptoKey, plain, AAD);
     ct[ct.length - 1] ^= 1; // flip a bit in the tag
-    await expect(decryptChunk(cryptoKey, ct)).rejects.toBeDefined();
+    await expect(decryptChunk(cryptoKey, ct, AAD)).rejects.toBeDefined();
+  });
+
+  it("rejects a chunk whose AAD does not match the encrypt-side binding", async () => {
+    // The chunk's tag was computed with the file-0/part-1 binding; an
+    // attacker who copies a valid chunk from another file or position
+    // sends a tag that no longer verifies against the recipient's AAD.
+    const { cryptoKey } = await generateTransferKey();
+    const plain = new Uint8Array([1, 2, 3]);
+    const ct = await encryptChunk(cryptoKey, plain, aadForChunk("file-A", 1));
+    await expect(
+      decryptChunk(cryptoKey, ct, aadForChunk("file-A", 2)),
+    ).rejects.toBeDefined();
+    await expect(
+      decryptChunk(cryptoKey, ct, aadForChunk("file-B", 1)),
+    ).rejects.toBeDefined();
   });
 
   it("imports an exported key fragment and decrypts what it encrypted", async () => {
     const { cryptoKey, fragment } = await generateTransferKey();
     const plain = new Uint8Array([42, 43, 44]);
-    const ct = await encryptChunk(cryptoKey, plain);
+    const ct = await encryptChunk(cryptoKey, plain, AAD);
 
     // Recipient flow: rebuild the key from the URL fragment.
     const recovered = await importTransferKey(fragment);
-    const dec = await decryptChunk(recovered, ct);
+    const dec = await decryptChunk(recovered, ct, AAD);
     expect(Array.from(dec)).toEqual(Array.from(plain));
   });
 
   it("ciphertextSize counts one overhead per chunk including the last partial one", () => {
     const chunk = 1024;
+    // Empty plaintext still produces one auth'd chunk worth of overhead.
+    expect(ciphertextSize(0, chunk)).toBe(CRYPTO_OVERHEAD_PER_CHUNK);
     // Exact multiple: 3 chunks
     expect(ciphertextSize(3 * chunk, chunk)).toBe(
       3 * chunk + 3 * CRYPTO_OVERHEAD_PER_CHUNK,

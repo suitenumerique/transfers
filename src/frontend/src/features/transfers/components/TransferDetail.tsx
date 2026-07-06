@@ -398,7 +398,12 @@ export function TransferDetail({
 
       {isActive && (
         <div className="transfer-detail__actions">
-          {isPublicLink ? (
+          {isPublicLink && downloadUrl ? (
+            // E2E link-mode transfers have no downloadUrl on this page (the
+            // working link only existed on the success screen, with the key
+            // fragment). The button would be visible but its onClick would
+            // no-op — hide it entirely so the UI stops promising an action
+            // it can't deliver.
             <Button
               color="brand"
               icon={copied ? <Checkmark /> : <Copy />}
