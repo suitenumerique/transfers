@@ -8,7 +8,7 @@ import type { ScanStatus, TransferDetail as TransferDetailType } from "@/feature
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
-import { downloadFile } from "../api/useDownload";
+import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
@@ -98,9 +98,7 @@ export function TransferDetail({
   // finalize (via the navigation hash). We don't persist it anywhere, so
   // the detail page can never reconstruct it. For non-E2E the bare token
   // is enough — same URL the recipient receives.
-  const baseUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
+  const baseUrl = transferBaseUrl(transfer.public_token);
   const downloadUrl = transfer.e2e_encrypted ? "" : baseUrl;
   const isPublicLink = transfer.sharing_mode === "link";
   // For E2E, ``size`` is the ciphertext sitting in S3. The user-facing

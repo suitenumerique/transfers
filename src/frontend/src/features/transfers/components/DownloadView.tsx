@@ -24,6 +24,17 @@ interface DownloadViewProps {
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  // Snapshot the fragment once, at mount, before the effect below strips it
+  // from the visible URL. The effect can re-run when its deps change (a new
+  // ``transfer.files`` reference from a parent refetch is enough), and by
+  // then window.location.hash is empty — reading it again would trip the
+  // "no fragment" bail-out, run the cleanup (unregisterE2eKey) on the way
+  // out and leave the SW without a key.
+  const keyFragmentRef = useRef<string>(
+    typeof window !== "undefined"
+      ? window.location.hash.replace(/^#/, "")
+      : "",
+  );
   // E2E plumbing state: extract the key from the URL fragment and register
   // it with the decryption SW before enabling the download buttons. Four
   // outcomes: `ready` (good to go), `loading` (SW handshake in flight),
@@ -35,8 +46,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   const [e2eState, setE2eState] = useState<E2eState>(() => {
     if (!transfer.e2e_encrypted) return "ready";
     if (typeof window === "undefined") return "loading";
-    const fragment = window.location.hash.replace(/^#/, "");
-    if (!fragment) return "no-key";
+    if (!keyFragmentRef.current) return "no-key";
     if (!transfer.encryption_chunk_size) return "error";
     return "loading";
   });
@@ -57,7 +67,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
 
   useEffect(() => {
     if (!transfer.e2e_encrypted) return;
-    const fragment = window.location.hash.replace(/^#/, "");
+    const fragment = keyFragmentRef.current;
     const chunkSize = transfer.encryption_chunk_size;
     // The initial-state initializer already mapped a missing fragment to
     // "no-key" and a missing chunk size to "error"; bail before touching
@@ -69,7 +79,13 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     // work — the only thing the user loses by stripping is the ability to
     // recover the key by refreshing the tab.
     try {
-      window.history.replaceState(null, "", window.location.pathname);
+      // Strip the fragment but keep the query string (analytics utm=…,
+      // debug flags, or router state can all ride on ``search``).
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
     } catch {
       // replaceState can throw under exotic sandboxing (about:blank parents,
       // some embedded webviews); the visible URL stays as-is, which is a

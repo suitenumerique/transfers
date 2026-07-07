@@ -456,13 +456,18 @@ def delete_pending_transfer_files_task():
 
 @shared_task
 def send_recipient_invitations_task(transfer_id, key_fragment=""):
-    """Send invitation emails to all recipients of an email-mode transfer.
+    """Send invitation emails to every recipient of ``transfer_id`` that
+    doesn't have an ``email_sent_at`` yet.
 
-    ``key_fragment`` is the URL-safe base64 of the E2E decryption key, passed
-    through as a task kwarg when the transfer is encrypted. It's appended to
-    the download URL inside the email body so the recipient can decrypt
-    client-side. Nothing about it is persisted — once this task returns, the
-    key only exists in the recipients' inboxes.
+    ``key_fragment`` is the URL-safe base64 of the E2E decryption key for
+    email-mode E2E transfers, appended to the download URL in the email
+    body so the recipient can decrypt client-side. It rides as a Celery
+    kwarg and thus transits the broker for the seconds the message sits
+    in Redis before a worker picks it up. That's an accepted, documented
+    tradeoff of email mode: the key is already going through SMTP relays
+    and lands in the recipient's mailbox, so the broker hop is one more
+    transient touchpoint of the same value. For an air-gapped path, use
+    link mode. Nothing about the fragment is persisted server-side.
     """
     try:
         transfer = Transfer.objects.select_related("owner").get(id=transfer_id)

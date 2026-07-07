@@ -22,7 +22,13 @@ const TransferConfirmPage = () => {
   useEffect(() => {
     if (!e2eFragment) return;
     try {
-      window.history.replaceState(null, "", window.location.pathname);
+      // Strip the fragment but keep the query string (analytics utm=…,
+      // debug flags, or router state can all ride on ``search``).
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
     } catch {
       // replaceState can throw in exotic sandboxes; the URL stays as-is
       // but the component already has the fragment in state.

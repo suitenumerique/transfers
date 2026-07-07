@@ -2,6 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch, apiUrl } from "@/features/api/client";
 import type { DownloadTransferFull } from "@/features/api/types";
 
+// Frontend origin + /t/<token> — the canonical shape of a recipient link,
+// without the E2E fragment. Empty string when the transfer has no public
+// token yet (never persisted), so consumers can boolean-check it.
+export function transferBaseUrl(publicToken: string | null | undefined): string {
+  return publicToken ? `${window.location.origin}/t/${publicToken}` : "";
+}
+
 export function useDownloadTransfer(token: string | undefined) {
   return useQuery({
     queryKey: ["downloads", token],

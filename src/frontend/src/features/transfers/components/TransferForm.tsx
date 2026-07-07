@@ -880,6 +880,14 @@ export function TransferForm() {
             </LabelledBox>
           )}
 
+          {sharingMode === "email" && draft.e2eEncrypted && (
+            <Alert type={VariantType.WARNING}>
+              {t(
+                "Sending an end-to-end encrypted transfer by email is less secure than link mode. The decryption key travels inside the email itself and is visible to every mail server on the way (our backend, mail queues, SMTP relays, recipient's mailbox provider). For a stricter guarantee, switch to link mode and share the link over a trusted channel (Signal, in person, etc.).",
+              )}
+            </Alert>
+          )}
+
           <Input
             label={t("Title")}
             value={title}

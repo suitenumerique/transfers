@@ -298,14 +298,13 @@ class DraftAddFileSerializer(serializers.Serializer):
                         )
                     }
                 )
-        else:
+        elif attrs.get("plaintext_size") is not None:
             # plaintext_size lands on the file row when E2E is on. Accepting
             # it on a plaintext draft would let a client store metadata that
             # contradicts the bytes actually in S3.
-            if attrs.get("plaintext_size") is not None:
-                raise serializers.ValidationError(
-                    {"plaintext_size": "Only allowed when e2e_encrypted is true."}
-                )
+            raise serializers.ValidationError(
+                {"plaintext_size": "Only allowed when e2e_encrypted is true."}
+            )
         return attrs
 
 

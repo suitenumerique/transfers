@@ -575,9 +575,11 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             if transfer.sharing_mode == SharingMode.EMAIL:
                 from core.tasks import send_recipient_invitations_task
 
-                # E2E + email: the key fragment travels via Celery kwarg
-                # to the send task. Not persisted on Transfer — once emails
-                # are sent it lives only in the recipients' inboxes.
+                # E2E + email: the key fragment rides as a task kwarg so
+                # the send stays async. It transits Redis for the seconds
+                # Celery holds the message; not persisted on Transfer.
+                # Accepted tradeoff, mirrored by the UI warning on the
+                # Email tab (``TransferForm``'s E2E-email Alert).
                 key_fragment = (
                     metadata.get("key_fragment", "") if transfer.e2e_encrypted else ""
                 )

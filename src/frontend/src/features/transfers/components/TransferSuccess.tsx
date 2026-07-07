@@ -4,6 +4,7 @@ import { Button, Input, Tooltip } from "@gouvfr-lasuite/cunningham-react";
 import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
+import { transferBaseUrl } from "../api/useDownload";
 
 function daysUntil(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
@@ -28,9 +29,7 @@ export function TransferSuccess({
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
-  const baseUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
+  const baseUrl = transferBaseUrl(transfer.public_token);
   const downloadUrl =
     baseUrl && (!transfer.e2e_encrypted || e2eFragment)
       ? transfer.e2e_encrypted

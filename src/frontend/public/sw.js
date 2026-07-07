@@ -77,7 +77,14 @@ self.addEventListener("message", (event) => {
 });
 
 async function registerKey({ token, keyBytes, files, apiOrigin }) {
-  if (!token || !(keyBytes instanceof Uint8Array) || !Array.isArray(files)) return;
+  // Throw (don't silently return) on a malformed payload — the message
+  // handler routes rejections to `e2e-register-error`, so the page's
+  // handshake promise rejects and DownloadView flips to its error
+  // state. Silently returning here would let the same handler send
+  // back an `e2e-register-ack` even though no entry was recorded.
+  if (!token || !(keyBytes instanceof Uint8Array) || !Array.isArray(files)) {
+    throw new Error("Malformed e2e-register payload");
+  }
   const key = await crypto.subtle.importKey(
     "raw",
     keyBytes,
