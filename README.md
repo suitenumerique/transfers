@@ -6,7 +6,7 @@ Initially forked from [suitenumerique/messages](https://github.com/suitenumeriqu
 
 ## Stack
 
-- **Backend**: Django + DRF, PostgreSQL, Celery/Redis, S3 (RustFS in dev)
+- **Backend**: Django + DRF, PostgreSQL, Dramatiq/Redis, S3 (RustFS in dev)
 - **Frontend**: React (Vite + TanStack Router)
 - **Auth**: ProConnect via OIDC (a local Keycloak stands in for it in dev)
 
@@ -19,14 +19,16 @@ make bootstrap
 Services:
 - Frontend: http://localhost:8980
 - API: http://localhost:8981
-- Admin: http://localhost:8981/admin
+- Admin: http://localhost:8981/admin (Django superuser: `admin@admin.local` / `admin`)
 - Mail: http://localhost:8984
 - S3 Console: http://localhost:8987
-- Keycloak (dev OIDC): http://localhost:8902 (`admin` / `admin`)
+- Keycloak (dev OIDC): http://localhost:8983 (console admin: `admin` / `admin`)
 
 **Signing in:** open the frontend, click _Sign in_, and use a seeded test user
-(`agent@collectivite.fr` / `transferts`). Dev runs the real OIDC flow against a
-local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/authentication.md).
+(`user1@example.local` / `user1`; also `user2` and `user3`, each with its username
+as password). `user1` is also a Django superuser, so it can reach `/admin` too.
+Dev runs the real OIDC flow against a local Keycloak — no ProConnect needed.
+See [`docs/authentication.md`](docs/authentication.md).
 
 ## Configurable limits
 
@@ -59,15 +61,25 @@ S3 / storage:
 
 For IAM permissions required on the bucket, see [`docs/S3.md`](docs/S3.md#iam-permissions-on-the-bucket).
 
-## Background jobs (Celery beat)
+## Background jobs (Dramatiq)
 
-Schedule is defined in `src/backend/transferts/celery_app.py`.
+Tasks run on [Dramatiq](https://dramatiq.io/) with the custom
+[`dramatiq-redis-streams`](https://github.com/sylvinus/dramatiq-redis-streams)
+broker (requires Redis ≥ 7). The worker (`python worker.py`) consumes tasks and
+also runs the periodic scheduler as a forked, leader-elected sidecar — no
+separate scheduler process/container. Scale the `worker` to N instances and one
+schedules while the rest stand by (Redis-lock failover); see
+`src/backend/transferts/scheduler.py`. The schedule lives on `@cron_task(...)`
+decorators in `src/backend/core/tasks.py`. Queue state is visible in the admin at
+`/admin/worker-dashboard/` (staff login).
 
 | Task | Cadence | Effect |
 |---|---|---|
-| `expire_transfers_task` | hourly (3600 s) | Flips `ACTIVE → EXPIRED` past `expires_at`, deletes S3 files |
-| `cleanup_abandoned_drafts_task` | every 6 h (21600 s) | Drops drafts older than 24 h |
-| `sweep_orphan_s3_storage_task` | daily (86400 s) | Safety net — should report 0; non-zero signals a leak in a per-row path |
+| `deactivate_expired_transfers_task` | hourly | Flips `ACTIVE → EXPIRED` past `expires_at` |
+| `delete_pending_transfer_files_task` | hourly | Purges S3 files once the grace period elapses |
+| `reap_stale_pending_scans_task` | every 5 min | Re-submits scans stuck in `PENDING` |
+| `cleanup_abandoned_drafts_task` | every 6 h | Drops drafts older than 24 h |
+| `sweep_orphan_s3_storage_task` | daily | Safety net — should report 0; non-zero signals a leak in a per-row path |
 | `send_recipient_invitations_task` | on-demand | Triggered by `finalize` (email mode) and `resend` |
 
 ## Reverse proxy and `X-Forwarded-For`

@@ -2,7 +2,7 @@
 rows and delete/abort what no row points to.
 
 Single source of truth for the two-pass sweep — used by the manual
-operator command (``clean_orphan_s3_objects``) and by the daily Celery
+operator command (``clean_orphan_s3_objects``) and by the daily scheduled
 task ``sweep_orphan_s3_storage_task``.
 """
 

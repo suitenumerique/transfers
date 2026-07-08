@@ -1,7 +1,7 @@
 # Transferts backend
 
 Django + DRF service that owns the data model, API, S3 storage,
-authentication and Celery jobs. Single Django app: `core`.
+authentication and background (Dramatiq) jobs. Single Django app: `core`.
 
 ## Layout
 
@@ -26,7 +26,7 @@ core/
 ├── factories.py       # Test/seed factories
 ├── middlewares.py     # XForwardedForMiddleware
 ├── models.py          # TransferDraft, Transfer, TransferFile, TransferEvent, TransferRecipient, User
-├── tasks.py           # Celery tasks
+├── tasks.py           # Dramatiq tasks (@register_task / @cron_task)
 └── urls.py            # API routing
 ```
 
@@ -68,15 +68,17 @@ All paths are prefixed by `/api/{API_VERSION}/` (e.g. `/api/v1.0/`).
 - `services/s3.py` — boto3 client + multipart upload helpers. Two-tier
   API (raise vs best-effort).
 - `services/s3_sweep.py` — orphan sweep orchestration, shared by the
-  management command and the daily Celery task.
+  management command and the daily `sweep_orphan_s3_storage_task`.
 - `services/email.py` — recipient invitation rendering and SMTP send.
 
-## Celery tasks (`tasks.py`)
+## Dramatiq tasks (`tasks.py`)
 
-### Scheduled (Celery beat)
+### Scheduled (`@cron_task`)
 
-Schedule defined in `transferts/celery_app.py`. See also the
-[Background jobs table](../../README.md#background-jobs-celery-beat)
+Schedules are declared with `@cron_task(...)` decorators on the task functions
+and fired by the scheduler embedded in the worker (`transferts/scheduler.py`,
+leader-elected across workers). See also the
+[Background jobs table](../../README.md#background-jobs-dramatiq)
 in the root README.
 
 - `deactivate_expired_transfers_task` — flips `ACTIVE → PENDING_FILE_DELETION`

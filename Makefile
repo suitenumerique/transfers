@@ -181,9 +181,10 @@ migrate: ## run django migrations
 	@$(MANAGE_DB) migrate
 .PHONY: migrate
 
-superuser: ## Create an admin superuser with password "admin"
+superuser: ## Create an admin superuser with password "admin" and promote user1 as superuser
 	@echo "$(BOLD)Creating a Django superuser$(RESET)"
 	@$(MANAGE_DB) createsuperuser --email admin@admin.local --password admin
+	@$(MANAGE_DB) createsuperuser --email user1@example.local --password user1
 .PHONY: superuser
 
 seed-transfers: ## Seed the DB with placeholder transfers + files (local dev only)

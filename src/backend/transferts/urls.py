@@ -17,6 +17,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from core.worker_dashboard import dashboard_urlpatterns
+
 logger = getLogger(__name__)
 
 
@@ -31,6 +33,9 @@ def heartbeat(request):
 
 
 urlpatterns = [
+    # Task-queue dashboard, mounted inside the admin (staff login required).
+    # Listed before admin.site.urls so its more specific routes win.
+    *dashboard_urlpatterns(f"{settings.ADMIN_URL}/worker-dashboard"),
     path(f"{settings.ADMIN_URL}/", admin.site.urls),
     path("", include("core.urls")),
     path(

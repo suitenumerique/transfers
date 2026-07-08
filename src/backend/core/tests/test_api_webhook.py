@@ -49,9 +49,7 @@ class TestScanResultWebhook:
 
     def test_malware_payload_marks_infected(self, api_client):
         f = self._file()
-        resp = _post(
-            api_client, f.id, "s3cr3t", {"status": "done", "malware": True}
-        )
+        resp = _post(api_client, f.id, "s3cr3t", {"status": "done", "malware": True})
         assert resp.status_code == 200
         f.refresh_from_db()
         assert f.scan_status == ScanStatus.INFECTED
@@ -216,11 +214,12 @@ class TestFinalizeScanGate:
 
     def test_transient_error_resets_and_resubmits(self, user, authenticated_client):
         draft, f = self._draft_with_file(user, ScanStatus.ERROR, "transient")
-        with patch(
-            "core.api.viewsets.draft.submit_scan_task.delay"
-        ) as submit, patch(
-            "core.api.viewsets.draft.transaction.on_commit",
-            side_effect=lambda fn: fn(),
+        with (
+            patch("core.api.viewsets.draft.submit_scan_task.delay") as submit,
+            patch(
+                "core.api.viewsets.draft.transaction.on_commit",
+                side_effect=lambda fn: fn(),
+            ),
         ):
             resp = self._finalize(authenticated_client, draft.id)
         assert resp.status_code == 202

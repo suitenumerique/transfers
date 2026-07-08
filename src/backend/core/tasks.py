@@ -1,4 +1,4 @@
-"""Celery tasks for the transferts core app."""
+"""Background tasks for the transferts core app."""
 
 import logging
 import secrets
@@ -10,7 +10,6 @@ from django.utils import timezone
 
 import botocore
 import requests
-from celery import shared_task
 
 from core.enums import (
     ActorType,
@@ -23,6 +22,7 @@ from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
 from core.services.email import send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
+from core.tasks_helpers import cron_task, register_task
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 _DRIVE_IMPORT_CHUNK_SIZE = 16 * 1024 * 1024
 
 
-@shared_task
+@cron_task("0 * * * *")  # every hour
+@register_task
 def deactivate_expired_transfers_task():
     """Deactivate transfers whose expiry date has passed.
 
@@ -55,7 +56,7 @@ def deactivate_expired_transfers_task():
         # deactivate() returns False when another feed (manual / first
         # download) already moved the row out of ACTIVE between the query
         # above and now. Only record the expiry audit event when the transfer gets
-        # deactivated HERE, otherwise the log would claim an expiry that never 
+        # deactivated HERE, otherwise the log would claim an expiry that never
         # happened.
         if not transfer.deactivate(DeactivationReason.EXPIRED):
             continue
@@ -71,7 +72,8 @@ def deactivate_expired_transfers_task():
         logger.info("Deactivated %d expired transfer(s).", count)
 
 
-@shared_task
+@cron_task("0 0 * * *")  # every day at midnight
+@register_task
 def sweep_orphan_s3_storage_task():
     """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
 
@@ -93,7 +95,8 @@ def sweep_orphan_s3_storage_task():
         )
 
 
-@shared_task
+@cron_task("0 */6 * * *")  # every 6 hours
+@register_task
 def cleanup_abandoned_drafts_task():
     """Clean up drafts whose user never pressed "Create link".
 
@@ -133,7 +136,7 @@ def cleanup_abandoned_drafts_task():
         logger.info("Cleaned up %d abandoned draft(s).", count)
 
 
-@shared_task
+@register_task
 def import_drive_file_task(transfer_file_id):
     """Stream a public Drive permalink into our S3 multipart.
 
@@ -245,9 +248,7 @@ def import_drive_file_task(transfer_file_id):
             try:
                 s3.abort_multipart_upload(key=key, upload_id=upload_id)
             except botocore.exceptions.ClientError:
-                logger.exception(
-                    "Failed to abort MPU %s for key %s", upload_id, key
-                )
+                logger.exception("Failed to abort MPU %s for key %s", upload_id, key)
         # delete_object is idempotent on missing keys (S3 returns 204).
         if tf.s3_key:
             try:
@@ -257,8 +258,8 @@ def import_drive_file_task(transfer_file_id):
         tf.delete()
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def submit_scan_task(self, transfer_file_id):
+@register_task(max_retries=3, min_backoff=30_000, max_backoff=30_000)
+def submit_scan_task(transfer_file_id):
     """Submit a completed file to the file-scanner service for a virus scan.
 
     Fire-and-forget from the caller's view: we hand the scanner a presigned
@@ -322,10 +323,13 @@ def submit_scan_task(self, transfer_file_id):
         )
         response.raise_for_status()
     except requests.RequestException as exc:
+        # Re-raise so dramatiq's Retries middleware re-enqueues this task
+        # (max_retries=3, ~30s backoff). Once the scanner has accepted the job,
+        # delivery of the result is the webhook's problem, not ours.
         logger.warning(
             "Scan submission failed for TransferFile %s: %s", transfer_file_id, exc
         )
-        raise self.retry(exc=exc) from exc
+        raise
 
     job_id = ""
     try:
@@ -336,12 +340,11 @@ def submit_scan_task(self, transfer_file_id):
     # Targeted update: the row may have been concurrently mutated and we only
     # own the scan_job_id column here.
     TransferFile.objects.filter(id=tf.id).update(scan_job_id=job_id)
-    logger.info(
-        "Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id
-    )
+    logger.info("Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id)
 
 
-@shared_task
+@cron_task("*/5 * * * *")  # every 5 minutes
+@register_task
 def reap_stale_pending_scans_task():
     """Re-submit files stuck in PENDING for too long.
 
@@ -373,7 +376,8 @@ def reap_stale_pending_scans_task():
         logger.info("Re-submitted %d stale pending scan(s).", count)
 
 
-@shared_task
+@cron_task("0 * * * *")  # every hour
+@register_task
 def delete_pending_transfer_files_task():
     """Wipe S3 objects for transfers whose grace period has elapsed.
 
@@ -448,7 +452,7 @@ def delete_pending_transfer_files_task():
         logger.info("Deleted files of %d transfer(s).", count)
 
 
-@shared_task
+@register_task
 def send_recipient_invitations_task(transfer_id):
     """Send invitation emails to all recipients of an email-mode transfer."""
     try:

@@ -47,16 +47,16 @@ OIDC_CREATE_USER=True
 # the genuine OIDC code flow, just against a self-hosted provider.
 #
 # Split hostnames on purpose:
-#   - authorize/logout → localhost:8902  (the BROWSER is redirected here)
+#   - authorize/logout → localhost:8983  (the BROWSER is redirected here)
 #   - token/userinfo/jwks → keycloak:8802 (the BACKEND calls these in-network;
-#     localhost:8902 is unreachable from inside the backend container)
-# Keycloak runs with --hostname=http://localhost:8902, so the issuer/URLs it
+#     localhost:8983 is unreachable from inside the backend container)
+# Keycloak runs with --hostname=http://localhost:8983, so the issuer/URLs it
 # stamps stay consistent regardless of which host answered the request.
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/auth
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8983/realms/transferts/protocol/openid-connect/auth
 OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/token
 OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/userinfo
 OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/certs
-OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/logout
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8983/realms/transferts/protocol/openid-connect/logout
 
 # Dev client + secret are committed on purpose — they only match the local
 # realm imported from src/keycloak/realm.json, never anything real.

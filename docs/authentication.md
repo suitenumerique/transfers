@@ -11,15 +11,19 @@ code flow, just against a self-hosted provider.
 2. Open http://localhost:8980 and click **Sign in**.
 3. Log in with one of the seeded test users:
 
-   | Username / email           | Password     |
-   |----------------------------|--------------|
-   | `agent@collectivite.fr`    | `transferts` |
-   | `agent2@collectivite.fr`   | `transferts` |
+   | Username / email        | Password |
+   |-------------------------|----------|
+   | `user1@example.local`   | `user1`  |
+   | `user2@example.local`   | `user2`  |
+   | `user3@example.local`   | `user3`  |
+
+   `user1` is also promoted to a Django superuser (see `make superuser`), so it
+   can reach the Django admin at http://localhost:8981/admin as well.
 
 That's it — you land back in the app, authenticated. Logout works the same way
 (it clears both the Django session and the Keycloak SSO session).
 
-**Keycloak admin console:** http://localhost:8902 — realm `master`, `admin` / `admin`.
+**Keycloak admin console:** http://localhost:8983 — realm `master`, `admin` / `admin`.
 This admin manages *Keycloak itself*; it is unrelated to the app's test users
 (which live in the `transferts` realm). Both the admin credentials and the realm
 are dev-only — see [Security note](#security-note).
@@ -28,7 +32,7 @@ are dev-only — see [Security note](#security-note).
 
 ```text
  Browser ──Sign in──▶ /api/v1.0/authenticate/ (backend)
-        ◀──302── redirect to Keycloak authorize  (http://localhost:8902/...)
+        ◀──302── redirect to Keycloak authorize  (http://localhost:8983/...)
  Browser ──login form──▶ Keycloak
         ◀──302── redirect to /api/v1.0/callback/?code=...  (backend)
  Backend ──exchange code──▶ Keycloak token/userinfo  (http://keycloak:8802/...)
@@ -40,20 +44,20 @@ are dev-only — see [Security note](#security-note).
 The browser and the backend reach Keycloak on **different hostnames**:
 
 - the **browser** is redirected to the authorize / logout endpoints on
-  `http://localhost:8902` (the published host port);
+  `http://localhost:8983` (the published host port);
 - the **backend** calls the token / userinfo / JWKS endpoints on
-  `http://keycloak:8802` (the in-network service name — `localhost:8902` is
+  `http://keycloak:8802` (the in-network service name — `localhost:8983` is
   unreachable from inside the backend container).
 
 To keep the two consistent, Keycloak is started with
-`--hostname=http://localhost:8902`, so every URL and the `iss` claim it issues
-are stamped with `localhost:8902` regardless of which host answered the request.
+`--hostname=http://localhost:8983`, so every URL and the `iss` claim it issues
+are stamped with `localhost:8983` regardless of which host answered the request.
 This split is configured in `env.d/development/backend.defaults`:
 
 ```bash
 # browser-facing
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/auth
-OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/logout
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8983/realms/transferts/protocol/openid-connect/auth
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8983/realms/transferts/protocol/openid-connect/logout
 # backend-facing (in-network)
 OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/token
 OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/userinfo

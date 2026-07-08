@@ -5,6 +5,10 @@ from django.contrib.auth import admin as auth_admin
 
 from . import models
 
+# Surface a link to the task-queue (worker) dashboard on the admin home page.
+# The template extends Django's real admin/index.html and adds one panel.
+admin.site.index_template = "admin/worker_dashboard_index.html"
+
 
 @admin.register(models.User)
 class UserAdmin(auth_admin.UserAdmin):

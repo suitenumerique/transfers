@@ -31,25 +31,36 @@
   ],
   "users": [
     {
-      "username": "agent",
-      "email": "agent@collectivite.fr",
+      "username": "user1@example.local",
+      "email": "user1@example.local",
       "emailVerified": true,
       "enabled": true,
-      "firstName": "Agent",
-      "lastName": "Dev",
+      "firstName": "User",
+      "lastName": "Un",
       "credentials": [
-        { "type": "password", "value": "transferts", "temporary": false }
+        { "type": "password", "value": "user1", "temporary": false }
       ]
     },
     {
-      "username": "agent2",
-      "email": "agent2@collectivite.fr",
+      "username": "user2@example.local",
+      "email": "user2@example.local",
       "emailVerified": true,
       "enabled": true,
-      "firstName": "Agent",
+      "firstName": "User",
       "lastName": "Deux",
       "credentials": [
-        { "type": "password", "value": "transferts", "temporary": false }
+        { "type": "password", "value": "user2", "temporary": false }
+      ]
+    },
+    {
+      "username": "user3@example.local",
+      "email": "user3@example.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "User",
+      "lastName": "Trois",
+      "credentials": [
+        { "type": "password", "value": "user3", "temporary": false }
       ]
     }
   ]

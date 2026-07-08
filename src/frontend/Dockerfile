@@ -1,18 +1,31 @@
 ARG FRONTEND_IMAGE=frontend-build-output
 
-FROM node:22-alpine AS frontend-deps
+FROM node:24.18.0-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS frontend-dev-base
 
 ENV npm_config_cache=/tmp/npm-cache
 
 ARG DOCKER_USER=1000
 WORKDIR /home/frontend/
 
-RUN mkdir -p /tmp/npm-cache && chown -R ${DOCKER_USER} /tmp/npm-cache /home/frontend
+# Pre-create an empty node_modules owned by DOCKER_USER. The dev/tools services
+# mount a named volume there (see compose.yaml); Docker initializes an empty
+# volume from the image's directory *including its ownership*, so this is what
+# makes the volume writable by the non-root container user. Without it the fresh
+# volume is root-owned and `npm ci` fails with EACCES.
+RUN mkdir -p /tmp/npm-cache /home/frontend/node_modules \
+    && chown -R ${DOCKER_USER} /tmp/npm-cache /home/frontend
 
-# Install deps and run all npm commands as the user running the container
+# Run all npm commands as the user running the container.
 USER ${DOCKER_USER}
-COPY --chown=${DOCKER_USER} package*.json ./
-RUN npm install
+
+# ---- Production dependency install (ONLY for the prod build below) ----
+# frontend-build runs `npm run build`, which needs node_modules present in the
+# image; the dev/tools services use the lean frontend-dev-base above and install
+# into their volume instead. .npmrc sets install-strategy=linked (symlinked /
+# deduplicated node_modules) which keeps the install lean.
+FROM frontend-dev-base AS frontend-deps
+COPY --chown=${DOCKER_USER} package*.json .npmrc ./
+RUN npm ci
 
 FROM frontend-deps AS frontend-build
 
