@@ -186,7 +186,7 @@ class DraftAddFileSerializer(serializers.Serializer):
 
     Two attach modes coexist: browser-side multipart upload (no
     ``source_url``), and server-side Drive import (``source_url`` set to a
-    public permalink — the backend fetches the bytes via a celery task, no
+    public permalink — the backend fetches the bytes via a background task, no
     multipart ceremony exposed to the client).
 
     Per-file size is checked here; cumulative limits (file count, total

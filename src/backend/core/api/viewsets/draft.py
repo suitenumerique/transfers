@@ -177,7 +177,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
             if transfer_file.source_url:
                 # Drive import path: no multipart opened synchronously —
-                # the celery task will open its own, drain Drive into it,
+                # the background task will open its own, drain Drive into it,
                 # and set ``upload_completed_at`` when done. The client
                 # doesn't need ``upload_id`` / ``chunk_size`` because it
                 # won't be uploading any parts.

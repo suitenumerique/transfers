@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vite",
@@ -71,5 +71,15 @@
     "@rollup/rollup-linux-x64-gnu": "4.57.1",
     "@rollup/rollup-linux-x64-musl": "4.57.1"
   },
-  "overrides": {}
+  "overrides": {
+    "react-aria": "3.50.0",
+    "react-stately": "3.48.0",
+    "react-aria-components": "1.19.0",
+    "@internationalized/date": "3.12.2",
+    "@react-aria/calendar": "3.10.1",
+    "@react-aria/datepicker": "3.17.1",
+    "@react-aria/i18n": "3.13.1",
+    "@react-stately/calendar": "3.10.1",
+    "@react-stately/datepicker": "3.17.1"
+  }
 }

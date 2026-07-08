@@ -841,7 +841,7 @@ class TestCleanupAbandonedDraftsTask:
 @pytest.mark.django_db
 class TestDraftAddFileFromDrive:
     """POST /drafts/add-file/ with ``source_url`` set — server-side Drive
-    import path. No multipart opened synchronously, celery task enqueued,
+    import path. No multipart opened synchronously, background task enqueued,
     slim response (no upload_id/chunk_size — the client won't be uploading
     anything)."""
 
@@ -944,7 +944,7 @@ class TestDraftRetrieve:
 
 @pytest.mark.django_db
 class TestImportDriveFileTask:
-    """Unit tests for the celery task ``import_drive_file_task``."""
+    """Unit tests for the background task ``import_drive_file_task``."""
 
     def _make_file(self, user, size=100, filename="d.jpg"):
         from core.tasks import import_drive_file_task
@@ -983,7 +983,7 @@ class TestImportDriveFileTask:
         mock_get.assert_not_called()
 
     def test_happy_path_streams_and_marks_complete(self, user):
-        """One-part happy path: Drive returns the bytes, celery drains
+        """One-part happy path: Drive returns the bytes, the task drains
         them into a fresh multipart, row is marked complete."""
         from core.tasks import import_drive_file_task
 

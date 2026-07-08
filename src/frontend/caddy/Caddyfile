@@ -1,6 +1,16 @@
+# Environment variables (beyond the reverse-proxy targets below):
+#   DJANGO_ADMIN_ALLOWED_IPS — space-separated IPs/CIDRs allowed to reach the
+#     Django admin prefix (which includes the worker dashboard). Unset/empty =
+#     open to everyone. e.g. "1.2.3.4 10.0.0.0/8 2001:db8::/32"
 {
 	auto_https off
 	admin off
+	# Trust Scalingo's internal router (private ranges) so `client_ip` below
+	# resolves the real client from X-Forwarded-For rather than the 10.0.0.x
+	# HAProxy peer. Without this the admin IP allowlist would see the proxy IP.
+	servers {
+		trusted_proxies static private_ranges
+	}
 }
 
 :{$PORT} {
@@ -43,6 +53,17 @@
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
 		}
+
+		# Restrict the whole Django admin prefix — including the worker dashboard
+		# mounted under it — to an IP allowlist. Unset/empty DJANGO_ADMIN_ALLOWED_IPS
+		# defaults to all v4+v6, i.e. open; set it to space-separated CIDRs to lock
+		# the admin down at the edge (defence in depth on top of the staff/superuser
+		# login). `client_ip` uses the real client via trusted_proxies (global block).
+		@admin_forbidden {
+			path /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/*
+			not client_ip {$DJANGO_ADMIN_ALLOWED_IPS:0.0.0.0/0 ::/0}
+		}
+		respond @admin_forbidden "Access denied" 403
 
 		redir /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/ 301
 

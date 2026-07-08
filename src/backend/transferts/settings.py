@@ -330,8 +330,7 @@ class Base(Configuration):
         "core",
         "drf_spectacular",
         "corsheaders",
-        "django_celery_beat",
-        "django_celery_results",
+        "dramatiq_crontab",
         "django_filters",
         "rest_framework",
         "django.contrib.admin",
@@ -391,23 +390,42 @@ class Base(Configuration):
         None, environ_name="FRONTEND_THEME", environ_prefix=None
     )
 
-    # Celery
-    CELERY_BROKER_URL = values.Value(
-        "redis://redis:6379", environ_name="CELERY_BROKER_URL", environ_prefix=None
+    # Background tasks — worker + broker (currently Dramatiq on the custom
+    # Redis Streams broker). Point WORKER_BROKER_URL at a dedicated Redis
+    # (noeviction + AOF); do not share a database with an eviction-enabled
+    # cache, or queued tasks can be silently evicted. Requires Redis >= 7.0.
+    WORKER_BROKER_URL = values.Value(
+        "redis://redis:6379/0",
+        environ_name="WORKER_BROKER_URL",
+        environ_prefix=None,
     )
-    CELERY_RESULT_BACKEND = "django-db"
-    CELERY_CACHE_BACKEND = "django-cache"
-    CELERY_BROKER_TRANSPORT_OPTIONS = values.DictValue({})
-    CELERY_RESULT_EXTENDED = True
-    CELERY_TASK_RESULT_EXPIRES = 60 * 60 * 24 * 30  # 30 days
-    CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
-    CELERY_WORKER_HIJACK_ROOT_LOGGER = False
-    CELERY_TASK_DEFAULT_QUEUE = "default"
+    WORKER_QUEUE_NAMESPACE = values.Value(
+        "tasks", environ_name="WORKER_QUEUE_NAMESPACE", environ_prefix=None
+    )
+    # When true, tasks run synchronously in-process (no Redis / worker needed).
+    # Flipped on for tests and the minimal dev config below.
+    WORKER_EAGER = False
+    # Periodic-task scheduler (``manage.py crontab``). The Redis lock keeps a
+    # single schedule active even if several scheduler processes are running.
+    # (``DRAMATIQ_CRONTAB`` is the name the scheduler package requires.)
+    DRAMATIQ_CRONTAB = {
+        "REDIS_URL": values.Value(
+            "redis://redis:6379/0",
+            environ_name="DRAMATIQ_CRONTAB_REDIS_URL",
+            environ_prefix=None,
+        ),
+    }
 
     # Session
     SESSION_ENGINE = "django.contrib.sessions.backends.cache"
     SESSION_CACHE_ALIAS = "default"
     SESSION_COOKIE_AGE = 60 * 60 * 12
+    # Pin SameSite explicitly (Django's default is already "Lax"): the worker
+    # dashboard's destructive POST endpoints are csrf_exempt and rely on the
+    # admin session cookie NOT being sent on cross-site requests. Setting this to
+    # "None" would silently re-open those endpoints to CSRF — see
+    # core/worker_dashboard.py.
+    SESSION_COOKIE_SAMESITE = "Lax"
 
     # Email
     EMAIL_HOST = values.Value(
@@ -703,9 +721,9 @@ class Development(Base):
 
 
 class DevelopmentMinimal(Development):
-    """Development with minimal dependencies (no Redis/Celery)."""
+    """Development with minimal dependencies (no Redis / task worker)."""
 
-    CELERY_TASK_ALWAYS_EAGER = True
+    WORKER_EAGER = True
     CACHES = {
         "default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"},
         "session": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
@@ -720,7 +738,7 @@ class Test(Base):
         "django.contrib.auth.hashers.Argon2PasswordHasher",
     ]
     USE_SWAGGER = True
-    CELERY_TASK_ALWAYS_EAGER = values.BooleanValue(True)
+    WORKER_EAGER = True
     AWS_S3_DOMAIN_REPLACE = None
 
     def __init__(self):

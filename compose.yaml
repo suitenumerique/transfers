@@ -15,7 +15,8 @@ services:
       - env.d/development/postgresql.local
 
   redis:
-    image: redis:5
+    # >= 7.0 required by the dramatiq-redis-streams broker (consumer groups).
+    image: redis:7
     ports:
       - "8985:6379"
 
@@ -55,10 +56,10 @@ services:
 
   # Local OIDC provider for dev — stands in for ProConnect so the real OIDC
   # login flow works without an external instance. --hostname pins every URL
-  # Keycloak issues (issuer, authorize, token…) to localhost:8902 so they stay
-  # consistent whether the browser (localhost:8902) or the backend
-  # (keycloak:8802, in-network) talks to it. Realm + a test user are imported
-  # from src/keycloak/realm.json. Admin console: http://localhost:8902 (admin/admin).
+  # Keycloak issues (issuer, authorize, token…) to localhost:8983 so they stay
+  # consistent whether the browser (localhost:8983) or the backend
+  # (keycloak:8802, in-network) talks to it. Realm + 3 test users are imported
+  # from src/keycloak/realm.json. Admin console: http://localhost:8983 (admin/admin).
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.1
     command:
@@ -66,8 +67,8 @@ services:
       - --import-realm
       - --http-enabled=true
       - --http-port=8802
-      - --hostname=http://localhost:8902
-      - --hostname-admin=http://localhost:8902
+      - --hostname=http://localhost:8983
+      - --hostname-admin=http://localhost:8983
       - --proxy-headers=xforwarded
     environment:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
@@ -78,7 +79,7 @@ services:
     volumes:
       - ./src/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
-      - "8902:8802"
+      - "8983:8802"
     # The Keycloak image ships no curl/wget, so we probe /health/ready with
     # bash's /dev/tcp. Ready only flips true once startup + realm import finish,
     # which lets backend-dev gate on `service_healthy`.
@@ -156,6 +157,9 @@ services:
       target: uv
     pull_policy: build
 
+  # Runs the task worker AND the leader-elected periodic scheduler (as a forked
+  # sidecar). No separate scheduler service — see transferts/scheduler.py. The
+  # task-queue dashboard lives in the Django admin at /admin/worker-dashboard/.
   worker-dev:
     build:
       context: src/backend
@@ -163,7 +167,7 @@ services:
       args:
         DOCKER_USER: ${DOCKER_USER:-1000}
     user: ${DOCKER_USER:-1000}
-    command: ["python", "worker.py", "--loglevel=DEBUG"]
+    command: ["python", "worker.py", "-v"]
     environment:
       - DJANGO_CONFIGURATION=Development
     env_file:
@@ -175,33 +179,14 @@ services:
     depends_on:
       - backend-dev
 
-  worker-ui:
-    build:
-      context: src/backend
-      target: runtime-dev
-      args:
-        DOCKER_USER: ${DOCKER_USER:-1000}
-    user: ${DOCKER_USER:-1000}
-    depends_on:
-      - redis
-    environment:
-      - FLOWER_UNAUTHENTICATED_API=true
-      - DJANGO_CONFIGURATION=Development
-    env_file:
-      - env.d/development/backend.defaults
-      - env.d/development/backend.local
-    volumes:
-      - ./src/backend:/app
-    ports:
-      - "8983:8803"
-    command: celery -A transferts.celery_app flower --port=8803
-
   frontend-base:
     user: "${DOCKER_USER:-1000}"
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
-      target: frontend-deps
+      # Lean image with no node_modules baked in — dev/tools deps live in the
+      # frontend-node-modules volume, installed by `make install-frozen-front`.
+      target: frontend-dev-base
       args:
         DOCKER_USER: ${DOCKER_USER:-1000}
 
@@ -213,6 +198,11 @@ services:
     command: ["npm", "run", "dev"]
     volumes:
       - ./src/frontend/:/home/frontend/
+      # Keep node_modules on a fast Docker volume instead of the (slow, and
+      # image-shadowing) host bind mount. The bind mount is what made installs
+      # take minutes and spike memory; a named volume lives on the Docker
+      # filesystem and is shared with frontend-tools below.
+      - frontend-node-modules:/home/frontend/node_modules
     ports:
       - "8980:3000"
 
@@ -222,6 +212,11 @@ services:
       - frontend-tools
     volumes:
       - ./src/frontend/:/home/frontend/
+      # Share the same fast node_modules volume as frontend-dev so that
+      # `make install-frozen-front` (which runs here) installs into the volume
+      # that frontend-dev consumes.
+      - frontend-node-modules:/home/frontend/node_modules
 
 volumes:
   objectstorage-data:
+  frontend-node-modules:

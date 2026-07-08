@@ -165,7 +165,7 @@ def upload_part_bytes(key: str, upload_id: str, part_number: int, body: bytes) -
     ``complete_multipart_upload``.
 
     This is the server-side counterpart of ``sign_upload_part`` — used by
-    the Drive-import celery task, where bytes flow through the backend
+    the Drive-import background task, where bytes flow through the backend
     rather than being PUT directly by the browser.
     """
     client = get_s3_client()
