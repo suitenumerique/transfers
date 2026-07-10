@@ -214,23 +214,20 @@ class TestFinalizeScanGate:
         assert resp.data["reason"] == "scan_pending"
         assert str(f.id) in resp.data["pending_file_ids"]
 
-    def test_transient_error_resets_and_resubmits(self, user, authenticated_client):
+    def test_transient_error_blocks(self, user, authenticated_client):
+        # Finalize is read-only: a transient scan error is a block, not a silent
+        # reset-and-retry. The file is untouched and no scan is re-submitted —
+        # the user retries on the form (the /rescan/ path) instead.
         draft, f = self._draft_with_file(user, ScanStatus.ERROR, "transient")
-        with patch(
-            "core.api.viewsets.draft.submit_scan_task.delay"
-        ) as submit, patch(
-            "core.api.viewsets.draft.transaction.on_commit",
-            side_effect=lambda fn: fn(),
-        ):
+        with patch("core.api.viewsets.draft.submit_scan_task.delay") as submit:
             resp = self._finalize(authenticated_client, draft.id)
-        assert resp.status_code == 202
-        assert resp.data["reason"] == "scan_pending"
-        # The transient error is wiped and the file goes back to PENDING and is
-        # re-submitted to the scanner.
+        assert resp.status_code == 400
+        assert resp.data["reason"] == "scan_error"
+        assert str(f.id) in resp.data["blocked_file_ids"]
         f.refresh_from_db()
-        assert f.scan_status == ScanStatus.PENDING
-        assert f.scan_error_kind == ""
-        submit.assert_called_once_with(str(f.id))
+        assert f.scan_status == ScanStatus.ERROR
+        assert f.scan_error_kind == "transient"
+        submit.assert_not_called()
 
     def test_infected_wins_over_unscannable(self, user, authenticated_client):
         # Two terminal hard blocks at once: a virus outranks an unscannable

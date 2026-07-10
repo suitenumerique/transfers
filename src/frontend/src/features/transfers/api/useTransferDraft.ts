@@ -93,6 +93,10 @@ export interface TransferDraftHandle {
   // True while finalize is blocked on the antivirus scan (backend returns 202
   // until every file is clean). Drives the "checking for viruses" loading step.
   isScanning: boolean;
+  // True once the background scan poller has waited SCAN_MAX_WAIT_MS without a
+  // verdict (scanner likely down). Polling is stopped; `retryScan` re-arms it.
+  scanTimedOut: boolean;
+  retryScan: () => void;
   error: string | null;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
@@ -167,6 +171,12 @@ export function useTransferDraft(): TransferDraftHandle {
   const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  // The background scan poller gives up after SCAN_MAX_WAIT_MS so a durably
+  // unreachable scanner doesn't leave the form polling /drafts/ forever. The
+  // backend reaper keeps re-submitting, so the file still self-heals once the
+  // scanner recovers — the user just re-arms polling via `retryScan`.
+  const [scanTimedOut, setScanTimedOut] = useState(false);
+  const scanDeadlineRef = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -382,14 +392,36 @@ export function useTransferDraft(): TransferDraftHandle {
           // is terminal, so it doesn't keep us polling.
           (f.scanStatus === "error" && f.scanErrorKind !== "file")),
     );
-    if (!needsScan) return;
+    if (!needsScan) {
+      // Nothing left to wait on (resolved, or the stuck file was removed) —
+      // reset the deadline and clear any timed-out notice so the next batch
+      // starts clean. This is a deliberate reset-on-batch-change: leaving a
+      // stale `scanTimedOut` would block polling of a freshly added file.
+      scanDeadlineRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (scanTimedOut) setScanTimedOut(false);
+      return;
+    }
+    // Stopped after timing out: stay put until the user hits retry.
+    if (scanTimedOut) return;
     const id = draftIdRef.current;
     if (!id) return;
+
+    // Anchor the deadline the first time we start waiting on this batch; it
+    // survives re-renders (the effect re-runs whenever `files` changes) because
+    // it lives in a ref, so unrelated file edits don't reset the clock.
+    if (scanDeadlineRef.current === null) {
+      scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
+    }
 
     let cancelled = false;
 
     const tick = async () => {
       if (cancelled) return;
+      if (Date.now() > scanDeadlineRef.current!) {
+        setScanTimedOut(true);
+        return;
+      }
       try {
         const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
         if (cancelled) return;
@@ -427,7 +459,25 @@ export function useTransferDraft(): TransferDraftHandle {
       cancelled = true;
       window.clearInterval(handle);
     };
-  }, [files, writeFiles]);
+  }, [files, writeFiles, scanTimedOut]);
+
+  // Re-arm scanning after the poller gave up. Re-submitting is the point: by
+  // the time we time out, the backend's submit task has already exhausted its
+  // retries and died, so merely resuming the poll would find nothing in flight.
+  // Ask the server to re-queue the scan, then restart polling to pick up the
+  // fresh verdict. Best-effort — a failed re-arm just leaves the retry visible.
+  const retryScan = useCallback(async () => {
+    const id = draftIdRef.current;
+    if (!id) return;
+    try {
+      await apiFetch(`/drafts/${id}/rescan/`, { method: "POST" });
+    } catch {
+      // Network/hiccup — keep the timed-out state so the user can retry again.
+      return;
+    }
+    scanDeadlineRef.current = null;
+    setScanTimedOut(false);
+  }, []);
 
   const registerFile = useCallback(
     async (
@@ -785,6 +835,8 @@ export function useTransferDraft(): TransferDraftHandle {
     isAwaitingUploads,
     isFinalizing,
     isScanning,
+    scanTimedOut,
+    retryScan,
     error,
     addFile,
     attachFromDrive,

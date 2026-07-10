@@ -292,6 +292,12 @@ def submit_scan_task(self, transfer_file_id):
         # Upload not finished (or was rolled back) — don't scan a partial object.
         return
 
+    if tf.scan_status != ScanStatus.PENDING:
+        # Already resolved (or a retry/rescan racing a verdict that just landed)
+        # — don't launch a redundant scan. Correctness is enforced by the
+        # PENDING-guarded webhook; this just avoids the wasted scanner work.
+        return
+
     # Mint the per-file callback secret on first submit; reuse it on retries so
     # the webhook URL stays stable across attempts. The conditional update only
     # matches while the secret is still empty, so concurrent submissions (e.g. a
