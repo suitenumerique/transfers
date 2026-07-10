@@ -24,98 +24,132 @@ interface DownloadViewProps {
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  // Every finalized transfer is encrypted; ``encryption_chunk_size`` is only
+  // null for legacy plaintext transfers, which skip the SW decrypt path.
+  const isEncrypted = transfer.encryption_chunk_size != null;
   // Snapshot the fragment once, at mount, before the effect below strips it
-  // from the visible URL. The effect can re-run when its deps change (a new
-  // ``transfer.files`` reference from a parent refetch is enough), and by
-  // then window.location.hash is empty — reading it again would trip the
-  // "no fragment" bail-out, run the cleanup (unregisterE2eKey) on the way
-  // out and leave the SW without a key.
+  // from the visible URL. Reading window.location.hash again after a rerun
+  // (a new ``transfer.files`` reference is enough) would see it already
+  // stripped and wrongly fall back to the paste screen.
   const keyFragmentRef = useRef<string>(
     typeof window !== "undefined"
       ? window.location.hash.replace(/^#/, "")
       : "",
   );
-  // E2E plumbing state: extract the key from the URL fragment and register
-  // it with the decryption SW before enabling the download buttons. Four
-  // outcomes: `ready` (good to go), `loading` (SW handshake in flight),
-  // `no-key` (fragment missing — wrong link), or `error` (chunk size
-  // missing on the transfer, or SW registration failed). The sync
-  // checks resolve at initial-state time so the effect only handles
-  // the async SW registration, never a synchronous setState.
-  type E2eState = "loading" | "ready" | "no-key" | "error";
+  // The key we hand the SW. Non-confidential transfers get it from the
+  // backend (``encryption_key``); confidential transfers get it from the URL
+  // fragment or, if that's missing, from the recipient pasting it.
+  const autoKey = !transfer.confidential
+    ? transfer.encryption_key || null
+    : keyFragmentRef.current || null;
+
+  // Decryption plumbing state: register the key with the SW before enabling
+  // downloads. `ready` (go), `loading` (SW handshake), `need-key`
+  // (confidential + no key yet, show the paste box), `error` (SW/registration
+  // failed). Resolved synchronously here so the effect only does async work.
+  type E2eState = "loading" | "ready" | "need-key" | "error";
   const [e2eState, setE2eState] = useState<E2eState>(() => {
-    if (!transfer.e2e_encrypted) return "ready";
+    if (!isEncrypted) return "ready";
     if (typeof window === "undefined") return "loading";
-    if (!keyFragmentRef.current) return "no-key";
-    if (!transfer.encryption_chunk_size) return "error";
+    if (!autoKey) return "need-key";
     return "loading";
   });
+  const [pastedKey, setPastedKey] = useState("");
+  const [pasteError, setPasteError] = useState(false);
+  // Tracks whether the SW currently holds this transfer's key, so the unmount
+  // cleanup only unregisters when there's something to drop (set by both the
+  // auto-effect and the paste handler).
+  const registeredRef = useRef(false);
 
   const totalSize = transfer.files.reduce(
     (a, f) => a + (f.plaintext_size ?? f.size),
     0,
   );
   const expired = isExpired(transfer.expires_at);
-  // Snapshot the original URL on first render, *before* the E2E effect
-  // strips the fragment from the address bar. The "copy link" pill keeps
-  // this complete value so a forwarding recipient still gets a working
-  // link, while the visible URL bar no longer leaks the key.
+  // Snapshot the original URL on first render, *before* the effect strips the
+  // fragment. The "copy link" pill keeps this complete value so a forwarding
+  // recipient still gets a working link, while the visible URL bar no longer
+  // leaks the key.
   const initialUrlRef = useRef<string>(
     typeof window !== "undefined" ? window.location.href : "",
   );
   const downloadUrl = initialUrlRef.current;
 
-  useEffect(() => {
-    if (!transfer.e2e_encrypted) return;
-    const fragment = keyFragmentRef.current;
+  // Hand a key to the SW and flip to `ready`. Shared by the auto-effect
+  // (backend key / URL fragment) and the paste box. A malformed key (wrong
+  // length/base64) throws inside registerE2eKey → surfaces as an error the
+  // caller maps to its state.
+  const registerKey = async (keyStr: string): Promise<boolean> => {
     const chunkSize = transfer.encryption_chunk_size;
-    // The initial-state initializer already mapped a missing fragment to
-    // "no-key" and a missing chunk size to "error"; bail before touching
-    // history or the SW.
-    if (!fragment || !chunkSize) return;
-    // Remove the key from the visible URL: shoulder-surfing, browser
-    // history, copy-from-address-bar all stop leaking it. The page keeps
-    // the fragment in-memory (passed to the SW below) so downloads still
-    // work — the only thing the user loses by stripping is the ability to
-    // recover the key by refreshing the tab.
-    try {
-      // Strip the fragment but keep the query string (analytics utm=…,
-      // debug flags, or router state can all ride on ``search``).
-      window.history.replaceState(
-        null,
-        "",
-        window.location.pathname + window.location.search,
-      );
-    } catch {
-      // replaceState can throw under exotic sandboxing (about:blank parents,
-      // some embedded webviews); the visible URL stays as-is, which is a
-      // degradation but not a blocker for downloading.
+    if (!chunkSize) return false;
+    const sw = await ensureE2eServiceWorker();
+    if (!sw) return false;
+    await registerE2eKey(sw, token, keyStr, transfer.files, chunkSize);
+    registeredRef.current = true;
+    return true;
+  };
+
+  useEffect(() => {
+    if (!isEncrypted || !autoKey) return;
+    // Confidential + fragment in URL: strip it from the visible URL (shoulder
+    // surfing, history, copy-from-address-bar). The page keeps it in memory.
+    // Non-confidential has no fragment to strip. Preserve the query string.
+    if (transfer.confidential) {
+      try {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
+      } catch {
+        // replaceState can throw under exotic sandboxing; the URL stays as-is.
+      }
     }
     let cancelled = false;
-    let registered = false;
     (async () => {
       try {
-        const sw = await ensureE2eServiceWorker();
-        if (!sw) {
-          if (!cancelled) setE2eState("error");
+        const ok = await registerKey(autoKey);
+        if (cancelled) {
+          // Cleanup already ran while the handshake was in flight — drop the
+          // key we just registered so it doesn't linger in the SW.
+          if (ok) unregisterE2eKey(token);
           return;
         }
-        await registerE2eKey(sw, token, fragment, transfer.files, chunkSize);
-        registered = true;
-        if (!cancelled) setE2eState("ready");
+        setE2eState(ok ? "ready" : "error");
       } catch {
         if (!cancelled) setE2eState("error");
       }
     })();
     return () => {
       cancelled = true;
-      // Best-effort: drop the key from the SW registry when the user
-      // navigates away. The SW would survive the page on its own and
-      // could be re-used for another transfer in the same tab, so leaving
-      // stale keys around is needless retention.
-      if (registered) unregisterE2eKey(token);
     };
-  }, [transfer.e2e_encrypted, transfer.encryption_chunk_size, transfer.files, token]);
+  }, [isEncrypted, autoKey, transfer.confidential, transfer.encryption_chunk_size, transfer.files, token]);
+
+  // Drop the key from the SW registry on unmount (covers both the auto path
+  // and a pasted key). The SW outlives the page and could be reused for
+  // another transfer in the same tab, so stale keys are needless retention.
+  useEffect(() => {
+    return () => {
+      if (registeredRef.current) unregisterE2eKey(token);
+    };
+  }, [token]);
+
+  const submitPastedKey = async () => {
+    const key = pastedKey.trim();
+    if (!key) return;
+    setPasteError(false);
+    setE2eState("loading");
+    try {
+      const ok = await registerKey(key);
+      setE2eState(ok ? "ready" : "need-key");
+      if (!ok) setPasteError(true);
+    } catch {
+      // Malformed key (bad base64 / wrong length). A valid-length but wrong
+      // key registers fine and instead fails at download time.
+      setE2eState("need-key");
+      setPasteError(true);
+    }
+  };
 
   const copyLink = async () => {
     if (!downloadUrl) return;
@@ -143,15 +177,14 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   const downloadableFiles = transfer.files.filter((f) =>
     isDownloadable(f.scan_status),
   );
-  // E2E and non-E2E paths both go through an iframe rather than an
-  // anchor click. For non-E2E the existing reason still holds (gesture
-  // throttling for multi-file downloads). For E2E the iframe avoids a
-  // Firefox-specific race: an anchor click triggers a top-level
-  // navigation, which the SW occasionally doesn't intercept on the very
-  // first click after registration. Sub-frame requests don't hit that
+  // Encrypted and legacy-plaintext paths both go through an iframe rather
+  // than an anchor click. For plaintext the reason is gesture throttling for
+  // multi-file downloads. For encrypted the iframe also avoids a Firefox
+  // race: an anchor click triggers a top-level navigation the SW sometimes
+  // doesn't intercept on the first click; sub-frame requests don't hit that
   // path and the Content-Disposition header still triggers a download.
   const triggerDownload = (file: (typeof transfer.files)[number]) => {
-    if (transfer.e2e_encrypted) {
+    if (isEncrypted) {
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(token, file.id, file.filename);
@@ -164,7 +197,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   const downloadAll = () => {
     downloadableFiles.forEach((file, i) => {
       setTimeout(() => {
-        if (transfer.e2e_encrypted) {
+        if (isEncrypted) {
           triggerDownload(file);
         } else {
           downloadFileInIframe(token, file.id);
@@ -223,18 +256,18 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="download-view__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
-        {transfer.e2e_encrypted && (
+        {transfer.confidential && (
           <>
             <span className="download-view__meta-sep">·</span>
             <Tooltip
               content={t(
-                "Your browser holds the decryption key (from the link). We only see encrypted content.",
+                "Confidential transfer. Only your browser can decrypt it, using a key we never received.",
               )}
               placement="top"
             >
               <span className="download-view__meta-item download-view__meta-item--e2e">
                 <Lock />
-                {t("End-to-end encrypted")}
+                {t("Confidential")}
               </span>
             </Tooltip>
           </>
@@ -304,9 +337,9 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                 }
                 extras={
                   <>
-                    {transfer.e2e_encrypted && (
+                    {transfer.confidential && (
                       <Tooltip
-                        content={t("End-to-end encrypted file")}
+                        content={t("Confidential file")}
                         placement="top"
                       >
                         <span className="file-item__scan file-item__scan--encrypted">
@@ -338,14 +371,44 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </ul>
       )}
 
-      {transfer.e2e_encrypted && e2eState === "no-key" && (
-        <Alert type={VariantType.ERROR}>
-          {t(
-            "The decryption key is missing from this link. Make sure you opened the original link in full.",
-          )}
-        </Alert>
+      {isEncrypted && e2eState === "need-key" && (
+        <div className="download-view__key-box">
+          <Alert type={VariantType.INFO}>
+            {t(
+              "This transfer is confidential. Enter the decryption key the sender shared with you separately to unlock the files.",
+            )}
+          </Alert>
+          <div className="download-view__key-input">
+            <Input
+              label={t("Decryption key")}
+              value={pastedKey}
+              onChange={(e) => {
+                setPastedKey(e.currentTarget.value);
+                setPasteError(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitPastedKey();
+              }}
+              variant="classic"
+              fullWidth
+              state={pasteError ? "error" : "default"}
+              text={
+                pasteError
+                  ? t("That key didn't work. Check it and try again.")
+                  : undefined
+              }
+            />
+            <Button
+              color="brand"
+              onClick={() => void submitPastedKey()}
+              disabled={!pastedKey.trim()}
+            >
+              {t("Unlock")}
+            </Button>
+          </div>
+        </div>
       )}
-      {transfer.e2e_encrypted && e2eState === "error" && (
+      {isEncrypted && e2eState === "error" && (
         <Alert type={VariantType.ERROR}>
           {t(
             "We couldn't set up the decryption helper in your browser. Try a different browser or check that service workers are enabled.",

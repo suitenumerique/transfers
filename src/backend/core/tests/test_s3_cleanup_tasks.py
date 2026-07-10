@@ -96,13 +96,21 @@ class TestImportDriveFileTaskLeaks:
     """Server-side Drive import — failures at any point in the streaming
     pipeline must leave the bucket clean."""
 
-    def _make_drive_file(self, user, declared_size: int) -> TransferFile:
-        draft = TransferDraftFactory(owner=user)
+    # 43-char URL-safe base64 of 32 zero bytes — a valid key the import task
+    # can decode. These tests exercise S3 leak cleanup, not crypto content.
+    VALID_KEY = "A" * 43
+    CHUNK = 25 * 1024 * 1024
+    OVERHEAD = 28
+
+    def _make_drive_file(self, user, plaintext_size: int) -> TransferFile:
+        draft = TransferDraftFactory(owner=user, encryption_chunk_size=self.CHUNK)
+        chunks = -(-plaintext_size // self.CHUNK)
         return TransferFileFactory(
             transfer=None,
             draft=draft,
             filename="from-drive.bin",
-            size=declared_size,
+            size=plaintext_size + chunks * self.OVERHEAD,
+            plaintext_size=plaintext_size,
             source_url="https://fichiers.example.gouv.fr/api/v1.0/items/x/download/",
         )
 
@@ -113,7 +121,7 @@ class TestImportDriveFileTaskLeaks:
         # Declare a size big enough to fit the two chunks we're about to
         # stream plus some, so the failure happens inside the streaming
         # loop and not at the post-loop size check.
-        tf = self._make_drive_file(user, declared_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
+        tf = self._make_drive_file(user, plaintext_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
 
         # Mock the streaming response: yield two chunks, then raise — the
         # realistic "Drive dropped the connection mid-download" shape, with
@@ -131,9 +139,12 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), self.VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        # The row is kept and marked failed so the finalize poll can
+        # surface it; the bucket must still be clean.
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_size_mismatch_after_full_stream_leaves_no_orphan(
@@ -145,7 +156,7 @@ class TestImportDriveFileTaskLeaks:
         bucket = settings.TRANSFERS_BUCKET_NAME
         # Declared size is larger than what we'll actually emit, so the
         # task's post-stream size check fires.
-        tf = self._make_drive_file(user, declared_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
+        tf = self._make_drive_file(user, plaintext_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -160,9 +171,12 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), self.VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        # The row is kept and marked failed so the finalize poll can
+        # surface it; the bucket must still be clean.
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_stream_dies_before_any_part_lands(self, user, live_s3_bucket):
@@ -172,7 +186,7 @@ class TestImportDriveFileTaskLeaks:
         bucket = settings.TRANSFERS_BUCKET_NAME
         # Declared size is irrelevant here — the iterator raises before any
         # byte is streamed — but keep it consistent with the other tests.
-        tf = self._make_drive_file(user, declared_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
+        tf = self._make_drive_file(user, plaintext_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -186,9 +200,12 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), self.VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        # The row is kept and marked failed so the finalize poll can
+        # surface it; the bucket must still be clean.
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_complete_multipart_failure_leaves_no_orphan(
@@ -201,7 +218,7 @@ class TestImportDriveFileTaskLeaks:
         bucket = settings.TRANSFERS_BUCKET_NAME
         # One chunk fully streamed, declared size matches — so the post-stream
         # size check passes and we reach CompleteMultipartUpload.
-        tf = self._make_drive_file(user, declared_size=_DRIVE_IMPORT_CHUNK_SIZE)
+        tf = self._make_drive_file(user, plaintext_size=_DRIVE_IMPORT_CHUNK_SIZE)
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -225,9 +242,12 @@ class TestImportDriveFileTaskLeaks:
                 side_effect=forced_error,
             ),
         ):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), self.VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        # The row is kept and marked failed so the finalize poll can
+        # surface it; the bucket must still be clean.
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_db_save_failure_after_mpu_created_leaves_no_orphan(
@@ -238,7 +258,7 @@ class TestImportDriveFileTaskLeaks:
         # a DB hiccup here used to escape the narrow except tuple and leak
         # the freshly-created MPU.
         bucket = settings.TRANSFERS_BUCKET_NAME
-        tf = self._make_drive_file(user, declared_size=_DRIVE_IMPORT_CHUNK_SIZE)
+        tf = self._make_drive_file(user, plaintext_size=_DRIVE_IMPORT_CHUNK_SIZE)
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -259,9 +279,12 @@ class TestImportDriveFileTaskLeaks:
             patch("core.tasks.requests.get", return_value=mock_resp),
             patch.object(TransferFile, "save", _raise_on_first_post_mpu_save),
         ):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), self.VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        # The row is kept and marked failed so the finalize poll can
+        # surface it; the bucket must still be clean.
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
 

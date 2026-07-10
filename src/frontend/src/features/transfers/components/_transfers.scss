@@ -843,17 +843,16 @@
     display: flex;
     flex-direction: column;
     // Tighter than the files-col gap (xs/8px → 2xs/6px) so the title and
-    // its companion controls (gauge, encryption mode toggle, hint) read
-    // as a single header block, while still leaving a clear visual break
-    // above the dropzone.
+    // the gauge read as a single header block, while still leaving a clear
+    // visual break above the dropzone.
     gap: var(--c--globals--spacings--2xs);
   }
 
   // `.app-content h1` in styles/globals.scss adds `margin-bottom: 1.5rem`
-  // (24px) to any H1 — including this one. We need that out of the way
-  // so the header's internal gap is what spaces the title from the gauge
-  // / mode toggle below it. Match the global selector's specificity by
-  // qualifying with `.app-content`.
+  // (24px) to any H1 — including this one. We need that out of the way so
+  // the header's internal gap is what spaces the title from the gauge
+  // below it. Match the global selector's specificity by qualifying with
+  // `.app-content`.
   .app-content &__files-title {
     margin: 0;
     font-size: var(--c--globals--font--sizes--h4, 1.375rem);
@@ -861,12 +860,20 @@
     letter-spacing: -0.2px;
   }
 
-  // Wrapper around the E2E Cunningham Switch — the native `title` on
-  // the div surfaces the "locked once a file is added" tooltip without
-  // having to monkey with the Switch's internals.
-  &__mode-switch {
-    display: inline-flex;
-    align-self: flex-start;
+  // Confidential toggle in the options column. The native `title` on the
+  // outer div surfaces the greyed-state tooltip (busy / Drive present)
+  // without reaching into the Switch's internals.
+  &__confidential {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--2xs);
+  }
+
+  &__confidential-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--c--globals--spacings--xs);
   }
 
   &__mode-hint {
@@ -1311,6 +1318,15 @@
     }
   }
 
+  // Confidential + email: the decryption key to hand to recipients over a
+  // separate channel, boxed under the "email sent" confirmation.
+  &__key-share {
+    width: 100%;
+    max-width: 340px;
+    margin-top: var(--c--globals--spacings--sm);
+    text-align: left;
+  }
+
   &__expiry {
     margin: 0 0 var(--c--globals--spacings--md);
     font-size: var(--c--globals--font--sizes--sm);
@@ -1579,6 +1595,36 @@
 
     > .c__button {
       flex-shrink: 0;
+    }
+  }
+
+  // Confidential download with no key in the URL: the recipient pastes the
+  // key the sender shared out-of-band. Stacks the explainer alert over an
+  // input + Unlock button.
+  &__key-box {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--sm);
+    width: 100%;
+    margin-top: var(--c--globals--spacings--md);
+  }
+
+  &__key-input {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--c--globals--spacings--xs);
+    width: 100%;
+
+    > .c__field {
+      flex: 1;
+      min-width: 0;
+    }
+
+    > .c__button {
+      flex-shrink: 0;
+      // Nudge down so the button lines up with the input control, not its
+      // label row.
+      margin-top: 1.55rem;
     }
   }
 

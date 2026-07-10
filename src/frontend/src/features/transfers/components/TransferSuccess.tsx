@@ -28,25 +28,35 @@ export function TransferSuccess({
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
 
+  // Confidential transfers embed the key in the shared link (link mode) or
+  // hand it to the sender to pass out-of-band (email mode). Normal transfers
+  // get a bare, reusable link — the backend serves the key to recipients.
   const baseUrl = transferBaseUrl(transfer.public_token);
   const downloadUrl =
-    baseUrl && (!transfer.e2e_encrypted || e2eFragment)
-      ? transfer.e2e_encrypted
+    baseUrl && (!transfer.confidential || e2eFragment)
+      ? transfer.confidential
         ? `${baseUrl}#${e2eFragment}`
         : baseUrl
       : "";
 
-  const handleCopy = async () => {
-    if (!downloadUrl) return;
+  const copyToClipboard = async (
+    value: string,
+    setFlag: (v: boolean) => void,
+  ) => {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText(downloadUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(value);
+      setFlag(true);
+      setTimeout(() => setFlag(false), 2000);
     } catch {
       // Clipboard may be unavailable on insecure contexts; swallow silently.
     }
   };
+  const handleCopy = () => copyToClipboard(downloadUrl, setCopied);
+  const handleCopyKey = () =>
+    copyToClipboard(e2eFragment ?? "", setKeyCopied);
 
   const isLink = transfer.sharing_mode === "link";
   // Only true when *every* file was actually scanned clean — not the "skipped"
@@ -75,10 +85,10 @@ export function TransferSuccess({
         downloadUrl ? (
           <>
             <p className="transfer-success__body">
-              {transfer.e2e_encrypted ? (
+              {transfer.confidential ? (
                 <Tooltip
                   content={t(
-                    "Encryption happens in your browser. The key is embedded in this link and never reaches our servers. Anyone with the link can read the files.",
+                    "The key is embedded in this link and never reaches our servers. Anyone with the full link can read the files. Copy it now, we won't show it again.",
                   )}
                   placement="top"
                 >
@@ -128,15 +138,47 @@ export function TransferSuccess({
           </p>
         )
       ) : (
-        <p className="transfer-success__body transfer-success__body--email">
-          {t(
-            "The download email has been sent successfully. Your recipients have",
-          )}{" "}
-          <strong>
-            {t("{{count}} days", { count: daysUntil(transfer.expires_at) })}
-          </strong>{" "}
-          {t("to download your items.")}
-        </p>
+        <>
+          <p className="transfer-success__body transfer-success__body--email">
+            {t(
+              "The download email has been sent successfully. Your recipients have",
+            )}{" "}
+            <strong>
+              {t("{{count}} days", { count: daysUntil(transfer.expires_at) })}
+            </strong>{" "}
+            {t("to download your items.")}
+          </p>
+          {transfer.confidential && e2eFragment && (
+            <div className="transfer-success__key-share">
+              <p className="transfer-success__body">
+                {t(
+                  "This transfer is confidential: the email contains only the link. Send this decryption key to your recipients over a separate, trusted channel. We never received it and won't show it again.",
+                )}
+              </p>
+              <div className="transfer-success__link-box">
+                <Input
+                  readOnly
+                  hideLabel
+                  label={t("Decryption key")}
+                  value={e2eFragment}
+                  variant="classic"
+                  fullWidth
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <Button
+                  type="button"
+                  size="small"
+                  color="neutral"
+                  variant="tertiary"
+                  icon={keyCopied ? <Checkmark /> : <Copy />}
+                  onClick={handleCopyKey}
+                  aria-label={keyCopied ? t("Key copied!") : t("Copy key")}
+                  title={keyCopied ? t("Key copied!") : t("Copy key")}
+                />
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       <div className="transfer-success__actions">

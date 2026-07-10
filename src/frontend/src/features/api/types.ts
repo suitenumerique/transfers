@@ -29,7 +29,11 @@ export interface TransferListItem {
   downloaded: boolean;
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
-  e2e_encrypted: boolean;
+  // Every transfer is encrypted; ``confidential`` marks the ones whose key
+  // we never hold (the recipient supplies it from the link fragment or by
+  // pasting it). Non-confidential transfers decrypt transparently because
+  // the backend serves the key.
+  confidential: boolean;
 }
 
 export interface TransferFile {
@@ -66,7 +70,9 @@ export interface TransferDetail {
   recipients: TransferRecipient[];
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
-  e2e_encrypted: boolean;
+  confidential: boolean;
+  // Plaintext bytes per crypto chunk. Null only for legacy transfers
+  // created before encryption was mandatory.
   encryption_chunk_size: number | null;
 }
 
@@ -119,6 +125,10 @@ export interface DownloadTransferFull {
   is_owner: boolean;
   sharing_mode: SharingMode;
   auto_archive_on_download: boolean;
-  e2e_encrypted: boolean;
+  confidential: boolean;
   encryption_chunk_size: number | null;
+  // URL-safe base64 of the AES key, served for non-confidential transfers so
+  // the SW decrypts transparently. Empty for confidential transfers (the key
+  // never reached us) and legacy plaintext transfers.
+  encryption_key: string;
 }

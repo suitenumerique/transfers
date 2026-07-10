@@ -75,6 +75,11 @@ export interface FinalizeMetadata {
   recipients?: string[];
   sensitive?: boolean;
   auto_archive_on_download?: boolean;
+  // When true, the decryption key is NOT sent to the backend: the recipient
+  // supplies it from the link fragment or by pasting it. When false (normal),
+  // the key is posted at finalize so the backend can serve it to recipients
+  // and encrypt any Drive imports server-side.
+  confidential?: boolean;
 }
 
 // Shape of an item returned by the Drive picker after Nathan's fix — the
@@ -89,11 +94,12 @@ export interface DrivePickedItem {
 export interface TransferDraftHandle {
   draftId: string | null;
   files: DraftFile[];
-  // URL-safe base64 of the AES-256 key when the draft is E2E-encrypted.
-  // Generated lazily on the first add-file call when the caller passes
-  // `e2eEncrypted: true`. The caller appends it to the finalized
-  // transfer's URL fragment so the recipient can decrypt.
-  e2eKeyFragment: string | null;
+  // URL-safe base64 of the AES-256 key. Every transfer is encrypted, so this
+  // is generated on the first add-file call. For confidential transfers the
+  // caller appends it to the URL fragment (link) or surfaces it for the
+  // sender to share out-of-band (email); for normal transfers it is posted
+  // to the backend at finalize instead.
+  keyFragment: string | null;
   // Two-phase submit state:
   // - `isAwaitingUploads`: user clicked Send but uploads are still running.
   //   Auto-finalize is armed but cancellable via `cancelSubmit()` or by
@@ -112,18 +118,14 @@ export interface TransferDraftHandle {
   // True while a `retryScan` request is in flight — used to disable the retry
   // affordance so a second click can't fire an overlapping re-submit.
   isRetrying: boolean;
+  // True while finalize is importing Drive files server-side (202 loop).
+  isImportingDrive: boolean;
   error: string | null;
-  // Lock the draft as E2E-encrypted. Honoured only on the first add-file
-  // call (the mode is set when the draft is born and can't change after).
-  // Generates a random key kept in-memory + surfaced via `e2eKeyFragment`.
-  setE2eEncrypted: (on: boolean) => void;
-  e2eEncrypted: boolean;
-  // Bigger-hammer mode change: tear down the existing draft + any uploads,
-  // flip the mode, and re-register every file from the local File refs
-  // (re-encrypting in the process if the new mode is E2E). Rejects with
-  // `restart_blocked_drive` if any file in the draft was imported from
-  // Drive — those have no local File to replay.
-  restartWithMode: (newMode: boolean) => Promise<void>;
+  // Confidentiality is chosen at finalize, not locked at draft creation, so
+  // this is a free toggle: the ciphertext is identical either way and the key
+  // is only ever sent to the backend for a non-confidential finalize.
+  setConfidential: (on: boolean) => void;
+  confidential: boolean;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
   removeFile: (key: string) => void;
@@ -185,8 +187,8 @@ const POLL_INTERVAL_MS = 200;
 const SCAN_POLL_INTERVAL_MS = 2000;
 const SCAN_MAX_WAIT_MS = 120000;
 
-interface ScanPendingResponse {
-  reason: "scan_pending";
+interface FinalizePendingResponse {
+  reason: "scan_pending" | "drive_importing";
   pending_file_ids: string[];
 }
 
@@ -213,14 +215,15 @@ export function useTransferDraft(): TransferDraftHandle {
   // Ref guard mirrors `isRetrying` so overlapping calls are rejected without
   // waiting for the state to flush.
   const isRetryingRef = useRef(false);
+  const [isImportingDrive, setIsImportingDrive] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [e2eEncrypted, setE2eEncryptedState] = useState(false);
-  const [e2eKeyFragment, setE2eKeyFragment] = useState<string | null>(null);
+  const [confidential, setConfidentialState] = useState(false);
+  const [keyFragment, setKeyFragment] = useState<string | null>(null);
   // CryptoKey is opaque and non-serialisable; kept off React state so we
   // don't churn the tree when it lands (the fragment string is the only
   // value the UI cares about).
   const e2eKeyRef = useRef<CryptoKey | null>(null);
-  const e2eEncryptedRef = useRef(false);
+  const confidentialRef = useRef(false);
 
   // Refs mirror state so async work can observe the freshest list without
   // waiting for the next render.
@@ -264,29 +267,21 @@ export function useTransferDraft(): TransferDraftHandle {
     draftInitPromiseRef.current = null;
     setDraftId(null);
     writeFiles([]);
-    // Per-draft crypto state goes (a fresh draft will mint a new key)
-    // but the E2E *intent* sticks — removing the last file shouldn't
-    // silently flip the user's encryption preference off, and a new
-    // submit-cycle starts on a fresh mount with the default anyway.
+    // Per-draft crypto state goes (a fresh draft mints a new key). The
+    // confidential *intent* sticks — removing the last file shouldn't
+    // silently flip the user's preference.
     e2eKeyRef.current = null;
-    setE2eKeyFragment(null);
+    setKeyFragment(null);
   }, [writeFiles]);
 
-  const setE2eEncrypted = useCallback(
-    (on: boolean) => {
-      // Once the draft exists, the mode is frozen — the backend rejects
-      // mismatched follow-up add-file calls. Silently ignore the toggle
-      // rather than tear the draft down behind the user.
-      if (draftIdRef.current !== null) return;
-      e2eEncryptedRef.current = on;
-      setE2eEncryptedState(on);
-      if (!on) {
-        e2eKeyRef.current = null;
-        setE2eKeyFragment(null);
-      }
-    },
-    [],
-  );
+  const setConfidential = useCallback((on: boolean) => {
+    // Free toggle: confidentiality is decided at finalize, so flipping it
+    // before send costs nothing (identical ciphertext, key withheld or not).
+    // The encryption key itself is always generated and kept — only whether
+    // it is posted to the backend at finalize changes.
+    confidentialRef.current = on;
+    setConfidentialState(on);
+  }, []);
 
   const abortDraft = useCallback(async () => {
     if (currentUploaderRef.current) {
@@ -321,33 +316,32 @@ export function useTransferDraft(): TransferDraftHandle {
     const key = next.key;
     const localFile = next.file;
 
-    // E2E mode: encrypt each plaintext chunk before it leaves the browser.
-    // The crypto chunk size MUST equal the multipart chunk size — one S3
-    // part = one self-contained AES-GCM chunk (IV ‖ ciphertext ‖ tag), so
-    // the recipient's SW can decrypt sequentially without any boundary
-    // metadata beyond chunk_size + plaintext_size. The AAD binds each
-    // chunk to its (file, part) position, so storage tampering cannot
-    // swap or reorder chunks without breaking GCM tag verification.
-    const e2eKey = e2eEncryptedRef.current ? e2eKeyRef.current : null;
-    const transformChunk = e2eKey
-      ? async (blob: Blob, partNumber: number) => {
-          const buf = await blob.arrayBuffer();
-          const ct = await encryptChunk(
-            e2eKey,
-            buf,
-            aadForChunk(backendId, partNumber),
-          );
-          // Cast: Blob's `BlobPart` widened to `Uint8Array<ArrayBuffer>`
-          // in current lib.dom.d.ts; our ct is `Uint8Array<ArrayBufferLike>`
-          // by inference, identical at runtime.
-          return new Blob([ct as unknown as BlobPart], {
-            type: "application/octet-stream",
-          });
-        }
-      : undefined;
-    const ciphertextTotal = e2eKey
-      ? ciphertextSize(localFile.size, chunkSize)
-      : localFile.size;
+    // Every transfer is encrypted, so every chunk is encrypted before it
+    // leaves the browser. The crypto chunk size MUST equal the multipart
+    // chunk size — one S3 part = one self-contained AES-GCM chunk
+    // (IV ‖ ciphertext ‖ tag), so the recipient's SW can decrypt
+    // sequentially without any boundary metadata beyond chunk_size +
+    // plaintext_size. The AAD binds each chunk to its (file, part)
+    // position, so storage tampering cannot swap or reorder chunks without
+    // breaking GCM tag verification. The key is generated at first add-file
+    // and always present here.
+    const e2eKey = e2eKeyRef.current;
+    if (!e2eKey) return;
+    const transformChunk = async (blob: Blob, partNumber: number) => {
+      const buf = await blob.arrayBuffer();
+      const ct = await encryptChunk(
+        e2eKey,
+        buf,
+        aadForChunk(backendId, partNumber),
+      );
+      // Cast: Blob's `BlobPart` widened to `Uint8Array<ArrayBuffer>`
+      // in current lib.dom.d.ts; our ct is `Uint8Array<ArrayBufferLike>`
+      // by inference, identical at runtime.
+      return new Blob([ct as unknown as BlobPart], {
+        type: "application/octet-stream",
+      });
+    };
+    const ciphertextTotal = ciphertextSize(localFile.size, chunkSize);
 
     const uploader = new MultipartUploader({
       file: localFile,
@@ -408,68 +402,11 @@ export function useTransferDraft(): TransferDraftHandle {
       });
   }, [files, updateFile]);
 
-  // --- Import poller ---
-  // Drive imports run server-side (celery task). We poll the draft endpoint
-  // to detect `importing → done` transitions. Started lazily when at least
-  // one file is in the `importing` state; stopped as soon as none remain.
-  // If a file we believe is importing has disappeared server-side, the
-  // task failed → mark it error locally so the UI surfaces it.
-  useEffect(() => {
-    const hasImporting = files.some((f) => f.state === "importing");
-    if (!hasImporting) return;
-    const id = draftIdRef.current;
-    if (!id) return;
-
-    let cancelled = false;
-
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
-        if (cancelled) return;
-
-        const byBackendId = new Map(resp.files.map((f) => [f.id, f]));
-        const localByKey = new Map(
-          filesRef.current.map((f) => [f.key, f] as const),
-        );
-
-        const next = Array.from(localByKey.values()).map((f) => {
-          if (f.state !== "importing") return f;
-          if (!f.backendId) return f;
-          const server = byBackendId.get(f.backendId);
-          if (!server) {
-            return {
-              ...f,
-              state: "error" as DraftFileState,
-              error: "Import from Drive failed.",
-            };
-          }
-          if (server.state === "done") {
-            return {
-              ...f,
-              state: "done" as DraftFileState,
-              loaded: f.total,
-            };
-          }
-          return f;
-        });
-        const mutated = next.some((f, i) => {
-          const prev = filesRef.current[i];
-          return prev && (prev.state !== f.state || prev.loaded !== f.loaded);
-        });
-        if (mutated) writeFiles(next);
-      } catch {
-        // Transient errors are fine — the next tick will catch the state.
-      }
-    };
-
-    const handle = window.setInterval(tick, 2000);
-    void tick();
-    return () => {
-      cancelled = true;
-      window.clearInterval(handle);
-    };
-  }, [files, writeFiles]);
+  // Drive imports no longer run during the draft phase — they're deferred
+  // to finalize (the backend needs the key, which only arrives then for a
+  // non-confidential transfer). A Drive file is marked ``done`` on
+  // registration (ready to send); the finalize 202 loop reports its
+  // server-side import progress.
 
   // --- Scan poller ---
   // Once a file's upload is done, its antivirus verdict lands asynchronously
@@ -591,18 +528,21 @@ export function useTransferDraft(): TransferDraftHandle {
       knownDraftId: string | null,
     ): Promise<string | null> => {
       try {
-        // `size` is what S3 will store. For E2E we declare the post-encryption
-        // size so the backend's head_object check passes; plaintext_size
-        // tracks the file's pre-encryption size for the recipient UI.
-        const e2eOn = e2eEncryptedRef.current && !draftFile.sourceUrl;
-        if (e2eOn && !e2eKeyRef.current) {
+        // Every transfer is encrypted, so ``size`` is always the post-
+        // encryption size the backend's head_object check validates, and
+        // ``plaintext_size`` tracks the pre-encryption size. The key is
+        // generated on the first file (browser or Drive): browser files are
+        // encrypted client-side with it, and a non-confidential Drive import
+        // is encrypted server-side with the same key at finalize.
+        if (!e2eKeyRef.current) {
           const { cryptoKey, fragment } = await generateTransferKey();
           e2eKeyRef.current = cryptoKey;
-          setE2eKeyFragment(fragment);
+          setKeyFragment(fragment);
         }
-        const declaredSize = e2eOn
-          ? ciphertextSize(draftFile.size, chunkSizeFromConfig)
-          : draftFile.size;
+        const declaredSize = ciphertextSize(
+          draftFile.size,
+          chunkSizeFromConfig,
+        );
         const resp = await apiFetch<AddFileResponse>(
           "/drafts/add-file/",
           {
@@ -611,19 +551,10 @@ export function useTransferDraft(): TransferDraftHandle {
               ...(knownDraftId ? { draft_id: knownDraftId } : {}),
               filename: draftFile.name,
               size: declaredSize,
+              plaintext_size: draftFile.size,
               mime_type: draftFile.mimeType || "application/octet-stream",
               ...(draftFile.sourceUrl
                 ? { source_url: draftFile.sourceUrl }
-                : {}),
-              // E2E flag only matters on the call that births the draft;
-              // follow-ups omit it (the mode is locked on the draft row).
-              // The chunk size is server-imposed, not negotiated, so we
-              // don't ship it either.
-              ...(e2eOn
-                ? {
-                    e2e_encrypted: true,
-                    plaintext_size: draftFile.size,
-                  }
                 : {}),
             }),
           },
@@ -669,14 +600,15 @@ export function useTransferDraft(): TransferDraftHandle {
           return null;
         }
 
-        // Drive-import path: no upload_id / s3_key / chunk_size echoed
-        // back, the celery task owns the multipart from here. Straight to
-        // "importing" — the upload pump only runs on "registered" files
-        // (which always have a File), so imports skip it entirely.
+        // Drive-import path: no upload_id / s3_key / chunk_size echoed back.
+        // The import is deferred to finalize (encrypted server-side there),
+        // so the file is immediately ``done`` locally — ready to send. The
+        // finalize 202 loop reports the actual import progress.
         if (draftFile.sourceUrl) {
           updateFile(draftFile.key, {
             backendId: resp.transfer_file_id,
-            state: "importing",
+            state: "done",
+            loaded: draftFile.total,
           });
         } else {
           updateFile(draftFile.key, {
@@ -913,34 +845,39 @@ export function useTransferDraft(): TransferDraftHandle {
         // finalize is the one write that creates the Transfer with its
         // title / sharing mode / recipients / expiry in a single atomic
         // step. The returned Transfer has a *different* id from the draft.
-        // Finalize is antivirus-gated: 200 = transfer created, 202 = files
-        // still scanning (poll again), 4xx with reason "scan_blocked" = a file
-        // was rejected (thrown by apiFetch, surfaced to the caller).
-        // E2E + email: pass the URL fragment along so the email task can
-        // embed the full decryption link. Skipped for link mode (the
-        // sender's browser owns the fragment) and for non-E2E transfers.
-        const fragment = e2eKeyFragment;
+        //
+        // Confidentiality is decided here: for a non-confidential transfer we
+        // post the key so the backend can serve it to recipients (and encrypt
+        // Drive imports server-side). For a confidential transfer the key is
+        // withheld — it never crosses the /finalize/ wire.
+        //
+        // Finalize is a 202 loop: it returns 202 while files are scanning or
+        // Drive files are still importing, and 200 with the Transfer once
+        // everything has landed. A 4xx (scan_blocked, drive_import_failed…)
+        // is thrown by apiFetch and surfaced to the caller.
+        const isConfidential = confidentialRef.current;
         const finalizeBody = {
           ...metadata,
-          ...(fragment && metadata.sharing_mode === "email"
-            ? { key_fragment: fragment }
-            : {}),
+          confidential: isConfidential,
+          ...(isConfidential ? {} : { encryption_key: keyFragment }),
         };
         const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
         let finalized: TransferDetail;
         for (;;) {
-          const resp = await apiFetch<TransferDetail | ScanPendingResponse>(
+          const resp = await apiFetch<TransferDetail | FinalizePendingResponse>(
             `/drafts/${id}/finalize/`,
             {
               method: "POST",
               body: JSON.stringify(finalizeBody),
             },
           );
-          if (resp && (resp as ScanPendingResponse).reason === "scan_pending") {
+          const reason = (resp as FinalizePendingResponse)?.reason;
+          if (reason === "scan_pending" || reason === "drive_importing") {
             if (Date.now() > scanDeadline) {
-              throw new Error("scan_timeout");
+              throw new Error("finalize_timeout");
             }
-            setIsScanning(true);
+            if (reason === "scan_pending") setIsScanning(true);
+            else setIsImportingDrive(true);
             await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
             continue;
           }
@@ -955,10 +892,11 @@ export function useTransferDraft(): TransferDraftHandle {
         setAwaitingUploads(false);
         setIsFinalizing(false);
         setIsScanning(false);
+        setIsImportingDrive(false);
         cancelSubmitRef.current = false;
       }
     },
-    [queryClient, resetLocal, setAwaitingUploads, e2eKeyFragment],
+    [queryClient, resetLocal, setAwaitingUploads, keyFragment],
   );
 
   const cancelSubmit = useCallback(() => {
@@ -966,32 +904,6 @@ export function useTransferDraft(): TransferDraftHandle {
       cancelSubmitRef.current = true;
     }
   }, []);
-
-  const restartWithMode = useCallback(
-    async (newMode: boolean): Promise<void> => {
-      // Snapshot the local Files first — abortDraft() empties filesRef
-      // by way of resetLocal, and we need the originals to re-feed
-      // addFile after the wipe.
-      const snapshot = filesRef.current.map((f) => f.file).filter((f): f is File => f !== null);
-      // Imports from Drive have `file === null` (the bytes live server-
-      // side and were never in the browser). Refuse to replay if any
-      // are present, since we'd silently drop them.
-      if (snapshot.length !== filesRef.current.length) {
-        const err = new Error("restart_blocked_drive");
-        err.name = "RestartBlockedError";
-        throw err;
-      }
-      await abortDraft();
-      // abortDraft -> resetLocal cleared draftIdRef, so setE2eEncrypted
-      // is allowed to flip the intent. The cryptoKey is also reset so
-      // the next registerFile mints a fresh one.
-      setE2eEncrypted(newMode);
-      for (const f of snapshot) {
-        addFile(f);
-      }
-    },
-    [abortDraft, setE2eEncrypted, addFile],
-  );
 
   return {
     draftId,
@@ -1002,11 +914,11 @@ export function useTransferDraft(): TransferDraftHandle {
     scanTimedOut,
     retryScan,
     isRetrying,
+    isImportingDrive,
     error,
-    e2eEncrypted,
-    e2eKeyFragment,
-    setE2eEncrypted,
-    restartWithMode,
+    confidential,
+    keyFragment,
+    setConfidential,
     addFile,
     attachFromDrive,
     removeFile,

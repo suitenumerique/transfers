@@ -1,14 +1,20 @@
-# End-to-end encryption — developer guide
+# Transfer encryption — developer guide
 
-This is the consolidated developer reference for E2E-encrypted transfers.
+This is the consolidated developer reference for encrypted transfers.
 The inline comments in the code are the source of truth for individual
 mechanisms; this doc gives the map and the rationale, then points back
 to the code.
 
+**Every transfer is encrypted client-side.** A per-transfer
+``confidential`` flag decides whether the backend also holds the
+decryption key (normal) or never sees it (confidential). "E2E" in older
+comments/paths refers to the confidential case; the crypto is identical
+in both.
+
 Audience: developers maintaining the upload pipeline, the download view,
 the recipient Service Worker, or the backend serializers that touch the
-E2E fields. If you're hunting a bug, start here, then jump to the file
-referenced for the mechanism you care about.
+encryption fields. If you're hunting a bug, start here, then jump to the
+file referenced for the mechanism you care about.
 
 ## Table of contents
 
@@ -23,65 +29,87 @@ referenced for the mechanism you care about.
 9. [Download pipeline](#download-pipeline)
 10. [Authentication binding (AES-GCM + AAD)](#authentication-binding-aes-gcm--aad)
 11. [Backend bookkeeping](#backend-bookkeeping)
-12. [Modes: link vs email](#modes-link-vs-email)
+12. [Normal vs confidential (and Drive)](#normal-vs-confidential-and-drive)
 13. [Validation gates and where they live](#validation-gates-and-where-they-live)
 14. [Operational notes](#operational-notes)
 15. [Failure modes](#failure-modes)
 
 ---
 
-## What "E2E" means here
+## What encryption means here
 
-End-to-end encryption is **opt-in per transfer**, toggled by the sender
-above the dropzone (`TransferForm`). When the flag is on:
+Files are AES-256-GCM encrypted in the sender's browser before any byte
+leaves the page; S3 stores ciphertext only. What varies is who holds the
+key, set by the ``confidential`` toggle in the form's options column
+(`TransferForm`):
 
-- The browser generates a fresh AES-256 key. The backend never sees it
-  in link mode; in email mode the key transits the SMTP pipeline once
-  before being forgotten (documented trade-off, see
-  [Modes](#modes-link-vs-email)).
-- Every byte of every file is encrypted in the sender's browser before
-  it leaves the page.
-- S3 stores ciphertext only. The backend has no path to read the bytes.
-- The recipient's browser, with the key extracted from the URL fragment,
-  decrypts on the fly through a Service Worker that streams plaintext
-  straight to the native download manager.
+- **Normal (not confidential)**: the browser posts the key to the backend
+  at finalize. We store it on the `Transfer` row and serve it to
+  recipients via the download API, so they decrypt transparently (a bare
+  `/t/<token>` link just works). This is encryption **at rest**: an S3
+  breach alone yields nothing (the key lives in the DB), a DB breach
+  alone yields nothing (the ciphertext lives in S3). You need both.
+- **Confidential**: the key never reaches the backend. In link mode it
+  rides in the URL fragment (`#k=…`); in email mode the email carries a
+  bare link and the sender passes the key out-of-band, the recipient
+  pasting it on the download page. This is true **end-to-end**: only the
+  sender's and recipient's browsers ever hold the key.
+
+The choice is made at **finalize**, not locked at draft creation: the
+ciphertext is identical either way, so toggling the flag before send
+costs nothing (no re-upload, no premature key exposure).
+
+The recipient's browser decrypts on the fly through a Service Worker that
+streams plaintext straight to the native download manager, whether the
+key came from the backend, the URL fragment, or a paste.
 
 What this is **not**:
 
-- Not transport encryption. TLS already covers the wire; E2E is about
-  what we store and what our infra ever sees.
+- Not transport encryption. TLS already covers the wire; this is about
+  what we store and, for confidential transfers, what our infra ever sees.
 - Not protection against compromise of our frontend code. A successful
   XSS on the page that runs the encryption sees the key (the JS that
   encrypts has it in memory). LaGaufre is loaded without SRI for
-  pragmatic reasons; a compromised widget would break the E2E promise.
+  pragmatic reasons; a compromised widget would break the promise.
 - Not anti-replay at the file level. We don't sign upload requests; a
-  recipient who shares the link gives away the full ability to download.
+  recipient who shares the link (and, for confidential, the key) gives
+  away the full ability to download.
 
 ## Threat model
 
-**In scope**
+The guarantees differ by mode. **Every** transfer resists an S3-only
+breach (ciphertext without the key). **Confidential** transfers
+additionally resist a full backend compromise (the key never reaches us).
 
-- Snapshot of the S3 bucket (an attacker who steals the raw ciphertext
-  bytes cannot read them).
-- A read-only database snapshot (transfers store no keys).
-- A compromised Redis broker or Celery worker (only sees ciphertext
-  references; in email mode sees the key transiently for the seconds
-  the send task runs).
+**In scope (all transfers)**
+
+- Snapshot of the S3 bucket alone (raw ciphertext, no key).
 - Tampering at the storage layer: chunk swap, chunk reorder, chunk
   injection. Caught by AES-GCM tag + AAD, see
   [Authentication binding](#authentication-binding-aes-gcm--aad).
 
+**In scope (confidential only)**
+
+- A read-only database snapshot (confidential transfers store no key).
+- A compromised Redis broker or Celery worker (no fragment ever reaches
+  Celery kwargs, task payloads, or the outbound email body — email
+  confidential transfers ship a bare link).
+- A full backend compromise short of the frontend: with only ciphertext
+  (S3) and no key anywhere, the data stays unreadable.
+
 **Out of scope**
 
+- For **normal** transfers: a breach that reads both S3 **and** the DB.
+  The key is a `Transfer` column stored in cleartext (Django DB-level
+  encryption would harden this). This is the accepted tradeoff for the
+  transparent-download convenience; use confidential for stricter needs.
 - Compromise of the sender's browser (key generation site).
-- Compromise of the recipient's browser (key decryption site).
+- Compromise of the recipient's browser (key decryption/paste site).
 - Compromise of our frontend JS (XSS, malicious dependency, supply-chain
   hit on a CDN we trust). We mitigate with CSP (`Caddyfile`), but a
   successful XSS reads the key.
-- Mail providers / mailbox owners in email mode (the key is literally
-  in the email body).
-- A social engineer who tricks the sender into copying the link with
-  fragment somewhere indexed (chat history, ticket system).
+- A social engineer who tricks the sender into copying a confidential link
+  with fragment (or the pasted key) somewhere indexed.
 
 ## The crypto primitive
 
@@ -157,6 +185,9 @@ how we compose the inputs or interpret the outputs.
 - The two-step download hop (backend `?as=json`, then anonymous S3 fetch).
 - Counting `partNumber` on both sides (WebCrypto has no notion of position).
 - Persisting `plaintext_size` and `encryption_chunk_size` on the Transfer.
+- The server-side mirror of all this in `core/services/encryption.py`,
+  used only to encrypt Drive imports at finalize (same layout, same AAD,
+  Python `cryptography` instead of WebCrypto).
 
 **API contract** (compact form of what crosses the boundary):
 
@@ -184,16 +215,21 @@ kept in two forms:
 - `cryptoKey` (opaque `CryptoKey` handle, `extractable: false`) is
   what `subtle.encrypt`/`decrypt` take. Can't be logged or exported
   back to bytes. Lives only in the sender's page memory.
-- `fragment` (43-char base64url string) is the transportable form.
-  Embedded in `/t/<token>#<fragment>`; the URL fragment is never sent
-  in HTTP requests (browsers keep it client-side), so it stays out of
-  our backend in link mode. In email mode it's additionally posted to
-  `/finalize/` and forwarded as a Celery kwarg to the email task.
+- `fragment` (43-char base64url string) is the transportable form,
+  generated on the first add-file. Where it goes at finalize depends on
+  the mode:
+  - **Normal**: posted once to `/finalize/` as `encryption_key` and stored
+    on the `Transfer`. The download API then serves it to recipients.
+  - **Confidential**: never posted. In link mode it stays in the URL
+    fragment (`/t/<token>#<fragment>`, which browsers keep client-side);
+    in email mode the sender shares it out-of-band.
 
-On the recipient side, `DownloadView` reads the fragment on mount,
-hands it to the SW via `postMessage`, then strips it from the URL bar
-with `history.replaceState`. The SW holds the key in memory until the
-page unmounts (`e2e-unregister`).
+On the recipient side, `DownloadView` resolves the key from whichever
+source applies — the backend (`transfer.encryption_key`, normal), the URL
+fragment (confidential link), or a paste box (confidential without a
+fragment) — hands it to the SW via `postMessage`, and (for the fragment
+case) strips it from the URL bar with `history.replaceState`. The SW
+holds the key in memory until the page unmounts (`e2e-unregister`).
 
 ## Upload pipeline
 
@@ -266,28 +302,35 @@ Backend storage (see also [Backend bookkeeping](#backend-bookkeeping)):
 ## Download pipeline
 
 The recipient flow is the inverse of upload, with two added wrinkles:
-the key extraction from the URL fragment, and the Service Worker that
-intercepts the actual byte stream.
+sourcing the key, and the Service Worker that intercepts the byte
+stream.
 
 **Phase 1 — page load and SW handshake:**
 
+`DownloadView` first resolves the key from whichever source applies:
+
+- **Normal**: the download payload (`/downloads/<token>/`) carries
+  `encryption_key` (the backend holds it). Used directly, transparently.
+- **Confidential + link**: the key is in `window.location.hash`; the
+  payload's `encryption_key` is empty.
+- **Confidential without a fragment** (email, or a bare link): no key
+  available, so `DownloadView` shows a paste box (`e2eState = "need-key"`)
+  and waits for the recipient to enter the key.
+
 ```
-Recipient opens https://transferts.../t/<token>#<fragment>
-    │
-    ▼
 DownloadView mounts and, in order:
-    1. reads window.location.hash → fragment
-    2. calls ensureE2eServiceWorker():
-         registers /sw.js if not already, then waits for the SW to
-         take control of the page (controllerchange event, bounded
-         by CONTROLLER_WAIT_MS)
-    3. calls registerE2eKey(sw, token, fragment, files, chunkSize):
-         base64UrlDecode(fragment) → 32 key bytes
+    1. resolve key: transfer.encryption_key (normal) OR
+       window.location.hash (confidential link) OR paste box
+    2. ensureE2eServiceWorker():
+         register /sw.js if needed, wait for the SW to control the
+         page (controllerchange, bounded by CONTROLLER_WAIT_MS)
+    3. registerE2eKey(sw, token, keyStr, files, chunkSize):
+         base64UrlDecode(keyStr) → 32 key bytes
          postMessage to SW { type: "e2e-register", token, ... }
-         waits for e2e-register-ack (or -error), bounded by
-         REGISTER_ACK_WAIT_MS
-    4. history.replaceState() strips #<fragment> from the URL bar
-    5. sets e2eState = "ready" → download buttons become clickable
+         wait for e2e-register-ack / -error (REGISTER_ACK_WAIT_MS)
+    4. for the fragment case, history.replaceState() strips it from
+       the URL bar
+    5. e2eState = "ready" → download buttons become clickable
 ```
 
 **Phase 2 — the user clicks a file:**
@@ -391,123 +434,94 @@ match the encrypt-side binding"`.
 
 ## Backend bookkeeping
 
-Three fields, two model rows:
-
 ```
 TransferDraft (lasts from first add-file to finalize / abort):
-  e2e_encrypted            BooleanField, default False
-  encryption_chunk_size    IntegerField, null=True
-                           Set to settings.TRANSFER_CHUNK_SIZE by the
-                           viewset on create when e2e_encrypted=True.
+  encryption_chunk_size    IntegerField, null=True by column, but the
+                           viewset sets it unconditionally to
+                           settings.TRANSFER_CHUNK_SIZE on create.
                            Server-imposed, never client-provided.
 
-Transfer (created at finalize, mirrors the above):
-  e2e_encrypted            BooleanField, default False
-  encryption_chunk_size    IntegerField, null=True
-                           Copied verbatim from the draft at finalize.
+Transfer (created at finalize):
+  encryption_chunk_size    IntegerField, null=True, copied from the draft.
+                           ``is_encrypted`` == (this IS NOT NULL); NULL
+                           marks a plaintext transfer.
+  confidential             BooleanField, default False.
+  encryption_key           CharField, blank. The base64url key, populated
+                           for non-confidential transfers (empty for
+                           confidential ones and plaintext ones). Served to
+                           recipients by the download API.
 
 TransferFile:
-  plaintext_size           IntegerField, null=True
-                           Set only when the parent (draft / transfer)
-                           is E2E. Used by the SW as Content-Length
-                           and by the recipient UI for size display.
+  plaintext_size           IntegerField, the pre-encryption size. Used by
+                           the SW as Content-Length and by the UI for
+                           display.
+  import_failed_at         DateTimeField, null=True. Set when a Drive
+                           import fails at finalize (see below).
 ```
 
-The draft mirrors the Transfer fields so `complete_upload` can decide
-"skip the antivirus scan" before finalize runs (an E2E draft's files
-are SKIPPED at completion; see the scan section in `draft.py`).
+`complete_upload` marks encrypted files `SKIPPED` (ClamAV can't read
+ciphertext, and it isn't wired to decrypt).
 
-## Modes: link vs email
+## Normal vs confidential (and Drive)
 
-| Aspect | Link mode | Email mode |
+The `confidential` flag is chosen at **finalize** and decides the key's
+fate. It is orthogonal to `sharing_mode` — both link and email support
+either — with one exception: **Drive imports force normal mode**.
+
+| | Normal (not confidential) | Confidential |
 |---|---|---|
-| `sharing_mode` value | `link` | `email` |
-| Key transport | URL fragment, sender shares manually | URL fragment embedded in an email the backend sends |
-| Backend ever sees the key | **No** | **Yes**, transiently |
-| Key path on the wire | sender browser → URL fragment → recipient browser | sender browser → HTTPS to /finalize/ → Redis (Celery broker) → Celery worker → SMTP relay → MTA hops → recipient mailbox |
-| Persistence on our infra | None | None (key is a task kwarg, not a DB column) |
+| Key at finalize | posted as `encryption_key`, stored on `Transfer` | withheld |
+| Recipient gets the key from | download API (`encryption_key`) | URL fragment (link) or paste (email / bare link) |
+| Link mode | bare `/t/<token>`, transparent decrypt, reusable | `/t/<token>#<fragment>`, shared out-of-band |
+| Email mode | bare link in the mail, transparent decrypt | bare link in the mail + key sent separately, recipient pastes |
+| Drive import | allowed (encrypted server-side, see below) | rejected at finalize |
 
-**Link mode is the air-gapped path**: the only system that ever holds
-the key is the sender's browser, the recipient's browser, and whatever
-the sender uses to share the link (Signal, Matrix, in-person, etc.).
-
-**Email mode is convenient but degraded**: the key sits in:
-- The HTTPS request body to `/drafts/<id>/finalize/` (terminated at
-  Caddy, so plaintext in our process memory briefly).
-- Redis (Celery broker) until the `send_recipient_invitations_task`
-  picks it up.
-- The Celery worker's process memory during email rendering.
-- The SMTP relay's queue (Mailjet, SES, etc.).
-- Every MTA hop (opportunistic STARTTLS, may degrade to plaintext on
-  unconfigured relays).
-- The recipient's mailbox (plaintext, indefinitely).
-
-The frontend warns the user explicitly when they toggle E2E in email
-mode (the Alert in `TransferForm`).
-
-**Validation** (`DraftFinalizeSerializer.validate` + `draft.py:finalize`):
-- `key_fragment` only accepted when `sharing_mode == "email"`. Posting
-  it in link mode is a 400.
-- `key_fragment` required when E2E + email. Posting an empty fragment
-  on an E2E email transfer is a 400 (otherwise we'd send a broken link).
-- `key_fragment` rejected when non-E2E + email (extra field on a
-  transfer that doesn't need it).
-- Field-level: `key_fragment` is URL-safe base64 only (validated by
-  `_KEY_FRAGMENT_RE` in `serializers.py`).
-
-The key never reaches the database. It rides as a kwarg to
-`send_recipient_invitations_task.delay(transfer_id, key_fragment=...)`
-and lives only as long as Redis holds the task payload and the worker
-holds the in-memory string.
+**Drive import** is deferred to finalize. During the draft it's only
+registered (no fetch); at finalize `import_drive_file_task(file_id,
+encryption_key)` fetches the permalink server-to-server and encrypts it
+with the transfer key via `core/services/encryption.py` (byte-identical
+layout to `e2eCrypto.ts`), so a Drive file is indistinguishable from a
+browser-encrypted upload. This needs the key, hence normal-mode-only.
+Finalize runs a 202 loop (`reason: "drive_importing"`) until every Drive
+file lands, then creates the Transfer; a failed import sets
+`import_failed_at` and finalize returns `400` `drive_import_failed`.
 
 ## Validation gates and where they live
-
-The serializer enforces input-shape rules; the viewset enforces
-state-dependent rules (anything involving `draft.e2e_encrypted` or
-`draft.encryption_chunk_size`). The split keeps the serializer
-testable in isolation.
 
 **`DraftAddFileSerializer.validate`** (serializers.py):
 
 | Gate | Triggered by | Status |
 |---|---|---|
-| `plaintext_size` required when `e2e_encrypted=True` | request body | 400, key `plaintext_size` |
-| `source_url` rejected when `e2e_encrypted=True` | request body | 400, key `source_url` |
-| `size` matches `_e2e_expected_ciphertext_size(plaintext_size, settings.TRANSFER_CHUNK_SIZE)` | request body | 400, key `size` |
-| `plaintext_size` rejected when `e2e_encrypted=False` | request body | 400, key `plaintext_size` |
+| `plaintext_size` required | request body | 400, key `plaintext_size` |
+| `size` == `_expected_ciphertext_size(plaintext_size, settings.TRANSFER_CHUNK_SIZE)` | request body | 400, key `size` |
 
-**`DraftFinalizeSerializer.validate`**:
+**`DraftFinalizeSerializer.validate`** (serializers.py):
 
 | Gate | Triggered by | Status |
 |---|---|---|
-| `key_fragment` only in email mode | request body | 400, key `key_fragment` |
-| `key_fragment` matches URL-safe base64 alphabet | request body | 400, key `key_fragment` |
+| `encryption_key` required when `confidential=False` | request body | 400, key `encryption_key` |
+| `encryption_key` rejected when `confidential=True` | request body | 400, key `encryption_key` |
+| `encryption_key` matches URL-safe base64 | request body | 400, key `encryption_key` |
 
-**`draft.py::add_file`** (viewset, follow-up to existing draft):
-
-| Gate | Triggered by | Status |
-|---|---|---|
-| `e2e_encrypted` flag matches the draft's mode | request body vs draft row | 400, key `e2e_encrypted` |
-| No `source_url` on E2E draft | request body vs draft row | 400, key `source_url` (defense in depth behind the mode-match check) |
-
-**`draft.py::finalize`** (viewset, E2E + email cross-check):
+**`draft.py::finalize`** (viewset):
 
 | Gate | Triggered by | Status |
 |---|---|---|
-| `key_fragment` required when finalizing E2E in email mode | metadata vs draft.e2e_encrypted | 400, key `key_fragment` |
-| `key_fragment` rejected when finalizing non-E2E in email mode | metadata vs draft.e2e_encrypted | 400, key `key_fragment` |
+| Drive file present + `confidential=True` | metadata vs draft files | 400, key `confidential` |
+| Drive import still running | draft file state | 202, `reason: "drive_importing"` |
+| Drive import failed | `import_failed_at` set | 400, `reason: "drive_import_failed"` |
 
 ## Operational notes
 
 ### Antivirus
 
-E2E ciphertext is opaque random bytes; ClamAV sees nothing useful and
-would burn CPU for no signal. `complete_upload` marks E2E files as
-`SKIPPED` directly (`draft.py`), the finalize gate accepts them, the
-download view doesn't check (already `SKIPPED`, not `PENDING`).
+ClamAV sees only opaque ciphertext and isn't wired to decrypt, so
+`complete_upload` and the Drive import task mark files `SKIPPED`
+(`draft.py`), the finalize gate accepts them, and the download view
+doesn't re-check (`SKIPPED`, not `PENDING`).
 
-The recipient UI does NOT show a "scanned" badge for E2E files; it
-shows the E2E lock icon instead.
+The recipient UI shows a lock icon on **confidential** transfers instead
+of a "scanned" badge.
 
 ### CSP headers
 
@@ -554,11 +568,11 @@ during `subtle.encrypt`).
 
 | Symptom | Likely cause | Where to look |
 |---|---|---|
-| Recipient sees "decryption key missing" | URL fragment empty or stripped before SW load | `DownloadView.tsx` lazy initial state |
+| Confidential recipient sees the paste box unexpectedly | URL fragment empty or stripped before SW load (link opened without `#…`) | `DownloadView.tsx` `autoKey` resolution + `need-key` state |
 | Recipient sees "could not set up decryption helper" | SW didn't take control in time, or `importKey` rejected | `e2eServiceWorker.ts::ensureE2eServiceWorker` (10s timeout) + the `e2e-register-error` path |
 | Download truncated / stream errors mid-way | S3 ciphertext truncated, or chunk size doesn't match `Transfer.encryption_chunk_size` | `sw.js::decryptStream::flush` length check |
-| Decrypt throws on first chunk | Wrong key (fragment doesn't match), or AAD mismatch (chunk reordering / corruption) | Inspect `event.error` in the SW's stream; cross-check `transfer.encryption_chunk_size` on the row vs the value the SW received |
+| Decrypt throws on first chunk | Wrong key (backend served the wrong one, or a bad paste), or AAD mismatch (chunk reordering / corruption) | Inspect `event.error` in the SW's stream; cross-check `transfer.encryption_chunk_size` on the row vs the value the SW received |
 | Upload 400 with `size` error | Frontend computed `ciphertextSize` against a different chunk size than the backend's | Check `/config/` carries the same `TRANSFER_CHUNK_SIZE` the backend uses; both sides read from this single source |
-| Upload 400 with `plaintext_size` error | Sender forgot to declare it, or declared it on a non-E2E transfer | `useTransferDraft.ts::registerFile` |
-| Finalize 400 with `key_fragment` error | E2E + email but the page didn't accumulate the fragment, or link mode tried to ship it | `useTransferDraft.ts::submit` finalize body |
+| Finalize 400 with `encryption_key` error | Normal transfer posted no key, or a confidential one posted one | `useTransferDraft.ts::submit` finalize body (`confidential` ↔ `encryption_key`) |
+| Finalize 400 `drive_import_failed` | The server-side Drive fetch/encrypt failed | `import_drive_file_task`; the row's `import_failed_at` is set — user removes the file and retries |
 

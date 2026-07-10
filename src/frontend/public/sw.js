@@ -94,11 +94,28 @@ async function registerKey({ token, keyBytes, files, apiOrigin }) {
   );
   const fileMap = new Map();
   for (const f of files) {
+    if (
+      !f ||
+      typeof f.id !== "string" ||
+      !f.id ||
+      typeof f.filename !== "string" ||
+      !Number.isInteger(f.plaintextSize) ||
+      f.plaintextSize <= 0 ||
+      !Number.isInteger(f.chunkSize) ||
+      f.chunkSize <= 0
+    ) {
+      // One bad entry drops the whole registration: partial state would let
+      // the page ack "ready" and then error only for the unlisted files,
+      // which is harder to reason about than a single loud failure.
+      throw new Error("Invalid file entry in e2e-register payload");
+    }
     fileMap.set(f.id, {
       plaintextSize: f.plaintextSize,
       chunkSize: f.chunkSize,
       filename: f.filename,
-      mimeType: f.mimeType || "application/octet-stream",
+      mimeType: typeof f.mimeType === "string" && f.mimeType
+        ? f.mimeType
+        : "application/octet-stream",
     });
   }
   REGISTRY.set(token, {

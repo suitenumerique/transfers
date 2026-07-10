@@ -38,7 +38,6 @@ from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
 
-
 class TransferDraftViewSet(viewsets.GenericViewSet):
     """Endpoints for the draft lifecycle: add-file, sign-part, complete-upload,
     remove-file, abort, finalize. Nothing public — a draft never holds
@@ -134,49 +133,17 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # guards: count=1 and total_size = this single file's size,
                 # which the serializer already bounded to the per-file limit
                 # (and per-file ≤ total by invariant).
-                # E2E params are honoured here only; subsequent add-file calls
-                # ignore them — the mode is locked the moment the draft exists.
-                # The chunk size is server-imposed (settings.TRANSFER_CHUNK_SIZE)
-                # so the recipient SW can never disagree with the encrypt path
-                # about decryption boundaries.
-                is_e2e = data.get("e2e_encrypted", False)
+                # Every transfer is encrypted, so the chunk size is always set
+                # (server-imposed, settings.TRANSFER_CHUNK_SIZE, so the
+                # recipient SW can never disagree with the encrypt path about
+                # decryption boundaries). Whether the transfer ends up
+                # confidential is decided only at finalize.
                 draft = models.TransferDraft.objects.create(
                     owner=request.user,
-                    e2e_encrypted=is_e2e,
-                    encryption_chunk_size=(
-                        settings.TRANSFER_CHUNK_SIZE if is_e2e else None
-                    ),
+                    encryption_chunk_size=settings.TRANSFER_CHUNK_SIZE,
                 )
             else:
                 draft = self._get_locked_draft(draft_id)
-
-                # The draft's E2E mode is locked at creation; reject mismatched
-                # follow-up calls instead of letting a plaintext file slip into
-                # an encrypted draft (or vice versa).
-                if data.get("e2e_encrypted", False) != draft.e2e_encrypted:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "e2e_encrypted": (
-                                "Cannot change encryption mode once a draft has "
-                                "been started."
-                            )
-                        }
-                    )
-                # Drive import lands plaintext bytes server-side, which would
-                # turn an E2E draft into a half-encrypted transfer the SW
-                # cannot decrypt. The serializer rejects ``source_url`` when
-                # ``e2e_encrypted`` is in the body, but follow-up calls drop
-                # that field (the mode is locked), so the gate must also live
-                # here, against the draft's stored flag.
-                if draft.e2e_encrypted and data.get("source_url"):
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "source_url": (
-                                "Drive import is not supported for "
-                                "E2E-encrypted transfers."
-                            )
-                        }
-                    )
 
                 # Cumulative guards against drip-feed bypass: the serializer
                 # only sees one file at a time, so totals are recomputed from
@@ -210,22 +177,23 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 draft=draft,
                 filename=data["filename"],
                 size=data["size"],
-                plaintext_size=data.get("plaintext_size") if draft.e2e_encrypted else None,
+                plaintext_size=data["plaintext_size"],
                 mime_type=data["mime_type"],
                 source_url=data.get("source_url", ""),
             )
             transfer_file.s3_key = f"transfers/{transfer_file.id}/{data['filename']}"
 
             if transfer_file.source_url:
-                # Drive import path: no multipart opened synchronously —
-                # the celery task will open its own, drain Drive into it,
-                # and set ``upload_completed_at`` when done. The client
-                # doesn't need ``upload_id`` / ``chunk_size`` because it
-                # won't be uploading any parts.
+                # Drive import is deferred to finalize: encrypting the fetched
+                # bytes server-side needs the key, and the key only reaches us
+                # at finalize (non-confidential mode). Record the intent here
+                # with no multipart and no fetch task; the client won't upload
+                # parts, so it gets no ``upload_id`` / ``chunk_size`` back.
+                # Encrypted ciphertext can't be scanned, so mark SKIPPED now —
+                # otherwise the file sits PENDING and the finalize scan gate
+                # would mistake an in-progress import for a running scan.
+                transfer_file.scan_status = ScanStatus.SKIPPED
                 transfer_file.save()
-                transaction.on_commit(
-                    lambda: import_drive_file_task.delay(str(transfer_file.id))
-                )
             else:
                 upload_id = s3.create_multipart_upload(
                     key=transfer_file.s3_key, content_type=data["mime_type"]
@@ -348,12 +316,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
-                    # No scan coming → mark SKIPPED (downloadable, no "clean"
-                    # claim), else it stays PENDING forever (perpetual spinner +
-                    # blocked download). Scanning on → PENDING until the webhook.
-                    # E2E ciphertext can't be scanned (we don't have the key),
-                    # so the gate is bypassed wholesale — same SKIPPED status.
-                    if draft.e2e_encrypted or not settings.CLAMAV_SCAN_ENABLED:
+                    # Encrypted ciphertext can't be scanned (we don't hold the
+                    # key), so the antivirus gate is bypassed wholesale and the
+                    # file is marked SKIPPED (downloadable, no "clean" claim).
+                    # Every transfer is encrypted, so this is the only branch
+                    # for new drafts; the CLAMAV toggle still covers any legacy
+                    # plaintext draft.
+                    if (
+                        draft.encryption_chunk_size is not None
+                        or not settings.CLAMAV_SCAN_ENABLED
+                    ):
                         transfer_file.scan_status = ScanStatus.SKIPPED
                     elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
                         transfer_file.scan_status = ScanStatus.TOO_LARGE
@@ -453,36 +425,40 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         with transaction.atomic():
             draft = self._get_locked_draft(pk)
 
-            # key_fragment is only meaningful when the draft is E2E and the
-            # transfer is being sent by email; the serializer already gates
-            # it against link mode. Cross-check against the draft's mode
-            # here: requiring it when expected catches a buggy client that
-            # would otherwise post emails without a decryption link, and
-            # rejecting it when not expected matches the rest of the E2E
-            # parameter hygiene.
-            mode = metadata.get("sharing_mode", SharingMode.LINK)
-            posted_fragment = metadata.get("key_fragment", "")
-            if mode == SharingMode.EMAIL:
-                if draft.e2e_encrypted and not posted_fragment:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "key_fragment": (
-                                "Required when finalizing an E2E draft in "
-                                "email mode."
-                            )
-                        }
-                    )
-                if not draft.e2e_encrypted and posted_fragment:
-                    raise drf.exceptions.ValidationError(
-                        {"key_fragment": "Only allowed for E2E drafts."}
-                    )
+            confidential = metadata["confidential"]
 
             files = list(draft.files.all())
             if not files:
                 raise drf.exceptions.ValidationError(
                     {"files": "Draft has no files to finalize."}
                 )
-            pending = [str(f.id) for f in files if f.upload_completed_at is None]
+
+            # Drive files carry a ``source_url`` and are fetched + encrypted
+            # server-side at finalize (needs the key). A confidential transfer
+            # has no key on our side, so it can't host a Drive import — reject
+            # it so the user removes the Drive file or drops confidential. The
+            # frontend greys the confidential toggle while a Drive file is
+            # present; this is the belt-and-braces.
+            drive_files = [f for f in files if f.source_url]
+            browser_files = [f for f in files if not f.source_url]
+            if drive_files and confidential:
+                raise drf.exceptions.ValidationError(
+                    {
+                        "confidential": (
+                            "A confidential transfer cannot include a Drive "
+                            "import (we would have to hold the key to encrypt "
+                            "the fetched bytes). Remove the Drive file or turn "
+                            "confidential off."
+                        )
+                    }
+                )
+
+            # Browser uploads must all have landed. Drive files are expected
+            # to be pending here (imported by the poll block below), so
+            # they're excluded from this gate.
+            pending = [
+                str(f.id) for f in browser_files if f.upload_completed_at is None
+            ]
             if pending:
                 raise drf.exceptions.ValidationError(
                     {
@@ -493,6 +469,54 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         "pending_file_ids": pending,
                     }
                 )
+
+            # Drive imports run here, then finalize polls: the first call kicks
+            # off the (encrypting) import task per Drive file and returns 202;
+            # the client re-posts finalize until every Drive file has landed.
+            # The transfer is created only once they're all complete, so a
+            # finalized transfer never has a half-imported file.
+            # ``import_started_at`` marks "import kicked off" so re-posts don't
+            # double-fire, and the draft lock held here serialises the polls.
+            if drive_files:
+                imported_failed = [
+                    str(f.id) for f in drive_files if f.import_failed_at is not None
+                ]
+                if imported_failed:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "A Drive import failed.",
+                            "reason": "drive_import_failed",
+                            "failed_file_ids": imported_failed,
+                        }
+                    )
+
+                key_fragment = metadata["encryption_key"]
+                still_importing = []
+                for f in drive_files:
+                    if f.upload_completed_at is not None:
+                        continue
+                    if f.import_started_at is None:
+                        # Not started yet — mark it and enqueue the encrypting
+                        # import. ``import_started_at`` keeps the next poll from
+                        # re-enqueuing while the task spins up its MPU.
+                        f.import_started_at = timezone.now()
+                        f.save(update_fields=["import_started_at", "updated_at"])
+                        transaction.on_commit(
+                            lambda fid=str(f.id), k=key_fragment: (
+                                import_drive_file_task.delay(fid, k)
+                            )
+                        )
+                    still_importing.append(str(f.id))
+
+                if still_importing:
+                    return drf.response.Response(
+                        {
+                            "detail": "Drive files are still being imported.",
+                            "reason": "drive_importing",
+                            "pending_file_ids": still_importing,
+                        },
+                        status=202,
+                    )
 
             # Antivirus gate — read only. Finalize just reads each file's scan
             # verdict; it never re-submits or resets a scan (that lives entirely
@@ -557,7 +581,10 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
                 auto_archive_on_download=metadata["auto_archive_on_download"],
-                e2e_encrypted=draft.e2e_encrypted,
+                confidential=confidential,
+                # Stored only in normal mode; empty for confidential (the key
+                # never reached us). The serializer already enforces this.
+                encryption_key=metadata["encryption_key"],
                 encryption_chunk_size=draft.encryption_chunk_size,
             )
             models.TransferFile.objects.filter(draft=draft).update(
@@ -575,18 +602,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             if transfer.sharing_mode == SharingMode.EMAIL:
                 from core.tasks import send_recipient_invitations_task
 
-                # E2E + email: the key fragment rides as a task kwarg so
-                # the send stays async. It transits Redis for the seconds
-                # Celery holds the message; not persisted on Transfer.
-                # Accepted tradeoff, mirrored by the UI warning on the
-                # Email tab (``TransferForm``'s E2E-email Alert).
-                key_fragment = (
-                    metadata.get("key_fragment", "") if transfer.e2e_encrypted else ""
-                )
                 transaction.on_commit(
-                    lambda fragment=key_fragment: send_recipient_invitations_task.delay(
-                        str(transfer.id), key_fragment=fragment
-                    )
+                    lambda: send_recipient_invitations_task.delay(str(transfer.id))
                 )
 
             draft.delete()

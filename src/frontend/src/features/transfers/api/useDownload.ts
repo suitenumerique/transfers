@@ -4,9 +4,12 @@ import type { DownloadTransferFull } from "@/features/api/types";
 
 // Frontend origin + /t/<token> — the canonical shape of a recipient link,
 // without the E2E fragment. Empty string when the transfer has no public
-// token yet (never persisted), so consumers can boolean-check it.
+// token yet (never persisted) or when called outside a browser context
+// (SSR / test environment without a jsdom window), so consumers can
+// boolean-check it.
 export function transferBaseUrl(publicToken: string | null | undefined): string {
-  return publicToken ? `${window.location.origin}/t/${publicToken}` : "";
+  if (!publicToken || typeof window === "undefined") return "";
+  return `${window.location.origin}/t/${publicToken}`;
 }
 
 export function useDownloadTransfer(token: string | undefined) {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Checkbox, Input, LabelledBox, Modal, ModalSize, Switch, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Checkbox, Input, LabelledBox, Switch, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError, apiFetch } from "@/features/api/client";
@@ -191,13 +191,13 @@ export function TransferForm() {
   const [pendingTransferId, setPendingTransferId] = useState<string | null>(
     null,
   );
+  // For confidential transfers, the key fragment is handed to the success
+  // screen via the navigation hash (link: to rebuild the working URL; email:
+  // to show the sender the key to share separately). Kept in a ref so the
+  // email path's poll-then-navigate can reach it after submit() cleared the
+  // draft. Null for normal transfers (the backend serves the key).
+  const carryFragmentRef = useRef<string | null>(null);
   const expiryMenu = useDropdownMenu();
-  // Mode-switch confirm: gates a destructive restart-uploads action when
-  // the user flips E2E while files are already queued. ``pendingMode``
-  // stashes the target value between "open the modal" and "user confirms".
-  const restartModeModal = useModal();
-  const [pendingMode, setPendingMode] = useState<boolean | null>(null);
-  const [restartError, setRestartError] = useState<string | null>(null);
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
   // leave bytes hanging in S3 for 24h (the server cleanup cron catches it
@@ -223,9 +223,11 @@ export function TransferForm() {
     if (!data?.notifications_completed_at) return;
     isSubmittingRef.current = true;
     const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
+    const fragment = carryFragmentRef.current;
     navigate({
       to: hasFailures ? "/confirm-failed/$id" : "/confirm/$id",
       params: { id: data.id },
+      ...(fragment ? { hash: fragment } : {}),
     });
   }, [pollQuery.data, navigate]);
 
@@ -342,11 +344,17 @@ export function TransferForm() {
   };
 
   const hasFiles = draft.files.length > 0;
+  // Drive imports are encrypted server-side at finalize, which needs the key
+  // — impossible for a confidential transfer (we never hold the key). So the
+  // two are mutually exclusive: a Drive file greys the confidential toggle,
+  // and the Drive button is hidden while confidential is on.
+  const hasDriveFile = draft.files.some((f) => f.sourceUrl);
   const currentSize = draft.files.reduce((sum, f) => sum + f.total, 0);
   const anyError = draft.files.some((f) => f.state === "error");
   const awaitingUploads = draft.isAwaitingUploads;
   const finalizing = draft.isFinalizing;
   const scanning = draft.isScanning;
+  const importingDrive = draft.isImportingDrive;
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Warn before any kind of departure while a draft has files or uploads
@@ -407,12 +415,14 @@ export function TransferForm() {
     }
 
     setSubmitError(null);
-    // Snapshot the E2E fragment before submit() runs `resetLocal` and
-    // clears it. The confirm page receives it via the navigation hash
-    // so it can render the working link once and only once: refresh of
-    // the confirm URL drops the fragment, matching our "show the link
-    // now, we don't store it" model.
-    const fragmentToCarry = draft.e2eKeyFragment;
+    // Snapshot the fragment before submit() runs `resetLocal` and clears it.
+    // Only confidential transfers carry it to the confirm page (link: to
+    // rebuild the working URL; email: to show the sender the key to share
+    // separately). Normal transfers get a bare link — the backend serves the
+    // key — so nothing to carry. Shown once: a refresh of the confirm URL
+    // drops the fragment, matching "we don't store it".
+    const fragmentToCarry = draft.confidential ? draft.keyFragment : null;
+    carryFragmentRef.current = fragmentToCarry;
     try {
       const result = await draft.submit({
         title,
@@ -420,6 +430,7 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
         auto_archive_on_download: autoArchiveOnDownload,
+        confidential: draft.confidential,
       });
       if (result.sharing_mode === "link") {
         // Link mode: nothing to wait for, go straight to the confirm page.
@@ -474,6 +485,23 @@ export function TransferForm() {
       if (err instanceof Error && err.message === "scan_timeout") {
         setSubmitError(
           t("The antivirus scan is taking too long. Please try again."),
+        );
+        return;
+      }
+      if (
+        err instanceof ApiError &&
+        (err.body as { reason?: string })?.reason === "drive_import_failed"
+      ) {
+        setSubmitError(
+          t(
+            "A file couldn't be imported from Drive. Remove it and try again.",
+          ),
+        );
+        return;
+      }
+      if (err instanceof Error && err.message === "finalize_timeout") {
+        setSubmitError(
+          t("The transfer is taking too long to finalize. Please try again."),
         );
         return;
       }
@@ -556,47 +584,13 @@ export function TransferForm() {
                 maxSize={config.TRANSFER_MAX_TOTAL_SIZE}
               />
             )}
-            {/* Primary mode switch — Cunningham toggle sitting inside the
-                header so it reads as part of the title block. The choice
-                is locked the moment the first file lands on the backend
-                draft, hence `disabled` once `hasFiles`. */}
-            <div
-              className="transfer-form__mode-switch"
-              title={busy ? t("Cannot change mode while sending.") : undefined}
-            >
-              <Switch
-                label={t("End-to-end encryption")}
-                checked={draft.e2eEncrypted}
-                onChange={(e) => {
-                  const next = e.currentTarget.checked;
-                  setRestartError(null);
-                  if (!hasFiles) {
-                    draft.setE2eEncrypted(next);
-                    return;
-                  }
-                  // Files already queued — flipping the mode means
-                  // discarding their (en)crypted bytes on S3 and
-                  // re-uploading from the local File refs. Ask first.
-                  setPendingMode(next);
-                  restartModeModal.open();
-                }}
-                disabled={busy}
-              />
-            </div>
-            {draft.e2eEncrypted && (
-              <p className="transfer-form__mode-hint">
-                {t(
-                  "Files are encrypted in your browser. The decryption key stays on your device and is never sent to our servers. Antivirus scanning is skipped.",
-                )}
-              </p>
-            )}
           </header>
 
           <FileDropZone
             onChange={handleFilesChange}
             errorMessage={fileError}
           />
-          {config.DRIVE && !draft.e2eEncrypted && (
+          {config.DRIVE && !draft.confidential && (
             <DriveAttachButton
               variant="link"
               onPick={handleDrivePick}
@@ -644,9 +638,9 @@ export function TransferForm() {
                       : "default";
                 const extras = (
                   <>
-                    {draft.e2eEncrypted && (
+                    {draft.confidential && (
                       <Tooltip
-                        content={t("End-to-end encrypted file")}
+                        content={t("Confidential file")}
                         placement="top"
                       >
                         <span className="file-item__scan file-item__scan--encrypted">
@@ -829,21 +823,6 @@ export function TransferForm() {
             >
               <Mail />
               <span>{t("Email")}</span>
-              {draft.e2eEncrypted && (
-                <Tooltip
-                  content={t(
-                    "The encryption key is included in the email body and is visible to mail servers. Prefer link mode shared over a secure channel.",
-                  )}
-                  placement="top"
-                >
-                  <span
-                    className="transfer-form__tab-warning"
-                    aria-label={t("Warning")}
-                  >
-                    <Warning />
-                  </span>
-                </Tooltip>
-              )}
             </button>
             <button
               type="button"
@@ -863,6 +842,60 @@ export function TransferForm() {
             </button>
           </div>
 
+          {/* Confidential toggle. Free to flip until send: every transfer is
+              encrypted, and this only decides whether the decryption key
+              reaches our servers. Greyed while a Drive file is present (Drive
+              imports need the key server-side). */}
+          <div
+            className="transfer-form__confidential"
+            title={
+              busy
+                ? t("Cannot change mode while sending.")
+                : hasDriveFile
+                  ? t(
+                      "Remove the Drive import to make this transfer confidential.",
+                    )
+                  : undefined
+            }
+          >
+            <div className="transfer-form__confidential-row">
+              <Switch
+                label={t("Confidential transfer")}
+                checked={draft.confidential}
+                onChange={(e) => {
+                  draft.setConfidential(e.currentTarget.checked);
+                  draft.cancelSubmit();
+                }}
+                disabled={busy || hasDriveFile}
+              />
+              <Tooltip
+                content={t(
+                  "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.",
+                )}
+                placement="left"
+              >
+                <button
+                  type="button"
+                  className="transfer-form__auto-archive-help"
+                  aria-label={t("More information")}
+                >
+                  <Info />
+                </button>
+              </Tooltip>
+            </div>
+            {draft.confidential && (
+              <p className="transfer-form__mode-hint">
+                {sharingMode === "email"
+                  ? t(
+                      "The email carries only the link. Send the decryption key to your recipient over a separate, trusted channel — we never see it and can't recover it.",
+                    )
+                  : t(
+                      "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.",
+                    )}
+              </p>
+            )}
+          </div>
+
           {sharingMode === "email" && (
             <LabelledBox label={t("Send to")} variant="classic">
               <RecipientInput
@@ -878,14 +911,6 @@ export function TransferForm() {
                 disabled={finalizing}
               />
             </LabelledBox>
-          )}
-
-          {sharingMode === "email" && draft.e2eEncrypted && (
-            <Alert type={VariantType.WARNING}>
-              {t(
-                "Sending an end-to-end encrypted transfer by email is less secure than link mode. The decryption key travels inside the email itself and is visible to every mail server on the way (our backend, mail queues, SMTP relays, recipient's mailbox provider). For a stricter guarantee, switch to link mode and share the link over a trusted channel (Signal, in person, etc.).",
-              )}
-            </Alert>
           )}
 
           <Input
@@ -964,7 +989,9 @@ export function TransferForm() {
               )
             }
           >
-            {scanning
+            {importingDrive
+              ? t("Importing from Drive…")
+              : scanning
               ? t("Checking for viruses…")
               : finalizing
               ? t("Sending...")
@@ -981,7 +1008,9 @@ export function TransferForm() {
 
           {busy && (
             <p className="transfer-form__submit-hint" role="status">
-              {scanning
+              {importingDrive
+                ? t("Importing and encrypting your Drive files…")
+                : scanning
                 ? t("Scanning your files for viruses before sending…")
                 : t(
                     "Your transfer will be created once the upload finishes. Keep this tab open.",
@@ -992,78 +1021,8 @@ export function TransferForm() {
           {submitError && (
             <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
-          {restartError && (
-            <Alert type={VariantType.ERROR}>{restartError}</Alert>
-          )}
         </section>
       </div>
-
-      <Modal
-        size={ModalSize.SMALL}
-        isOpen={restartModeModal.isOpen}
-        onClose={() => {
-          restartModeModal.close();
-          setPendingMode(null);
-        }}
-        title={
-          pendingMode
-            ? t("Turn on end-to-end encryption?")
-            : t("Turn off end-to-end encryption?")
-        }
-        rightActions={
-          <>
-            <Button
-              color="neutral"
-              variant="secondary"
-              onClick={() => {
-                restartModeModal.close();
-                setPendingMode(null);
-              }}
-            >
-              {t("Cancel")}
-            </Button>
-            <Button
-              color="brand"
-              onClick={async () => {
-                if (pendingMode === null) return;
-                const target = pendingMode;
-                restartModeModal.close();
-                setPendingMode(null);
-                try {
-                  await draft.restartWithMode(target);
-                } catch (err) {
-                  if (
-                    err instanceof Error &&
-                    err.message === "restart_blocked_drive"
-                  ) {
-                    setRestartError(
-                      t(
-                        "Files imported from Drive can't be re-uploaded. Remove them first to switch modes.",
-                      ),
-                    );
-                  } else {
-                    setRestartError(
-                      t(
-                        "Couldn't re-upload the files. Please remove them and start over.",
-                      ),
-                    );
-                  }
-                }
-              }}
-            >
-              {t("Continue")}
-            </Button>
-          </>
-        }
-      >
-        {pendingMode
-          ? t(
-              "This will trigger a re-upload of the files, encrypted in your browser.",
-            )
-          : t(
-              "This will trigger a re-upload of the files, unencrypted.",
-            )}
-      </Modal>
     </form>
   );
 }

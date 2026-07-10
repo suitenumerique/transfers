@@ -44,18 +44,17 @@ def _send_multipart(*, subject, text_body, html_body, to):
     msg.send()
 
 
-def send_recipient_invitation(transfer, recipient, *, key_fragment=""):
+def send_recipient_invitation(transfer, recipient):
     """Send a download link email to a single recipient.
 
     Multipart message — HTML body matching the design mock plus a
     plain-text fallback for clients that strip HTML or filter on text.
 
-    ``key_fragment``, when non-empty, is appended as the URL fragment so
-    E2E recipients can decrypt. The fragment is not stored on the
-    transfer; it's passed through from the finalize call via the email
-    task's kwargs. Every relay between us and the recipient's mailbox
-    sees the full link including the key — that is the price of mailing
-    E2E links; for stricter sharing use link mode.
+    The email carries only the download link, never the decryption key.
+    A non-confidential transfer's key is served by the backend at
+    download time; a confidential transfer's key never reaches us (the
+    sender delivers it out of band). So no fragment or key is ever
+    appended to the URL here.
     """
     base_url = _public_base_url()
     sender_name = (
@@ -65,8 +64,6 @@ def send_recipient_invitation(transfer, recipient, *, key_fragment=""):
     )
     sender_email = transfer.owner.email if transfer.owner else ""
     download_url = f"{base_url}/t/{transfer.public_token}"
-    if key_fragment:
-        download_url = f"{download_url}#{key_fragment}"
     files = list(transfer.files.all())
     total_size = sum(f.size for f in files)
     expires_at = timezone.localtime(transfer.expires_at)

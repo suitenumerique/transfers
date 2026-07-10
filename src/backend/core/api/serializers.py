@@ -10,28 +10,29 @@ from rest_framework import serializers
 from core import models
 from core.enums import SharingMode
 
+# URL-safe base64 alphabet, no padding required. The frontend ships exactly
+# 43 chars for a 256-bit key, but accept the padded 44-char form too so a
+# client that fails to strip "=" still works. The field's ``max_length``
+# bounds the overall length; this bounds the alphabet.
+_ENCRYPTION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+
 # Per-chunk overhead the browser's AES-GCM helper prepends (IV) and appends
 # (GCM tag) to every encrypted chunk. The frontend's e2eCrypto module and
 # the recipient Service Worker share this constant; the value must stay in
 # sync across all three.
-E2E_CRYPTO_OVERHEAD_PER_CHUNK = 12 + 16
-
-# URL-safe base64 alphabet, no padding. The frontend ships exactly 43 chars
-# for a 256-bit key, but accept the padded 44-char form too so a client
-# that fails to strip "=" still works. ``max_length`` on the field bounds
-# the overall length; the regex bounds the alphabet.
-_KEY_FRAGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+CRYPTO_OVERHEAD_PER_CHUNK = 12 + 16
 
 
-def _e2e_expected_ciphertext_size(plaintext_size: int, chunk_size: int) -> int:
+def _expected_ciphertext_size(plaintext_size: int, chunk_size: int) -> int:
     """Total ciphertext bytes that will land in S3 for a given plaintext +
     chunk size, mirroring the browser's encryption layout. Used to verify
-    the client-declared ``size`` matches what its E2E params imply.
+    the client-declared ``size`` matches what its plaintext + chunk params
+    imply.
     """
     if plaintext_size <= 0:
-        return E2E_CRYPTO_OVERHEAD_PER_CHUNK
+        return CRYPTO_OVERHEAD_PER_CHUNK
     chunks = -(-plaintext_size // chunk_size)  # ceiling division
-    return plaintext_size + chunks * E2E_CRYPTO_OVERHEAD_PER_CHUNK
+    return plaintext_size + chunks * CRYPTO_OVERHEAD_PER_CHUNK
 
 
 class AbilitiesModelSerializer(serializers.ModelSerializer):
@@ -168,7 +169,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
-            "e2e_encrypted",
+            "confidential",
         ]
         read_only_fields = fields
 
@@ -196,7 +197,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
-            "e2e_encrypted",
+            "confidential",
             "encryption_chunk_size",
         ]
         read_only_fields = fields
@@ -215,42 +216,37 @@ class DraftAddFileSerializer(serializers.Serializer):
 
     Two attach modes coexist: browser-side multipart upload (no
     ``source_url``), and server-side Drive import (``source_url`` set to a
-    public permalink — the backend fetches the bytes via a celery task, no
-    multipart ceremony exposed to the client).
+    public permalink). Drive bytes are fetched and encrypted at finalize,
+    not here, because encryption needs the key and the key only reaches
+    us at finalize (in non-confidential mode).
 
     Per-file size is checked here; cumulative limits (file count, total
     draft size) live in the viewset because they depend on what the target
     draft already holds.
 
-    ``e2e_encrypted`` flags the *whole draft* as end-to-end encrypted.
-    It's only honoured on the call that creates the draft (``draft_id``
-    omitted); subsequent add-file calls ignore it, since the mode is
-    fixed once any file has landed. The chunk size used to encrypt is
-    ``settings.TRANSFER_CHUNK_SIZE`` (also returned in
-    ``/api/v1.0/config/``); the client never negotiates it, so it has no
-    way to disagree with the recipient SW about decryption boundaries.
-    ``plaintext_size`` is per-file metadata — required when E2E so the
-    recipient's Service Worker can compute ``Content-Length`` for the
-    streamed download.
+    Every transfer is encrypted client-side, so ``size`` is always the
+    ciphertext size that lands in S3 and ``plaintext_size`` (the file's
+    pre-encryption size, needed by the recipient SW for ``Content-Length``)
+    is always required. The chunk size used to encrypt is
+    ``settings.TRANSFER_CHUNK_SIZE`` (also returned in ``/api/v1.0/config/``);
+    the client never negotiates it, so it can't disagree with the recipient
+    SW about decryption boundaries. ``size`` is cross-checked against
+    ``plaintext_size`` + that chunk size so a malformed caller is rejected.
     """
 
     draft_id = serializers.UUIDField(required=False, allow_null=True)
     filename = serializers.CharField(max_length=255, required=True)
-    # ``size`` is the size of what will land in S3 — ciphertext for E2E,
-    # plaintext otherwise. The frontend computes the ciphertext expansion
-    # before declaring; the head_object check at complete-upload validates
-    # against this value as-is.
+    # ``size`` is the ciphertext size that lands in S3 (plaintext + per-chunk
+    # GCM overhead). The frontend computes the expansion before declaring;
+    # the head_object check at complete-upload validates against it as-is.
     size = serializers.IntegerField(min_value=1, required=True)
-    plaintext_size = serializers.IntegerField(
-        min_value=1, required=False, allow_null=True, default=None
-    )
+    plaintext_size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
         max_length=255, required=False, allow_blank=True, default=""
     )
     source_url = serializers.URLField(
         max_length=2048, required=False, allow_blank=True, default=""
     )
-    e2e_encrypted = serializers.BooleanField(required=False, default=False)
 
     def validate_size(self, value):
         if value > settings.TRANSFER_MAX_FILE_SIZE:
@@ -261,49 +257,24 @@ class DraftAddFileSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        if attrs.get("e2e_encrypted"):
-            if not attrs.get("plaintext_size"):
-                raise serializers.ValidationError(
-                    {"plaintext_size": "Required when e2e_encrypted is true."}
-                )
-            # Drive import + E2E doesn't make sense — the bytes are fetched
-            # server-side and we wouldn't have a key to encrypt with. The
-            # frontend hides the Drive button when E2E is on; this is a
-            # belt-and-suspenders.
-            if attrs.get("source_url"):
-                raise serializers.ValidationError(
-                    {
-                        "source_url": (
-                            "Drive import is not supported for E2E-encrypted "
-                            "transfers."
-                        )
-                    }
-                )
-            # Cross-check the declared ciphertext ``size`` against the
-            # canonical chunk size the recipient SW will use to peel chunks.
-            # The chunk size is server-side (settings.TRANSFER_CHUNK_SIZE,
-            # echoed on /config/) so the client builds size from the same
-            # value; a mismatch here means a buggy / malicious caller.
-            expected_ciphertext = _e2e_expected_ciphertext_size(
-                attrs["plaintext_size"], settings.TRANSFER_CHUNK_SIZE
-            )
-            if attrs["size"] != expected_ciphertext:
-                raise serializers.ValidationError(
-                    {
-                        "size": (
-                            f"size ({attrs['size']}) does not match the "
-                            f"expected ciphertext size ({expected_ciphertext}) "
-                            f"for plaintext_size={attrs['plaintext_size']} at "
-                            f"chunk size {settings.TRANSFER_CHUNK_SIZE}."
-                        )
-                    }
-                )
-        elif attrs.get("plaintext_size") is not None:
-            # plaintext_size lands on the file row when E2E is on. Accepting
-            # it on a plaintext draft would let a client store metadata that
-            # contradicts the bytes actually in S3.
+        # Cross-check the declared ciphertext ``size`` against the canonical
+        # chunk size the recipient SW will use to peel chunks. The chunk size
+        # is server-side (settings.TRANSFER_CHUNK_SIZE, echoed on /config/)
+        # so the client builds size from the same value; a mismatch here
+        # means a buggy or malicious caller.
+        expected_ciphertext = _expected_ciphertext_size(
+            attrs["plaintext_size"], settings.TRANSFER_CHUNK_SIZE
+        )
+        if attrs["size"] != expected_ciphertext:
             raise serializers.ValidationError(
-                {"plaintext_size": "Only allowed when e2e_encrypted is true."}
+                {
+                    "size": (
+                        f"size ({attrs['size']}) does not match the "
+                        f"expected ciphertext size ({expected_ciphertext}) "
+                        f"for plaintext_size={attrs['plaintext_size']} at "
+                        f"chunk size {settings.TRANSFER_CHUNK_SIZE}."
+                    )
+                }
             )
         return attrs
 
@@ -390,25 +361,21 @@ class DraftFinalizeSerializer(serializers.Serializer):
     # delete + status DEACTIVATED) once every file has been downloaded at
     # least once.
     auto_archive_on_download = serializers.BooleanField(required=False, default=False)
-    # E2E + email mode only: the URL-safe base64 of the decryption key the
-    # browser generated. The backend hands it straight to the email task as
-    # a task kwarg and never writes it to the database — it transits Redis
-    # for the few seconds the task needs to render the email and then is
-    # gone. WARNING: this is a deliberate, scoped relaxation of "the key
-    # never reaches our infra". The email itself carries the full link
-    # with fragment to the recipients, so every SMTP / mailbox provider in
-    # the chain sees the key too. For air-gapped E2E, use link mode.
-    key_fragment = serializers.CharField(
-        required=False, allow_blank=True, default="", max_length=128
+    # Confidential transfers keep the decryption key out of our infra: the
+    # recipient supplies it from the URL fragment (link) or by pasting it
+    # (email / bare link). Non-confidential transfers post ``encryption_key``
+    # here so the backend can store it and serve it to recipients (and, for
+    # Drive imports, encrypt the fetched bytes server-side at finalize).
+    confidential = serializers.BooleanField(required=False, default=False)
+    encryption_key = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=64
     )
 
-    def validate_key_fragment(self, value):
-        # The fragment is base64url-encoded random key material. Reject any
-        # other alphabet here so a malformed value can't slip into the
-        # outgoing email link (the recipient would just see a broken URL,
-        # but failing loud at finalize is friendlier than a silent
-        # un-decryptable transfer).
-        if value and not _KEY_FRAGMENT_RE.match(value):
+    def validate_encryption_key(self, value):
+        # base64url key material only — reject any other alphabet so a
+        # malformed value can't be stored and later served to a recipient
+        # as an un-decryptable key.
+        if value and not _ENCRYPTION_KEY_RE.match(value):
             raise serializers.ValidationError(
                 "Must be URL-safe base64 (A-Z, a-z, 0-9, '-', '_'; '=' padding optional)."
             )
@@ -425,13 +392,19 @@ class DraftFinalizeSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"recipients": "Recipients are not allowed in link mode."}
             )
-        # key_fragment only makes sense in email mode: in link mode the
-        # browser owns the fragment and never posts it to us. Rejecting it
-        # here prevents a client from leaking the key to our backend by
-        # mistake in link mode.
-        if mode != SharingMode.EMAIL and attrs.get("key_fragment"):
+        # The key travels to us only for non-confidential transfers. In
+        # confidential mode it must never reach the backend, so reject a
+        # posted key outright; in normal mode it's required so the backend
+        # can serve it to recipients.
+        confidential = attrs.get("confidential", False)
+        key = attrs.get("encryption_key", "")
+        if confidential and key:
             raise serializers.ValidationError(
-                {"key_fragment": "Only allowed in email mode."}
+                {"encryption_key": "A confidential transfer must not send the key."}
+            )
+        if not confidential and not key:
+            raise serializers.ValidationError(
+                {"encryption_key": "Required for a non-confidential transfer."}
             )
         return attrs
 
@@ -484,6 +457,13 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
     """Serializer for the public download page.
 
     Only files whose multipart upload has been completed are exposed.
+
+    ``encryption_key`` is served here for non-confidential transfers so the
+    recipient's Service Worker can decrypt transparently. This endpoint is
+    ``AllowAny`` by design: the public token IS the capability, and a
+    non-confidential transfer means "anyone with the link may read". For
+    confidential transfers the column is empty (the key never reached us),
+    so the recipient must supply it from the URL fragment or by pasting.
     """
 
     files = serializers.SerializerMethodField()
@@ -501,8 +481,9 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "is_owner",
             "sharing_mode",
             "auto_archive_on_download",
-            "e2e_encrypted",
+            "confidential",
             "encryption_chunk_size",
+            "encryption_key",
         ]
         read_only_fields = fields
 

@@ -20,7 +20,7 @@ from core.enums import (
     TransferStatus,
 )
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
-from core.services import s3
+from core.services import encryption, s3
 from core.services.email import send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
 
@@ -134,16 +134,22 @@ def cleanup_abandoned_drafts_task():
 
 
 @shared_task
-def import_drive_file_task(transfer_file_id):
-    """Stream a public Drive permalink into our S3 multipart.
+def import_drive_file_task(transfer_file_id, encryption_key):
+    """Stream a public Drive permalink into our S3 multipart, encrypting it.
 
-    The ``TransferFile`` row is expected to already exist with ``source_url``
-    set and ``upload_completed_at`` still null. On success the row's
-    ``s3_key`` / ``upload_id`` / ``upload_completed_at`` are populated so
-    it looks indistinguishable from a browser-uploaded file. On failure the
-    row is deleted — the frontend's poller notices the disappearance and
-    surfaces a generic error; the user can re-pick from Drive to retry.
-    Any already-initiated S3 multipart is aborted as part of cleanup.
+    Runs during finalize (non-confidential transfers only, so we hold the
+    key). The bytes are fetched server-to-server, re-chunked into the
+    transfer's crypto chunk size, and each chunk is AES-GCM encrypted with
+    ``encryption_key`` before it lands in S3 — so a Drive file is
+    indistinguishable from a browser-encrypted upload and the recipient SW
+    decrypts it the same way. ``encryption_key`` is the URL-safe base64 key
+    fragment; it reaches this task as a kwarg, which is acceptable because a
+    non-confidential transfer stores the same key in the DB anyway.
+
+    On success the row's ``upload_completed_at`` is set (scan SKIPPED, since
+    ciphertext can't be scanned). On failure ``import_failed_at`` is set and
+    the row is kept so the finalize poll can surface the failure; the user
+    removes the file and retries.
     """
     try:
         tf = TransferFile.objects.get(id=transfer_file_id)
@@ -155,9 +161,21 @@ def import_drive_file_task(transfer_file_id):
         # a no-op rather than a duplicate import.
         return
 
+    # The import runs at finalize while the file is still on the draft (the
+    # Transfer is created only once every Drive import has completed). The
+    # draft's chunk size is the value the client used to declare the
+    # ciphertext ``size``, so encrypting with it is what makes the produced
+    # object match; the settings fallback is a safety net.
+    chunk_size = (
+        tf.draft.encryption_chunk_size
+        if tf.draft and tf.draft.encryption_chunk_size
+        else settings.TRANSFER_CHUNK_SIZE
+    )
     key = tf.s3_key or f"transfers/{tf.id}/{tf.filename}"
     upload_id = ""
     try:
+        aes_key = encryption.decode_key(encryption_key)
+
         with requests.get(tf.source_url, stream=True, timeout=60) as response:
             response.raise_for_status()
 
@@ -172,56 +190,65 @@ def import_drive_file_task(transfer_file_id):
 
             parts = []
             part_number = 1
-            total_bytes = 0
+            total_plaintext = 0
+            total_ciphertext = 0
             buffer = bytearray()
-            for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
-                if not chunk:
-                    continue
-                buffer.extend(chunk)
-                # Drive may return small chunks; coalesce up to the target
-                # size before shipping a part to S3 to avoid hitting the 5
-                # MiB minimum on any part except the last.
-                while len(buffer) >= _DRIVE_IMPORT_CHUNK_SIZE:
-                    part_bytes = bytes(buffer[:_DRIVE_IMPORT_CHUNK_SIZE])
-                    del buffer[:_DRIVE_IMPORT_CHUNK_SIZE]
-                    etag = s3.upload_part_bytes(
-                        key=key,
-                        upload_id=upload_id,
-                        part_number=part_number,
-                        body=part_bytes,
-                    )
-                    parts.append({"PartNumber": part_number, "ETag": etag})
-                    part_number += 1
-                    total_bytes += len(part_bytes)
 
-            # Flush the tail — may be smaller than the min part size, which
-            # is OK because it is the last part.
-            if buffer:
-                part_bytes = bytes(buffer)
+            def _encrypt_and_upload(plaintext: bytes) -> None:
+                nonlocal part_number, total_plaintext, total_ciphertext
+                body = encryption.encrypt_chunk(
+                    aes_key, plaintext, str(tf.id), part_number
+                )
                 etag = s3.upload_part_bytes(
                     key=key,
                     upload_id=upload_id,
                     part_number=part_number,
-                    body=part_bytes,
+                    body=body,
                 )
                 parts.append({"PartNumber": part_number, "ETag": etag})
-                total_bytes += len(part_bytes)
+                part_number += 1
+                total_plaintext += len(plaintext)
+                total_ciphertext += len(body)
 
-        if total_bytes != tf.size:
+            for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                buffer.extend(chunk)
+                # One crypto chunk = one S3 part. Coalesce Drive's arbitrary
+                # read sizes into full ``chunk_size`` plaintext blocks so the
+                # ciphertext layout matches what the browser produces (and
+                # every part but the last clears S3's 5 MiB minimum).
+                while len(buffer) >= chunk_size:
+                    _encrypt_and_upload(bytes(buffer[:chunk_size]))
+                    del buffer[:chunk_size]
+
+            # Flush the tail (the shorter last chunk). ``buffer`` is empty
+            # here only when the plaintext was an exact multiple of
+            # chunk_size, in which case the last full chunk already shipped
+            # above — same as the browser, which emits no empty trailing
+            # chunk.
+            if buffer:
+                _encrypt_and_upload(bytes(buffer))
+
+        if total_plaintext != tf.plaintext_size:
             raise ValueError(
-                f"Drive returned {total_bytes} bytes but file declared {tf.size}."
+                f"Drive returned {total_plaintext} plaintext bytes but file "
+                f"declared plaintext_size={tf.plaintext_size}."
+            )
+        if total_ciphertext != tf.size:
+            raise ValueError(
+                f"Encrypted to {total_ciphertext} bytes but file declared "
+                f"size={tf.size}."
             )
 
         s3.complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        # SKIPPED when scanning is off (downloadable, not "clean"), else
-        # PENDING until the scanner's webhook resolves it.
-        if not settings.CLAMAV_SCAN_ENABLED:
-            tf.scan_status = ScanStatus.SKIPPED
-        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
-            tf.scan_status = ScanStatus.TOO_LARGE
+        # Encrypted ciphertext can't be scanned (we don't hold the key at
+        # rest for confidential, and even in normal mode the scanner isn't
+        # wired to decrypt), so a Drive import is always SKIPPED.
+        tf.scan_status = ScanStatus.SKIPPED
         tf.save(
             update_fields=[
                 "upload_id",
@@ -230,17 +257,11 @@ def import_drive_file_task(transfer_file_id):
                 "updated_at",
             ]
         )
-        # PENDING ⟺ AV on AND within size limit (SKIPPED / TOO_LARGE set above).
-        if tf.scan_status == ScanStatus.PENDING:
-            submit_scan_task.delay(str(tf.id))
     except Exception:
         # Catch broadly: any failure between create_multipart_upload and the
-        # final save (DB hiccup, S3 error, size mismatch, …) needs the same
-        # cleanup, otherwise the MPU and partial object leak.
+        # final save (DB hiccup, S3 error, size mismatch, bad key…) needs the
+        # same cleanup, otherwise the MPU and partial object leak.
         logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
-        # Best-effort: a S3 cleanup error must not block tf.delete() — the
-        # frontend's poller relies on the row disappearing to surface the
-        # failure to the user.
         if upload_id:
             try:
                 s3.abort_multipart_upload(key=key, upload_id=upload_id)
@@ -254,7 +275,11 @@ def import_drive_file_task(transfer_file_id):
                 s3.delete_object(tf.s3_key)
             except botocore.exceptions.ClientError:
                 logger.exception("Failed to delete object %s", tf.s3_key)
-        tf.delete()
+        # Keep the row and mark it failed so the finalize poll can surface
+        # the failure; the user removes the file (or re-picks to retry).
+        tf.upload_id = ""
+        tf.import_failed_at = timezone.now()
+        tf.save(update_fields=["upload_id", "import_failed_at", "updated_at"])
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -455,19 +480,15 @@ def delete_pending_transfer_files_task():
 
 
 @shared_task
-def send_recipient_invitations_task(transfer_id, key_fragment=""):
+def send_recipient_invitations_task(transfer_id):
     """Send invitation emails to every recipient of ``transfer_id`` that
     doesn't have an ``email_sent_at`` yet.
 
-    ``key_fragment`` is the URL-safe base64 of the E2E decryption key for
-    email-mode E2E transfers, appended to the download URL in the email
-    body so the recipient can decrypt client-side. It rides as a Celery
-    kwarg and thus transits the broker for the seconds the message sits
-    in Redis before a worker picks it up. That's an accepted, documented
-    tradeoff of email mode: the key is already going through SMTP relays
-    and lands in the recipient's mailbox, so the broker hop is one more
-    transient touchpoint of the same value. For an air-gapped path, use
-    link mode. Nothing about the fragment is persisted server-side.
+    The email carries only the download link, never the decryption key.
+    A non-confidential transfer's key is served by the backend at
+    download time; a confidential transfer's key never reaches us (the
+    sender delivers it out of band). Either way no decryption material
+    reaches this task or the outbound email body.
     """
     try:
         transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
@@ -476,7 +497,7 @@ def send_recipient_invitations_task(transfer_id, key_fragment=""):
 
     for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
         try:
-            send_recipient_invitation(transfer, recipient, key_fragment=key_fragment)
+            send_recipient_invitation(transfer, recipient)
             recipient.email_sent_at = timezone.now()
             recipient.save(update_fields=["email_sent_at", "updated_at"])
             TransferEvent.objects.create(

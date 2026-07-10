@@ -32,6 +32,24 @@ TRANSFERS_URL = "/api/v1.0/transfers/"
 DRAFTS_URL = "/api/v1.0/drafts/"
 ADD_FILE_URL = f"{DRAFTS_URL}add-file/"
 
+# Every transfer is encrypted now, so add-file always carries a
+# ``plaintext_size`` and a ``size`` that equals the ciphertext expansion,
+# and finalize carries the key unless the transfer is confidential.
+CHUNK = 25 * 1024 * 1024
+OVERHEAD = 28  # per-chunk IV (12) + GCM tag (16)
+# 43-char URL-safe base64 of 32 zero bytes — a structurally valid key the
+# serializer accepts and the import task can decode.
+VALID_KEY = "A" * 43
+
+
+def _ciphertext_size(plaintext_size, chunk_size=CHUNK):
+    """Ciphertext bytes that land in S3 for a plaintext of this size, matching
+    the browser's layout and the backend's ``_expected_ciphertext_size``."""
+    if plaintext_size <= 0:
+        return OVERHEAD
+    chunks = -(-plaintext_size // chunk_size)  # ceil division
+    return plaintext_size + chunks * OVERHEAD
+
 
 # --- Helpers ---
 
@@ -39,10 +57,17 @@ ADD_FILE_URL = f"{DRAFTS_URL}add-file/"
 def _add_file(authenticated_client, draft_id=None, **file_body):
     """POST /drafts/add-file/. Omit ``draft_id`` for the first drop (opens
     the draft as a side-effect); pass it on subsequent drops to attach the
-    file to the same draft."""
-    defaults = {"filename": "a.bin", "size": 100}
-    defaults.update(file_body)
-    body = dict(defaults)
+    file to the same draft.
+
+    Defaults to a coherent encrypted file: ``plaintext_size`` 100 and a
+    ``size`` that matches the ciphertext expansion. A test can override
+    either; ``size`` defaults to match whatever ``plaintext_size`` ends up
+    being unless the test passes ``size`` explicitly.
+    """
+    body = {"filename": "a.bin"}
+    body.update(file_body)
+    body.setdefault("plaintext_size", 100)
+    body.setdefault("size", _ciphertext_size(body["plaintext_size"]))
     if draft_id is not None:
         body["draft_id"] = str(draft_id)
     return authenticated_client.post(ADD_FILE_URL, body, format="json")
@@ -76,12 +101,18 @@ def _complete_upload(authenticated_client, draft_id, transfer_file_id):
 
 
 def _finalize(authenticated_client, draft_id, **metadata):
-    """POST /drafts/{id}/finalize/. Empty body works — every field on
-    ``DraftFinalizeSerializer`` has a default (link mode, no recipients,
-    default expiry)."""
+    """POST /drafts/{id}/finalize/.
+
+    Defaults to a non-confidential transfer and supplies the ``encryption_key``
+    the backend now requires in that mode. A test exercising confidential mode
+    passes ``confidential=True`` (and no key); a test can override the key.
+    """
+    body = dict(metadata)
+    if not body.get("confidential"):
+        body.setdefault("encryption_key", VALID_KEY)
     return authenticated_client.post(
         f"{DRAFTS_URL}{draft_id}/finalize/",
-        metadata,
+        body,
         format="json",
     )
 
@@ -134,7 +165,7 @@ class TestDraftAddFile:
         response = _add_file(
             authenticated_client,
             filename="report.pdf",
-            size=25 * 1024 * 1024,
+            plaintext_size=1000,
             mime_type="application/pdf",
         )
         assert response.status_code == 201, response.data
@@ -145,12 +176,17 @@ class TestDraftAddFile:
         draft = TransferDraft.objects.get(id=response.data["draft_id"])
         assert draft.owner == user
         assert draft.files.count() == 1
+        # Every draft is encrypted now, so the chunk size is always set.
+        assert draft.encryption_chunk_size == CHUNK
         # No Transfer row exists yet — that only happens at finalize.
         assert not Transfer.objects.filter(owner=user).exists()
 
         tf = draft.files.get()
         assert tf.filename == "report.pdf"
-        assert tf.size == 25 * 1024 * 1024
+        # ``size`` is the ciphertext that lands in S3; ``plaintext_size`` is
+        # the original file size.
+        assert tf.plaintext_size == 1000
+        assert tf.size == 1000 + OVERHEAD
         assert tf.mime_type == "application/pdf"
         assert tf.upload_id == "FAKE-UPLOAD-ID"
         assert tf.upload_completed_at is None
@@ -167,7 +203,7 @@ class TestDraftAddFile:
             authenticated_client,
             draft_id=initiate["draft_id"],
             filename="second.bin",
-            size=200,
+            plaintext_size=200,
         )
         assert response.status_code == 201, response.data
         assert response.data["draft_id"] == initiate["draft_id"]
@@ -183,7 +219,6 @@ class TestDraftAddFile:
             authenticated_client,
             draft_id=other.id,
             filename="x.bin",
-            size=1,
         )
         assert response.status_code == 404
 
@@ -194,7 +229,6 @@ class TestDraftAddFile:
             authenticated_client,
             draft_id=_uuid.uuid4(),
             filename="x.bin",
-            size=1,
         )
         assert response.status_code == 404
 
@@ -213,12 +247,13 @@ class TestDraftAddFile:
         # total on the draft busts the transfer-level ceiling.
         settings.TRANSFER_MAX_FILE_SIZE = 100
         settings.TRANSFER_MAX_TOTAL_SIZE = 150
-        initiate = _initiate_with_file(authenticated_client, size=80)
+        # plaintext 52 → ciphertext 80; two of them (160) bust the 150 cap.
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=52)
         response = _add_file(
             authenticated_client,
             draft_id=initiate["draft_id"],
             filename="b.bin",
-            size=80,
+            plaintext_size=52,
         )
         assert response.status_code == 400
         assert "size" in response.data
@@ -232,13 +267,11 @@ class TestDraftAddFile:
             authenticated_client,
             draft_id=initiate["draft_id"],
             filename="b.bin",
-            size=1,
         )
         response = _add_file(
             authenticated_client,
             draft_id=initiate["draft_id"],
             filename="c.bin",
-            size=1,
         )
         assert response.status_code == 400
         assert "files" in response.data
@@ -460,9 +493,9 @@ class TestDraftAbort:
         draft_id, _file_ids = _setup_draft_with_files(
             authenticated_client,
             [
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
-                {"filename": "c.bin", "size": 300},
+                {"filename": "a.bin", "plaintext_size": 100},
+                {"filename": "b.bin", "plaintext_size": 200},
+                {"filename": "c.bin", "plaintext_size": 300},
             ],
         )
 
@@ -516,8 +549,8 @@ class TestDraftFinalize:
         draft_id, file_ids = _setup_draft_with_files(
             authenticated_client,
             [
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
+                {"filename": "a.bin", "plaintext_size": 100},
+                {"filename": "b.bin", "plaintext_size": 200},
             ],
         )
         for tf_id in file_ids:
@@ -539,8 +572,8 @@ class TestDraftFinalize:
         draft_id, file_ids = _setup_draft_with_files(
             authenticated_client,
             [
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
+                {"filename": "a.bin", "plaintext_size": 100},
+                {"filename": "b.bin", "plaintext_size": 200},
             ],
         )
         for tf_id in file_ids:
@@ -555,8 +588,8 @@ class TestDraftFinalize:
         draft_id, file_ids = _setup_draft_with_files(
             authenticated_client,
             [
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
+                {"filename": "a.bin", "plaintext_size": 100},
+                {"filename": "b.bin", "plaintext_size": 200},
             ],
         )
         # Complete only the first file.
@@ -586,7 +619,9 @@ class TestDraftFinalize:
             draft=other_draft,
             upload_completed_at=timezone.now(),
         )
-        response = authenticated_client.post(f"{DRAFTS_URL}{other_draft.id}/finalize/")
+        # Valid body so serializer validation passes and we reach the
+        # ownership check (404), not a 400 on the missing key.
+        response = _finalize(authenticated_client, other_draft.id)
         assert response.status_code == 404
 
     def test_finalize_applies_metadata(self, patched_s3, authenticated_client):
@@ -677,118 +712,30 @@ class TestDraftFinalize:
 
 
 @pytest.mark.django_db
-class TestDraftE2eEncryption:
-    """End-to-end encryption: flag set on the first add-file, propagated to
-    the Transfer at finalize, scan skipped throughout. The backend treats
-    encrypted bytes as opaque — these tests cover the bookkeeping, not the
-    crypto itself (which is browser-side)."""
+class TestDraftEncryption:
+    """Every transfer is encrypted client-side. The ``confidential`` flag,
+    chosen at finalize, decides whether the backend stores the key (normal,
+    served to recipients) or never sees it (confidential). These tests cover
+    the bookkeeping; the crypto itself is browser-side (and, for Drive
+    imports, in ``core.services.encryption``)."""
 
-    CHUNK = 25 * 1024 * 1024
-    OVERHEAD = 28  # IV + GCM tag per chunk
-
-    def _ciphertext_size(self, plaintext_size: int, chunk_size: int) -> int:
-        """Mirror of the frontend's encrypted-size math: ceil(plaintext/chunk)
-        crypto chunks, each adding OVERHEAD bytes. Used by the helper below
-        so multi-chunk add-file calls declare a ``size`` consistent with the
-        chunk size the backend imposes."""
-        if plaintext_size <= 0:
-            return self.OVERHEAD
-        chunks = -(-plaintext_size // chunk_size)  # ceil division
-        return plaintext_size + chunks * self.OVERHEAD
-
-    def _add_e2e_file(
-        self, client, *, draft_id=None, plaintext_size=1000, filename="a.bin"
-    ):
-        # ``encryption_chunk_size`` is no longer a request body field — the
-        # backend imposes ``settings.TRANSFER_CHUNK_SIZE`` (== ``self.CHUNK``
-        # in this test setup) on E2E drafts. The client only declares the
-        # ciphertext ``size`` it expects to land in S3.
-        body = {
-            "filename": filename,
-            "size": self._ciphertext_size(plaintext_size, self.CHUNK),
-            "plaintext_size": plaintext_size,
-            "e2e_encrypted": True,
-        }
-        if draft_id is not None:
-            body["draft_id"] = str(draft_id)
-        return client.post(ADD_FILE_URL, body, format="json")
-
-    def test_first_add_file_locks_draft_as_e2e(
-        self, patched_s3, authenticated_client
-    ):
-        resp = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+    def test_every_draft_is_encrypted(self, patched_s3, authenticated_client):
+        resp = _add_file(authenticated_client, plaintext_size=1024)
         assert resp.status_code == 201, resp.data
 
         draft = TransferDraft.objects.get(id=resp.data["draft_id"])
-        assert draft.e2e_encrypted is True
-        assert draft.encryption_chunk_size == self.CHUNK
+        assert draft.encryption_chunk_size == CHUNK
 
         tf = draft.files.get()
-        assert tf.size == 1024 + self.OVERHEAD
+        assert tf.size == 1024 + OVERHEAD
         assert tf.plaintext_size == 1024
 
-    def test_followup_add_file_must_match_mode(
-        self, patched_s3, authenticated_client
-    ):
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        # Same draft, plaintext attempt → rejected.
-        resp = _add_file(
-            authenticated_client,
-            draft_id=initiate.data["draft_id"],
-            filename="b.bin",
-            size=2048,
-        )
-        assert resp.status_code == 400
-        assert "e2e_encrypted" in resp.data
-
-    def test_rejects_e2e_without_plaintext_size(
+    def test_add_file_requires_plaintext_size(
         self, patched_s3, authenticated_client
     ):
         resp = authenticated_client.post(
             ADD_FILE_URL,
-            {
-                "filename": "a.bin",
-                "size": 2048,
-                "e2e_encrypted": True,
-            },
-            format="json",
-        )
-        assert resp.status_code == 400
-        assert "plaintext_size" in resp.data
-
-    def test_rejects_e2e_with_drive_source(
-        self, patched_s3, authenticated_client
-    ):
-        # Drive imports happen server-side — we wouldn't have a key to
-        # encrypt with. The frontend hides the option but the backend
-        # enforces the invariant.
-        resp = authenticated_client.post(
-            ADD_FILE_URL,
-            {
-                "filename": "a.bin",
-                "size": self._ciphertext_size(1024, self.CHUNK),
-                "plaintext_size": 1024,
-                "e2e_encrypted": True,
-                "source_url": "https://drive.example.com/x",
-            },
-            format="json",
-        )
-        assert resp.status_code == 400
-        assert "source_url" in resp.data
-
-    def test_rejects_plaintext_size_when_not_e2e(
-        self, patched_s3, authenticated_client
-    ):
-        # plaintext_size is meaningful only when bytes on S3 are ciphertext.
-        # Accepting it on a plaintext draft would let a client poison the
-        # file row with a size that does not match what is in storage.
-        resp = authenticated_client.post(
-            ADD_FILE_URL,
-            {
-                "filename": "a.bin",
-                "size": 2048,
-                "plaintext_size": 1024,
-            },
+            {"filename": "a.bin", "size": 2048},
             format="json",
         )
         assert resp.status_code == 400
@@ -798,204 +745,226 @@ class TestDraftE2eEncryption:
         # A file larger than one chunk produces ceil(N/chunk) crypto chunks,
         # each adding OVERHEAD bytes. Exercise the most off-by-one-prone
         # case: chunk+1 plaintext bytes ⇒ 2 chunks.
-        plaintext = self.CHUNK + 1
-        resp = self._add_e2e_file(authenticated_client, plaintext_size=plaintext)
+        plaintext = CHUNK + 1
+        resp = _add_file(authenticated_client, plaintext_size=plaintext)
         assert resp.status_code == 201, resp.data
 
         tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
         assert tf.plaintext_size == plaintext
-        # 2 chunks ⇒ plaintext + 2 * OVERHEAD bytes of ciphertext land in S3.
-        assert tf.size == plaintext + 2 * self.OVERHEAD
+        assert tf.size == plaintext + 2 * OVERHEAD
 
-    def test_rejects_size_mismatch_against_e2e_params(
-        self, patched_s3, authenticated_client
-    ):
+    def test_rejects_size_mismatch(self, patched_s3, authenticated_client):
         # Lying about ``size`` against the canonical chunk size would let a
-        # client poison the file row so the recipient SW computes
-        # decryption boundaries that don't match the bytes in S3. The
-        # serializer recomputes the expected size from
-        # settings.TRANSFER_CHUNK_SIZE and rejects any divergence.
+        # client poison the file row so the recipient SW computes decryption
+        # boundaries that don't match the bytes in S3. The serializer
+        # recomputes the expected size and rejects any divergence.
         plaintext = 1024
-        consistent = self._ciphertext_size(plaintext, self.CHUNK)
         resp = authenticated_client.post(
             ADD_FILE_URL,
             {
                 "filename": "a.bin",
-                "size": consistent + 1,  # off by one — should be rejected
+                "size": _ciphertext_size(plaintext) + 1,  # off by one
                 "plaintext_size": plaintext,
-                "e2e_encrypted": True,
             },
             format="json",
         )
         assert resp.status_code == 400
         assert "size" in resp.data
 
-    def test_rejects_source_url_on_followup_to_e2e_draft(
-        self, patched_s3, authenticated_client
-    ):
-        # The first add-file fixes the draft as E2E. A follow-up that ships
-        # ``source_url`` must be rejected — Drive imports land plaintext
-        # bytes server-side and would corrupt an encrypted transfer. Two
-        # checks gate this in practice: the e2e_encrypted mode-lock fires
-        # first when the follow-up omits the flag (the realistic shape),
-        # and the source_url-vs-draft-flag guard in the viewset is the
-        # defense-in-depth backstop. Accept either error key.
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        resp = _add_file(
-            authenticated_client,
-            draft_id=initiate.data["draft_id"],
-            filename="b.bin",
-            size=2048,
-            source_url="https://drive.example.com/x",
-        )
-        assert resp.status_code == 400
-        assert "source_url" in resp.data or "e2e_encrypted" in resp.data
-
-    def test_complete_upload_skips_scan_on_e2e(
+    def test_complete_upload_marks_skipped(
         self, patched_s3, authenticated_client, settings
     ):
-        # Scan would be on if this were a plaintext draft, but E2E
-        # ciphertext can't be scanned. The file lands SKIPPED so the
-        # finalize gate doesn't block it and the download path lets it
-        # through.
+        # Encrypted ciphertext can't be scanned, so the file lands SKIPPED
+        # even with the scanner enabled — the finalize gate lets it through.
         settings.CLAMAV_SCAN_ENABLED = True
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        with patch(
-            "core.api.viewsets.draft.submit_scan_task.delay"
-        ) as scan_mock:
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        with patch("core.api.viewsets.draft.submit_scan_task.delay") as scan_mock:
             resp = _complete_upload(
                 authenticated_client,
-                initiate.data["draft_id"],
-                initiate.data["transfer_file_id"],
+                initiate["draft_id"],
+                initiate["transfer_file_id"],
             )
         assert resp.status_code == 204, resp.data
         scan_mock.assert_not_called()
 
-        tf = TransferFile.objects.get(id=initiate.data["transfer_file_id"])
         from core.enums import ScanStatus
 
+        tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
         assert tf.scan_status == ScanStatus.SKIPPED
 
-    def test_finalize_propagates_e2e_fields_to_transfer(
-        self, patched_s3, authenticated_client
-    ):
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
+    def test_finalize_normal_stores_key(self, patched_s3, authenticated_client):
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
-            initiate.data["draft_id"],
-            initiate.data["transfer_file_id"],
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
         )
-        resp = _finalize(authenticated_client, initiate.data["draft_id"])
+        resp = _finalize(authenticated_client, initiate["draft_id"])
         assert resp.status_code == 200, resp.data
 
         transfer = Transfer.objects.get(id=resp.data["id"])
-        assert transfer.e2e_encrypted is True
-        assert transfer.encryption_chunk_size == self.CHUNK
-        tf = transfer.files.get()
-        assert tf.plaintext_size == 1024
+        assert transfer.confidential is False
+        assert transfer.encryption_key == VALID_KEY
+        assert transfer.encryption_chunk_size == CHUNK
+        assert transfer.files.get().plaintext_size == 1024
+        # Detail echoes confidential + chunk size (but not the key).
+        assert resp.data["confidential"] is False
+        assert resp.data["encryption_chunk_size"] == CHUNK
 
-        # API echoes the fields back so the recipient page can drive the SW.
-        assert resp.data["e2e_encrypted"] is True
-        assert resp.data["encryption_chunk_size"] == self.CHUNK
-
-    def test_finalize_passes_key_fragment_to_email_task(
+    def test_finalize_confidential_stores_no_key(
         self, patched_s3, authenticated_client
     ):
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        _complete_upload(
-            authenticated_client,
-            initiate.data["draft_id"],
-            initiate.data["transfer_file_id"],
-        )
-        # The viewset imports the task lazily inside the finalize method,
-        # so the symbol isn't on the viewset module — patch the canonical
-        # location on core.tasks instead. The lazy import resolves to the
-        # same task object so `delay` lands on the mock either way.
-        # ``captureOnCommitCallbacks(execute=True)`` is needed because the
-        # delay() call sits inside a ``transaction.on_commit`` lambda; the
-        # default pytest-django transaction never commits in tests so the
-        # callback would otherwise never fire.
-        from django.test import TestCase as _TC
-
-        with (
-            patch("core.tasks.send_recipient_invitations_task.delay") as send_mock,
-            _TC.captureOnCommitCallbacks(execute=True),
-        ):
-            resp = _finalize(
-                authenticated_client,
-                initiate.data["draft_id"],
-                sharing_mode="email",
-                recipients=["a@b.fr"],
-                key_fragment="abc123",
-            )
-        assert resp.status_code == 200, resp.data
-        send_mock.assert_called_once()
-        # kwarg, not positional — the task signature is `(transfer_id,
-        # key_fragment="")`, and the viewset uses the kwarg form.
-        assert send_mock.call_args.kwargs["key_fragment"] == "abc123"
-
-    def test_finalize_rejects_key_fragment_in_link_mode(
-        self, patched_s3, authenticated_client
-    ):
-        # link mode means the browser keeps the fragment; posting it to the
-        # backend would be a needless leak. Serializer rejects it.
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        _complete_upload(
-            authenticated_client,
-            initiate.data["draft_id"],
-            initiate.data["transfer_file_id"],
-        )
-        resp = _finalize(
-            authenticated_client,
-            initiate.data["draft_id"],
-            sharing_mode="link",
-            key_fragment="abc123",
-        )
-        assert resp.status_code == 400
-        assert "key_fragment" in resp.data
-
-    def test_finalize_rejects_missing_key_fragment_for_e2e_email(
-        self, patched_s3, authenticated_client
-    ):
-        # Without the fragment the email goes out with a download URL
-        # missing the #key, recipient can't decrypt. Catch it at finalize
-        # so the client sees a clear 400 instead of broken emails.
-        initiate = self._add_e2e_file(authenticated_client, plaintext_size=1024)
-        _complete_upload(
-            authenticated_client,
-            initiate.data["draft_id"],
-            initiate.data["transfer_file_id"],
-        )
-        resp = _finalize(
-            authenticated_client,
-            initiate.data["draft_id"],
-            sharing_mode="email",
-            recipients=["a@b.fr"],
-            # key_fragment omitted on purpose
-        )
-        assert resp.status_code == 400
-        assert "key_fragment" in resp.data
-
-    def test_finalize_rejects_key_fragment_for_non_e2e_email(
-        self, patched_s3, authenticated_client
-    ):
-        # A plaintext transfer has no key to share, so a posted fragment
-        # would just be noise; reject to keep the parameter hygiene.
-        initiate = _initiate_with_file(authenticated_client, size=2048)
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
             initiate["draft_id"],
             initiate["transfer_file_id"],
         )
         resp = _finalize(
+            authenticated_client, initiate["draft_id"], confidential=True
+        )
+        assert resp.status_code == 200, resp.data
+
+        transfer = Transfer.objects.get(id=resp.data["id"])
+        assert transfer.confidential is True
+        assert transfer.encryption_key == ""
+
+    def test_finalize_rejects_key_when_confidential(
+        self, patched_s3, authenticated_client
+    ):
+        # A confidential transfer must never post the key to us.
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
             authenticated_client,
             initiate["draft_id"],
-            sharing_mode="email",
-            recipients=["a@b.fr"],
-            key_fragment="abc123",
+            initiate["transfer_file_id"],
+        )
+        resp = authenticated_client.post(
+            f"{DRAFTS_URL}{initiate['draft_id']}/finalize/",
+            {"confidential": True, "encryption_key": VALID_KEY},
+            format="json",
         )
         assert resp.status_code == 400
-        assert "key_fragment" in resp.data
+        assert "encryption_key" in resp.data
+
+    def test_finalize_rejects_missing_key_when_normal(
+        self, patched_s3, authenticated_client
+    ):
+        # A non-confidential transfer needs the key so we can serve it to
+        # recipients; missing it is a 400.
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        resp = authenticated_client.post(
+            f"{DRAFTS_URL}{initiate['draft_id']}/finalize/",
+            {},  # confidential defaults to False, no key
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert "encryption_key" in resp.data
+
+    def test_finalize_confidential_email_is_allowed(
+        self, patched_s3, authenticated_client
+    ):
+        # Confidential works in email mode too: the email carries only the
+        # bare link, the recipient pastes the key. No key reaches us.
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        with patch("core.tasks.send_recipient_invitations_task.delay"):
+            resp = _finalize(
+                authenticated_client,
+                initiate["draft_id"],
+                confidential=True,
+                sharing_mode="email",
+                recipients=["a@b.fr"],
+            )
+        assert resp.status_code == 200, resp.data
+        assert Transfer.objects.get(id=resp.data["id"]).confidential is True
+
+    def test_confidential_with_drive_rejected_at_finalize(
+        self, patched_s3, authenticated_client
+    ):
+        # Drive import needs the key server-side, which a confidential
+        # transfer withholds — so the combo is rejected.
+        resp = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert resp.status_code == 201, resp.data
+        finalize = authenticated_client.post(
+            f"{DRAFTS_URL}{resp.data['draft_id']}/finalize/",
+            {"confidential": True},
+            format="json",
+        )
+        assert finalize.status_code == 400
+        assert "confidential" in finalize.data
+
+    def test_normal_with_drive_kicks_off_import_and_returns_202(
+        self, patched_s3, authenticated_client
+    ):
+        # Drive files are imported (and encrypted) at finalize: the first
+        # call enqueues the import with the key and returns 202; the client
+        # re-polls until the file lands.
+        resp = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert resp.status_code == 201, resp.data
+        with patch(
+            "core.api.viewsets.draft.import_drive_file_task.delay"
+        ) as import_mock:
+            from django.test import TestCase as _TC
+
+            with _TC.captureOnCommitCallbacks(execute=True):
+                finalize = _finalize(authenticated_client, resp.data["draft_id"])
+        assert finalize.status_code == 202, finalize.data
+        assert finalize.data["reason"] == "drive_importing"
+        import_mock.assert_called_once()
+        # The key is passed to the import task so it can encrypt server-side.
+        args = import_mock.call_args.args
+        assert args[1] == VALID_KEY
+        # No transfer yet — it's created only once the import lands.
+        assert Transfer.objects.count() == 0
+
+    def test_finalize_poll_does_not_re_enqueue_import(
+        self, patched_s3, authenticated_client
+    ):
+        # The finalize poll is idempotent: re-posting while a Drive import is
+        # still in flight returns 202 again without starting a second import.
+        # ``import_started_at`` is the guard that makes the re-post a no-op.
+        resp = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert resp.status_code == 201, resp.data
+        draft_id = resp.data["draft_id"]
+        from django.test import TestCase as _TC
+
+        with patch(
+            "core.api.viewsets.draft.import_drive_file_task.delay"
+        ) as import_mock:
+            with _TC.captureOnCommitCallbacks(execute=True):
+                first = _finalize(authenticated_client, draft_id)
+            assert first.status_code == 202, first.data
+            tf = TransferFile.objects.get(draft_id=draft_id)
+            assert tf.import_started_at is not None
+
+            # Import still in flight (the task is mocked, so the file never
+            # completes): a second poll stays 202 and does not re-enqueue.
+            with _TC.captureOnCommitCallbacks(execute=True):
+                second = _finalize(authenticated_client, draft_id)
+            assert second.status_code == 202, second.data
+            import_mock.assert_called_once()
 
 
 @pytest.mark.django_db
@@ -1015,8 +984,8 @@ class TestDraftRemoveFile:
         draft_id, file_ids = _setup_draft_with_files(
             authenticated_client,
             [
-                {"filename": "a.bin", "size": 100},
-                {"filename": "b.bin", "size": 200},
+                {"filename": "a.bin", "plaintext_size": 100},
+                {"filename": "b.bin", "plaintext_size": 200},
             ],
         )
 
@@ -1163,16 +1132,18 @@ class TestCleanupAbandonedDraftsTask:
 @pytest.mark.django_db
 class TestDraftAddFileFromDrive:
     """POST /drafts/add-file/ with ``source_url`` set — server-side Drive
-    import path. No multipart opened synchronously, celery task enqueued,
-    slim response (no upload_id/chunk_size — the client won't be uploading
-    anything)."""
+    import path. The import is deferred to finalize (it needs the key), so
+    add-file only records the intent: no multipart, no task, slim response
+    (no upload_id/chunk_size — the client won't upload anything)."""
 
     DRIVE_URL = "https://fichiers.example.gouv.fr/api/v1.0/items/abc/download/"
 
     def _add_from_drive(self, authenticated_client, draft_id=None, **overrides):
+        plaintext = overrides.pop("plaintext_size", 100)
         body = {
             "filename": "IMG.jpg",
-            "size": 100,
+            "plaintext_size": plaintext,
+            "size": _ciphertext_size(plaintext),
             "mime_type": "image/jpeg",
             "source_url": self.DRIVE_URL,
         }
@@ -1181,8 +1152,10 @@ class TestDraftAddFileFromDrive:
             body["draft_id"] = str(draft_id)
         return authenticated_client.post(ADD_FILE_URL, body, format="json")
 
-    def test_first_drop_opens_draft_and_enqueues_task(self, authenticated_client, user):
+    def test_first_drop_opens_draft_defers_import(self, authenticated_client, user):
         from django.test import TestCase
+
+        from core.enums import ScanStatus
 
         with (
             patch("core.api.viewsets.draft.import_drive_file_task") as mock_task,
@@ -1201,25 +1174,24 @@ class TestDraftAddFileFromDrive:
         assert tf.source_url == self.DRIVE_URL
         assert tf.upload_id == ""
         assert tf.upload_completed_at is None
+        # Encrypted ciphertext isn't scannable, so it's marked SKIPPED now.
+        assert tf.scan_status == ScanStatus.SKIPPED
 
-        # Task enqueued on commit, not in transaction — verified by the
-        # mock being called after the request completes.
-        mock_task.delay.assert_called_once_with(str(tf.id))
+        # Import is deferred to finalize — nothing enqueued at add-file.
+        mock_task.delay.assert_not_called()
 
     def test_rejects_file_too_large(self, authenticated_client, settings):
         settings.TRANSFER_MAX_FILE_SIZE = 1024
-        with patch("core.api.viewsets.draft.import_drive_file_task"):
-            response = self._add_from_drive(authenticated_client, size=2048)
+        response = self._add_from_drive(authenticated_client, size=2048)
         assert response.status_code == 400
 
     def test_mix_with_local_drop_on_same_draft(self, patched_s3, authenticated_client):
         """A draft can hold both locally-uploaded and Drive-imported files.
         The constraint is exactly one parent (draft), not uniform source."""
         local = _initiate_with_file(authenticated_client)
-        with patch("core.api.viewsets.draft.import_drive_file_task"):
-            imported = self._add_from_drive(
-                authenticated_client, draft_id=local["draft_id"]
-            )
+        imported = self._add_from_drive(
+            authenticated_client, draft_id=local["draft_id"]
+        )
         assert imported.status_code == 201
         assert imported.data["draft_id"] == local["draft_id"]
 
@@ -1240,17 +1212,17 @@ class TestDraftRetrieve:
 
     def test_retrieve_returns_file_states(self, patched_s3, authenticated_client, user):
         initiate = _initiate_with_file(authenticated_client)
-        with patch("core.api.viewsets.draft.import_drive_file_task"):
-            authenticated_client.post(
-                ADD_FILE_URL,
-                {
-                    "draft_id": initiate["draft_id"],
-                    "filename": "drive.jpg",
-                    "size": 50,
-                    "source_url": "https://drive.example/x/download/",
-                },
-                format="json",
-            )
+        authenticated_client.post(
+            ADD_FILE_URL,
+            {
+                "draft_id": initiate["draft_id"],
+                "filename": "drive.jpg",
+                "plaintext_size": 50,
+                "size": _ciphertext_size(50),
+                "source_url": "https://drive.example/x/download/",
+            },
+            format="json",
+        )
 
         response = authenticated_client.get(f"{DRAFTS_URL}{initiate['draft_id']}/")
         assert response.status_code == 200
@@ -1268,14 +1240,15 @@ class TestDraftRetrieve:
 class TestImportDriveFileTask:
     """Unit tests for the celery task ``import_drive_file_task``."""
 
-    def _make_file(self, user, size=100, filename="d.jpg"):
+    def _make_file(self, user, plaintext_size=100, filename="d.jpg"):
         from core.tasks import import_drive_file_task
 
-        draft = TransferDraftFactory(owner=user)
+        draft = TransferDraftFactory(owner=user, encryption_chunk_size=CHUNK)
         tf = TransferFile.objects.create(
             draft=draft,
             filename=filename,
-            size=size,
+            size=_ciphertext_size(plaintext_size),
+            plaintext_size=plaintext_size,
             mime_type="image/jpeg",
             s3_key=f"transfers/placeholder/{filename}",
             source_url="https://drive.example.org/x/download/",
@@ -1291,7 +1264,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.requests.get") as mock_get,
             patch("core.tasks.s3"),
         ):
-            task(str(tf.id))
+            task(str(tf.id), VALID_KEY)
 
         # Never touched Drive: the row was already done.
         mock_get.assert_not_called()
@@ -1301,16 +1274,16 @@ class TestImportDriveFileTask:
         from core.tasks import import_drive_file_task
 
         with patch("core.tasks.requests.get") as mock_get:
-            import_drive_file_task(str(_uuid.uuid4()))
+            import_drive_file_task(str(_uuid.uuid4()), VALID_KEY)
         mock_get.assert_not_called()
 
-    def test_happy_path_streams_and_marks_complete(self, user):
-        """One-part happy path: Drive returns the bytes, celery drains
-        them into a fresh multipart, row is marked complete."""
+    def test_happy_path_encrypts_and_marks_complete(self, user):
+        """One-part happy path: Drive returns the bytes, the task encrypts
+        them into a fresh multipart, row is marked complete. The uploaded
+        part is IV + ciphertext + tag, so it's larger than the plaintext."""
         from core.tasks import import_drive_file_task
 
-        tf, _ = self._make_file(user, size=12, filename="hi.txt")
-        # One chunk, payload exactly matches the declared size.
+        tf, _ = self._make_file(user, plaintext_size=12, filename="hi.txt")
         payload = b"hello-bytes!"
         assert len(payload) == 12
 
@@ -1339,20 +1312,24 @@ class TestImportDriveFileTask:
             ) as mock_upload_part,
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), VALID_KEY)
 
         tf.refresh_from_db()
         assert tf.upload_completed_at is not None
         assert tf.upload_id == ""
         mock_upload_part.assert_called_once()
+        # The body uploaded is the encrypted chunk (12 plaintext + 28 overhead).
+        body = mock_upload_part.call_args.kwargs["body"]
+        assert len(body) == 12 + OVERHEAD
         mock_complete.assert_called_once()
 
-    def test_size_mismatch_tears_down(self, user):
-        """Drive returns fewer bytes than declared — the row must be deleted
-        and any in-flight multipart aborted."""
+    def test_size_mismatch_marks_failed(self, user):
+        """Drive returns fewer bytes than declared — the row is kept and
+        marked failed (so the finalize poll surfaces it), the in-flight
+        multipart aborted, the partial object deleted."""
         from core.tasks import import_drive_file_task
 
-        tf, _ = self._make_file(user, size=1000, filename="short.bin")
+        tf, _ = self._make_file(user, plaintext_size=1000, filename="short.bin")
 
         class _FakeResponse:
             def __enter__(self_inner):
@@ -1381,16 +1358,18 @@ class TestImportDriveFileTask:
             patch("core.tasks.s3.delete_object") as mock_delete,
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
+        assert tf.upload_completed_at is None
         mock_complete.assert_not_called()
         mock_abort.assert_called_once()
         mock_delete.assert_called_once()
 
-    def test_drive_http_error_tears_down(self, user):
-        """Drive responds 403 / 404 — the row is deleted, no multipart
-        opened in the first place (the HTTP call errors before that)."""
+    def test_drive_http_error_marks_failed(self, user):
+        """Drive responds 403 / 404 — the row is kept and marked failed, no
+        multipart opened (the HTTP call errors before that)."""
         import requests as _requests
 
         from core.tasks import import_drive_file_task
@@ -1414,10 +1393,12 @@ class TestImportDriveFileTask:
             patch("core.tasks.requests.get", return_value=_FakeResponse()),
             patch("core.tasks.s3.create_multipart_upload") as mock_create,
             patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
+            patch("core.tasks.s3.delete_object"),
         ):
-            import_drive_file_task(str(tf.id))
+            import_drive_file_task(str(tf.id), VALID_KEY)
 
-        assert not TransferFile.objects.filter(id=tf.id).exists()
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
         mock_create.assert_not_called()
         mock_abort.assert_not_called()
 

@@ -99,7 +99,14 @@ export function TransferDetail({
   // the detail page can never reconstruct it. For non-E2E the bare token
   // is enough — same URL the recipient receives.
   const baseUrl = transferBaseUrl(transfer.public_token);
-  const downloadUrl = transfer.e2e_encrypted ? "" : baseUrl;
+  // Confidential transfers can't be reconstructed here — the key lived only
+  // on the success screen. Normal transfers get a bare, working link.
+  const downloadUrl = transfer.confidential ? "" : baseUrl;
+  // Every finalized transfer is encrypted; null chunk size = legacy plaintext.
+  // Encrypted files need the recipient SW to decrypt, which this detail page
+  // doesn't run — so per-file download is disabled and the sender uses the
+  // link instead.
+  const isEncrypted = transfer.encryption_chunk_size != null;
   const isPublicLink = transfer.sharing_mode === "link";
   // For E2E, ``size`` is the ciphertext sitting in S3. The user-facing
   // total should be the plaintext bytes they'll eventually save to disk.
@@ -153,10 +160,10 @@ export function TransferDetail({
 
   const handleDownload = (fileId: string) => {
     if (!transfer.public_token) return;
-    // For E2E we don't hold the key on the detail page (intentionally),
-    // so the download button is disabled below. Non-E2E uses the plain
-    // backend redirect.
-    if (transfer.e2e_encrypted) return;
+    // Encrypted files need the recipient SW to decrypt, which this page
+    // doesn't run — the button is disabled below. Only legacy plaintext
+    // transfers use the plain backend redirect.
+    if (isEncrypted) return;
     downloadFile(transfer.public_token, fileId);
   };
 
@@ -233,18 +240,18 @@ export function TransferDetail({
             </span>
           </>
         )}
-        {transfer.e2e_encrypted && (
+        {transfer.confidential && (
           <>
             <span className="transfer-detail__meta-sep">·</span>
             <Tooltip
               content={t(
-                "This transfer is end-to-end encrypted. The decryption key was only available when you created the transfer; we don't keep it.",
+                "This transfer is confidential. The decryption key was only available when you created it; we never received it and don't keep it.",
               )}
               placement="top"
             >
               <span className="transfer-detail__meta-item transfer-detail__meta-item--e2e">
                 <Lock />
-                {t("End-to-end encrypted")}
+                {t("Confidential")}
               </span>
             </Tooltip>
           </>
@@ -354,9 +361,9 @@ export function TransferDetail({
               }
               extras={
                 <>
-                  {transfer.e2e_encrypted && (
+                  {transfer.confidential && (
                     <Tooltip
-                      content={t("End-to-end encrypted file")}
+                      content={t("Confidential file")}
                       placement="top"
                     >
                       <span className="file-item__scan file-item__scan--encrypted">
@@ -377,13 +384,13 @@ export function TransferDetail({
                     !isActive ||
                     !transfer.public_token ||
                     !downloadable ||
-                    transfer.e2e_encrypted
+                    isEncrypted
                   }
                   aria-label={t("Download {{name}}", { name: file.filename })}
                   title={
-                    transfer.e2e_encrypted
+                    isEncrypted
                       ? t(
-                          "Open the original link to download an end-to-end encrypted file.",
+                          "Open the download link to get this file — it decrypts in your browser.",
                         )
                       : t("Download")
                   }
