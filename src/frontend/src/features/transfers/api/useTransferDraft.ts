@@ -97,6 +97,9 @@ export interface TransferDraftHandle {
   // verdict (scanner likely down). Polling is stopped; `retryScan` re-arms it.
   scanTimedOut: boolean;
   retryScan: () => void;
+  // True while a `retryScan` request is in flight — used to disable the retry
+  // affordance so a second click can't fire an overlapping re-submit.
+  isRetrying: boolean;
   error: string | null;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
@@ -177,6 +180,10 @@ export function useTransferDraft(): TransferDraftHandle {
   // scanner recovers — the user just re-arms polling via `retryScan`.
   const [scanTimedOut, setScanTimedOut] = useState(false);
   const scanDeadlineRef = useRef<number | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  // Ref guard mirrors `isRetrying` so overlapping calls are rejected without
+  // waiting for the state to flush.
+  const isRetryingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -468,14 +475,25 @@ export function useTransferDraft(): TransferDraftHandle {
   // fresh verdict. Best-effort — a failed re-arm just leaves the retry visible.
   const retryScan = useCallback(async () => {
     const id = draftIdRef.current;
-    if (!id) return;
+    // Reject overlapping retries: a second in-flight re-submit would race the
+    // first and could momentarily null the deadline (see below).
+    if (!id || isRetryingRef.current) return;
+    isRetryingRef.current = true;
+    setIsRetrying(true);
     try {
       await apiFetch(`/drafts/${id}/rescan/`, { method: "POST" });
     } catch {
       // Network/hiccup — keep the timed-out state so the user can retry again.
       return;
+    } finally {
+      isRetryingRef.current = false;
+      setIsRetrying(false);
     }
-    scanDeadlineRef.current = null;
+    // Arm a *fresh* deadline rather than nulling it: if `setScanTimedOut(false)`
+    // is a no-op (state already false), the poller effect won't re-run to
+    // re-anchor a null deadline, and the next tick would read `now > null` and
+    // time out immediately. A concrete deadline is always valid.
+    scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
     setScanTimedOut(false);
   }, []);
 
@@ -837,6 +855,7 @@ export function useTransferDraft(): TransferDraftHandle {
     isScanning,
     scanTimedOut,
     retryScan,
+    isRetrying,
     error,
     addFile,
     attachFromDrive,

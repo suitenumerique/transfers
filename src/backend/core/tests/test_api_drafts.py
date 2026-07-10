@@ -1195,6 +1195,30 @@ class TestDraftRescan:
         assert f.scan_status == ScanStatus.CLEAN
         submit.assert_not_called()
 
+    def test_too_large_left_untouched(self, authenticated_client, user):
+        """A scan-exempt (too large) file is not re-submitted."""
+        draft, f = self._draft_with_file(user, ScanStatus.TOO_LARGE)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.TOO_LARGE
+        submit.assert_not_called()
+
+    def test_skipped_left_untouched(self, authenticated_client, user):
+        """A scan-exempt (skipped) file is not re-submitted."""
+        draft, f = self._draft_with_file(user, ScanStatus.SKIPPED)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.SKIPPED
+        submit.assert_not_called()
+
     def test_mixed_draft_resubmits_only_eligible(self, authenticated_client, user):
         """A draft holding one file of each terminal state: only the stuck
         (PENDING) and transiently-errored files are re-armed; CLEAN, INFECTED
@@ -1215,6 +1239,8 @@ class TestDraftRescan:
         clean = add(ScanStatus.CLEAN)
         infected = add(ScanStatus.INFECTED)
         file_err = add(ScanStatus.ERROR, "file")
+        too_large = add(ScanStatus.TOO_LARGE)
+        skipped = add(ScanStatus.SKIPPED)
 
         submit_p, commit_p = self._patched()
         with submit_p as submit, commit_p:
@@ -1226,8 +1252,8 @@ class TestDraftRescan:
         assert {c.args[0] for c in submit.call_args_list} == eligible
         assert submit.call_count == 2
 
-        # The transient error was reset to PENDING; the hard-blocked and
-        # already-clean files are untouched.
+        # The transient error was reset to PENDING; the hard-blocked,
+        # already-clean and scan-exempt files are untouched.
         transient.refresh_from_db()
         assert transient.scan_status == ScanStatus.PENDING
         assert transient.scan_error_kind == ""
@@ -1235,6 +1261,8 @@ class TestDraftRescan:
             (clean, ScanStatus.CLEAN),
             (infected, ScanStatus.INFECTED),
             (file_err, ScanStatus.ERROR),
+            (too_large, ScanStatus.TOO_LARGE),
+            (skipped, ScanStatus.SKIPPED),
         ):
             f.refresh_from_db()
             assert f.scan_status == expected

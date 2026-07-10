@@ -1117,9 +1117,24 @@
         #b34000
       );
 
+      // On the base rule so both the hover and un-hover transitions animate.
+      > svg {
+        transition: transform 0.15s ease;
+      }
+
       &:hover > svg {
         transform: rotate(-45deg);
-        transition: transform 0.15s ease;
+      }
+
+      // Keep a visible keyboard focus ring despite `appearance: none`.
+      &:focus-visible {
+        outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
+        outline-offset: 1px;
+        border-radius: 2px;
+      }
+
+      &:disabled {
+        cursor: default;
       }
     }
   }

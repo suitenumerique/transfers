@@ -635,9 +635,10 @@ export function TransferForm() {
                             type="button"
                             className="file-item__scan file-item__scan--retry"
                             onClick={() => draft.retryScan()}
+                            disabled={draft.isRetrying}
                             aria-label={t("Retry scan")}
                           >
-                            <Retry />
+                            {draft.isRetrying ? <Spinner /> : <Retry />}
                           </button>
                         </Tooltip>
                       ) : (
