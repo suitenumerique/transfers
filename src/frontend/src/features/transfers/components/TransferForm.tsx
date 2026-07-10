@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError, apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
@@ -444,6 +444,17 @@ export function TransferForm() {
         );
         return;
       }
+      if (
+        err instanceof ApiError &&
+        (err.body as { reason?: string })?.reason === "scan_error"
+      ) {
+        setSubmitError(
+          t(
+            "The antivirus scan could not complete. Retry the scan, then send again.",
+          ),
+        );
+        return;
+      }
       if (err instanceof Error && err.message === "scan_timeout") {
         setSubmitError(
           t("The antivirus scan is taking too long. Please try again."),
@@ -472,23 +483,25 @@ export function TransferForm() {
   // of an armed auto-create, the user clicks Delete/Cancel on a file row
   // (those stay enabled while awaitingUploads, and their handler disarms
   // the pending finalize).
-  // A virus is surfaced per-file the moment the scan resolves — block the send
-  // right there rather than letting the user click through to a finalize 422.
-  // A still-scanning file does NOT disable the button: clicking arms the
-  // create, which waits for the scan (finalize polls) just like it waits for
-  // in-flight uploads.
+  // Any unresolved scan verdict blocks the send, surfaced per-file so the user
+  // acts on the row: a virus or unscannable file must be removed, a scan error
+  // (scanner hiccup / unavailable) must be retried via the row's ↻ button.
+  // Finalize is read-only and won't retry for us, so we don't let the user
+  // click through to a guaranteed block. A still-*scanning* file does NOT
+  // disable the button: clicking arms the create and the finalize poll waits
+  // for the verdict, just like it waits for in-flight uploads — UNLESS that
+  // poll already gave up (`scanTimedOut`): the scanner looks unreachable and
+  // finalize would just spin a fresh, doomed SCAN_MAX_WAIT_MS wait. Disable
+  // until the user re-arms the scan via the row's ↻ button, which clears it.
   const anyInfected = draft.files.some((f) => f.scanStatus === "infected");
-  // A file-bound scan error is a hard block too (retry won't help). A
-  // *transient* scan error is not — clicking Create re-submits it.
-  const anyUnscannable = draft.files.some(
-    (f) => f.scanStatus === "error" && f.scanErrorKind === "file",
-  );
+  const anyScanError = draft.files.some((f) => f.scanStatus === "error");
   const submitDisabled =
     busy ||
     !hasFiles ||
     anyError ||
     anyInfected ||
-    anyUnscannable ||
+    anyScanError ||
+    draft.scanTimedOut ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
 
   return (
@@ -608,7 +621,26 @@ export function TransferForm() {
                         // A transient error is still "in progress" from the
                         // user's view — it auto-retries, nothing to act on.
                         (df.scanStatus === "error" &&
-                          df.scanErrorKind !== "file")) && (
+                          df.scanErrorKind !== "file")) &&
+                      // Once polling has given up, swap the spinner for an
+                      // inline retry button on the row itself — no global toast.
+                      (draft.scanTimedOut ? (
+                        <Tooltip
+                          content={t(
+                            "This file couldn't be scanned — the scanner may be unavailable. Click to retry.",
+                          )}
+                          placement="top"
+                        >
+                          <button
+                            type="button"
+                            className="file-item__scan file-item__scan--retry"
+                            onClick={() => draft.retryScan()}
+                            aria-label={t("Retry scan")}
+                          >
+                            <Retry />
+                          </button>
+                        </Tooltip>
+                      ) : (
                         <Tooltip
                           content={t("Antivirus scan in progress…")}
                           placement="top"
@@ -618,7 +650,7 @@ export function TransferForm() {
                             {t("Scanning…")}
                           </span>
                         </Tooltip>
-                      )}
+                      ))}
                     {isDone && df.scanStatus === "clean" && (
                       <Tooltip
                         content={t("Scanned, no virus found")}

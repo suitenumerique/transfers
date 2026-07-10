@@ -1102,6 +1102,26 @@
         #b34000
       );
     }
+
+    // Inline retry affordance shown when the scan poller gave up (scanner
+    // unavailable). It's a real <button>, so strip the native chrome and lean
+    // on the warning colour + a hover cue to read as clickable.
+    &--retry {
+      appearance: none;
+      border: none;
+      padding: 0;
+      background: none;
+      cursor: pointer;
+      color: var(
+        --c--contextuals--content--semantic--warning--primary,
+        #b34000
+      );
+
+      &:hover > svg {
+        transform: rotate(-45deg);
+        transition: transform 0.15s ease;
+      }
+    }
   }
 }
 

@@ -19,7 +19,7 @@ from django.utils import timezone
 import pytest
 from botocore.exceptions import ClientError
 
-from core.enums import TransferEventType
+from core.enums import ScanStatus, TransferEventType
 from core.factories import (
     TransferDraftFactory,
     TransferFactory,
@@ -1098,3 +1098,168 @@ class TestImportDriveFileTask:
         assert not TransferFile.objects.filter(id=tf.id).exists()
         mock_create.assert_not_called()
         mock_abort.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestDraftRescan:
+    """POST /drafts/{id}/rescan/ — re-arm the scan on stuck files.
+
+    The background poller gives up when the scanner is unreachable, leaving
+    files PENDING with no job in flight. This endpoint (what the front's retry
+    affordance calls) re-submits them without waiting for the 5-minute reaper.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _scan_on(self, settings):
+        settings.CLAMAV_SCAN_ENABLED = True
+
+    def _draft_with_file(self, user, scan_status, scan_error_kind=""):
+        draft = TransferDraftFactory(owner=user)
+        f = TransferFileFactory(
+            draft=draft,
+            transfer=None,
+            upload_completed_at=timezone.now(),
+            scan_status=scan_status,
+            scan_error_kind=scan_error_kind,
+        )
+        return draft, f
+
+    def _rescan(self, client, draft_id):
+        return client.post(f"{DRAFTS_URL}{draft_id}/rescan/")
+
+    def _patched(self):
+        # Fire on_commit callbacks inline so the .delay assertion is testable.
+        return (
+            patch("core.api.viewsets.draft.submit_scan_task.delay"),
+            patch(
+                "core.api.viewsets.draft.transaction.on_commit",
+                side_effect=lambda fn: fn(),
+            ),
+        )
+
+    def test_pending_file_resubmitted(self, authenticated_client, user):
+        """A file stuck PENDING is re-submitted to the scanner."""
+        draft, f = self._draft_with_file(user, ScanStatus.PENDING)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == [str(f.id)]
+        submit.assert_called_once_with(str(f.id))
+
+    def test_transient_error_reset_and_resubmitted(self, authenticated_client, user):
+        """A transient scan error is reset to PENDING and re-submitted."""
+        draft, f = self._draft_with_file(user, ScanStatus.ERROR, "transient")
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == [str(f.id)]
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.PENDING
+        assert f.scan_error_kind == ""
+        submit.assert_called_once_with(str(f.id))
+
+    def test_infected_left_untouched(self, authenticated_client, user):
+        """An infected file is a hard block: never re-submitted."""
+        draft, f = self._draft_with_file(user, ScanStatus.INFECTED)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.INFECTED
+        submit.assert_not_called()
+
+    def test_file_bound_error_left_untouched(self, authenticated_client, user):
+        """A file-bound (unscannable) error is a hard block: never re-submitted."""
+        draft, _ = self._draft_with_file(user, ScanStatus.ERROR, "file")
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        submit.assert_not_called()
+
+    def test_clean_file_left_untouched(self, authenticated_client, user):
+        """A file that already passed the scan is not re-submitted: rescan only
+        re-arms stuck (PENDING) or transiently-errored files."""
+        draft, f = self._draft_with_file(user, ScanStatus.CLEAN)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.CLEAN
+        submit.assert_not_called()
+
+    def test_mixed_draft_resubmits_only_eligible(self, authenticated_client, user):
+        """A draft holding one file of each terminal state: only the stuck
+        (PENDING) and transiently-errored files are re-armed; CLEAN, INFECTED
+        and file-bound ERROR are left as-is."""
+        draft = TransferDraftFactory(owner=user)
+
+        def add(scan_status, scan_error_kind=""):
+            return TransferFileFactory(
+                draft=draft,
+                transfer=None,
+                upload_completed_at=timezone.now(),
+                scan_status=scan_status,
+                scan_error_kind=scan_error_kind,
+            )
+
+        pending = add(ScanStatus.PENDING)
+        transient = add(ScanStatus.ERROR, "transient")
+        clean = add(ScanStatus.CLEAN)
+        infected = add(ScanStatus.INFECTED)
+        file_err = add(ScanStatus.ERROR, "file")
+
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+
+        assert resp.status_code == 200
+        eligible = {str(pending.id), str(transient.id)}
+        assert set(resp.data["rescanned_file_ids"]) == eligible
+        assert {c.args[0] for c in submit.call_args_list} == eligible
+        assert submit.call_count == 2
+
+        # The transient error was reset to PENDING; the hard-blocked and
+        # already-clean files are untouched.
+        transient.refresh_from_db()
+        assert transient.scan_status == ScanStatus.PENDING
+        assert transient.scan_error_kind == ""
+        for f, expected in (
+            (clean, ScanStatus.CLEAN),
+            (infected, ScanStatus.INFECTED),
+            (file_err, ScanStatus.ERROR),
+        ):
+            f.refresh_from_db()
+            assert f.scan_status == expected
+        file_err.refresh_from_db()
+        assert file_err.scan_error_kind == "file"
+
+    def test_noop_when_scan_disabled(self, settings, authenticated_client, user):
+        """No-op (empty result, no submit) when antivirus scanning is off."""
+        settings.CLAMAV_SCAN_ENABLED = False
+        draft, _ = self._draft_with_file(user, ScanStatus.PENDING)
+        submit_p, commit_p = self._patched()
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == []
+        submit.assert_not_called()
+
+    def test_rejects_other_user(self, authenticated_client):
+        """A draft owned by another user is not found (404)."""
+        other_draft = TransferDraftFactory()
+        TransferFileFactory(
+            draft=other_draft,
+            transfer=None,
+            upload_completed_at=timezone.now(),
+            scan_status=ScanStatus.PENDING,
+        )
+        resp = self._rescan(authenticated_client, other_draft.id)
+        assert resp.status_code == 404
