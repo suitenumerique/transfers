@@ -571,6 +571,12 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 )
                 rescanned.append(str(f.id))
 
+        logger.info(
+            "Rescan requested for draft %s: re-submitted %d file(s) %s",
+            pk,
+            len(rescanned),
+            rescanned,
+        )
         return drf.response.Response({"rescanned_file_ids": rescanned})
 
 
