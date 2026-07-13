@@ -414,6 +414,10 @@ class TransferDraft(BaseModel):
     # confidential is decided only at finalize, so the draft holds no
     # ``confidential`` flag: the same ciphertext serves either outcome.
     encryption_chunk_size = models.PositiveIntegerField(null=True, blank=True)
+    # Set at finalize, non-confidential only: the antivirus needs it to decrypt
+    # the object before scanning. A confidential draft never gets one, so its
+    # files are marked SKIPPED. Dropped with the draft.
+    encryption_key = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "core_transfer_draft"
@@ -513,6 +517,13 @@ class TransferFile(BaseModel):
         help_text="Set only when scan_status is ERROR. 'transient' = an "
         "infrastructure failure that a retry may clear; 'file' = the file "
         "itself can't be scanned, so the user must remove it.",
+    )
+    scan_submitted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when the file was handed to the scanner. Distinguishes "
+        "'PENDING, scan running' from 'PENDING, key not yet supplied', and keeps "
+        "the finalize poll loop from re-submitting a scan already in flight.",
     )
     scan_job_id = models.CharField(
         max_length=64,

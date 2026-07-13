@@ -316,16 +316,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
-                    # Encrypted ciphertext can't be scanned (we don't hold the
-                    # key), so the antivirus gate is bypassed wholesale and the
-                    # file is marked SKIPPED (downloadable, no "clean" claim).
-                    # Every transfer is encrypted, so this is the only branch
-                    # for new drafts; the CLAMAV toggle still covers any legacy
-                    # plaintext draft.
-                    if (
-                        draft.encryption_chunk_size is not None
-                        or not settings.CLAMAV_SCAN_ENABLED
-                    ):
+                    if not settings.CLAMAV_SCAN_ENABLED:
                         transfer_file.scan_status = ScanStatus.SKIPPED
                     elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
                         transfer_file.scan_status = ScanStatus.TOO_LARGE
@@ -337,14 +328,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             "updated_at",
                         ]
                     )
-                    # on_commit so the scanner never races the transaction.
-                    # PENDING ⟺ AV on AND within size limit (the only case that
-                    # needs a scan — SKIPPED / TOO_LARGE were set above).
-                    if transfer_file.scan_status == ScanStatus.PENDING:
-                        file_id = str(transfer_file.id)
-                        transaction.on_commit(
-                            lambda fid=file_id: submit_scan_task.delay(fid)
-                        )
+                    # No scan here: S3 holds ciphertext and the key only
+                    # arrives at finalize, which submits it.
 
         if error_detail is not None:
             raise drf.exceptions.ValidationError(error_detail)
@@ -518,13 +503,42 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         status=202,
                     )
 
-            # Antivirus gate — read only. Finalize just reads each file's scan
-            # verdict; it never re-submits or resets a scan (that lives entirely
-            # in the pre-send retry path: the /rescan/ endpoint). A draft becomes
-            # a transfer once every file is non-blocking — CLEAN or scan-exempt
-            # (SKIPPED / TOO_LARGE). Blocks: a virus, an unscannable file, or a
-            # scan that errored (the user retries or removes it on the form). A
-            # still-PENDING file keeps the client polling.
+            # The key only reaches us here, so this is the first moment the
+            # ciphertext can be scanned at all.
+            if settings.CLAMAV_SCAN_ENABLED and draft.encryption_chunk_size:
+                if confidential:
+                    # No key, ever — unscannable. Scan-exempt: downloadable,
+                    # but claiming nothing.
+                    for f in files:
+                        if f.scan_status == ScanStatus.PENDING:
+                            f.scan_status = ScanStatus.SKIPPED
+                            f.save(update_fields=["scan_status", "updated_at"])
+                else:
+                    # Park the key so submit_scan_task can decrypt with it.
+                    # It dies with the draft; only the Transfer keeps it.
+                    if not draft.encryption_key:
+                        draft.encryption_key = metadata["encryption_key"]
+                        draft.save(update_fields=["encryption_key", "updated_at"])
+                    for f in files:
+                        # Finalize is a 202 poll loop — without this marker
+                        # every re-post would launch another scan.
+                        if (
+                            f.scan_status == ScanStatus.PENDING
+                            and f.upload_completed_at is not None
+                            and f.scan_submitted_at is None
+                        ):
+                            f.scan_submitted_at = timezone.now()
+                            f.save(
+                                update_fields=["scan_submitted_at", "updated_at"]
+                            )
+                            transaction.on_commit(
+                                lambda fid=str(f.id): submit_scan_task.delay(fid)
+                            )
+
+            # Antivirus gate: a transfer is created only once every file is
+            # non-blocking (CLEAN, or scan-exempt SKIPPED / TOO_LARGE). PENDING
+            # keeps the client polling. Re-arming a failed scan is /rescan/'s
+            # job, not ours.
             if settings.CLAMAV_SCAN_ENABLED:
                 infected, unscannable, scan_errored, scanning = [], [], [], []
                 for f in files:
@@ -655,13 +669,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     # PENDING before re-submitting.
                     f.scan_status = ScanStatus.PENDING
                     f.scan_error_kind = ""
-                    f.save(
-                        update_fields=[
-                            "scan_status",
-                            "scan_error_kind",
-                            "updated_at",
-                        ]
-                    )
+                # Re-arm the marker, else finalize thinks it's still in flight.
+                f.scan_submitted_at = timezone.now()
+                f.save(
+                    update_fields=[
+                        "scan_status",
+                        "scan_error_kind",
+                        "scan_submitted_at",
+                        "updated_at",
+                    ]
+                )
                 transaction.on_commit(
                     lambda fid=str(f.id): submit_scan_task.delay(fid)
                 )

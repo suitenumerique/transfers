@@ -286,6 +286,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
     per-file progress for server-side Drive imports."""
 
     state = serializers.SerializerMethodField()
+    scan_submitted = serializers.SerializerMethodField()
 
     class Meta:
         model = models.TransferFile
@@ -298,6 +299,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
             "source_url",
             "scan_status",
             "scan_error_kind",
+            "scan_submitted",
         ]
         read_only_fields = fields
 
@@ -307,6 +309,12 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
         if obj.source_url:
             return "importing"
         return "uploading"
+
+    def get_scan_submitted(self, obj) -> bool:
+        """Whether a scan is actually in flight. PENDING alone is ambiguous: a
+        file sits PENDING with no scan running until finalize supplies the key.
+        """
+        return obj.scan_submitted_at is not None
 
 
 class DraftDetailSerializer(serializers.ModelSerializer):

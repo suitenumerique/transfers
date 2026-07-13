@@ -60,9 +60,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // cleanup only unregisters when there's something to drop (set by both the
   // auto-effect and the paste handler).
   const registeredRef = useRef(false);
-  // Monotonic id per auto-registration attempt. A stale attempt (its effect
-  // cleaned up while its handshake was in flight) must not unregister a key a
-  // newer attempt has since registered under the same token.
+  // A stale attempt (cleaned up mid-handshake) must not unregister the key a
+  // newer one has since registered under the same token.
   const registerAttemptRef = useRef(0);
 
   const totalSize = transfer.files.reduce(
@@ -215,9 +214,9 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     });
   };
 
-  // Recipients only ever see transfers whose files are all clean — the scan is
-  // a hard gate at creation, so infected/pending never reach here. "skipped"
-  // (scanning disabled on the instance) shows no badge.
+  // Infected / pending never reach a recipient (the scan gates creation). What
+  // does reach them is files never scanned at all — say so: "clean" is a claim
+  // we can only make when we actually looked.
   const scanBadge = (status: ScanStatus) => {
     if (status === "clean") {
       return (
@@ -228,16 +227,20 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </Tooltip>
       );
     }
-    if (status === "too_large") {
+    if (status === "too_large" || status === "skipped") {
+      const reason =
+        status === "too_large"
+          ? t("This file was not scanned for viruses because it is too large.")
+          : transfer.confidential
+            ? t(
+                "This transfer is confidential, so it could not be scanned for viruses: the decryption key never reached our servers.",
+              )
+            : t("This file was not scanned for viruses.");
       return (
-        <Tooltip
-          content={t(
-            "This file was not scanned for viruses because it is too large.",
-          )}
-          placement="top"
-        >
+        <Tooltip content={reason} placement="top">
           <span className="file-item__scan file-item__scan--warning">
             <Warning />
+            {t("Not scanned")}
           </span>
         </Tooltip>
       );

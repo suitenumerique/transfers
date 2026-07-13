@@ -60,11 +60,14 @@ export interface DraftFile {
   total: number;
   state: DraftFileState;
   // Antivirus verdict, polled once the upload is done. Undefined until the
-  // first poll lands. "pending" while clamd is scanning.
+  // first poll lands.
   scanStatus?: ScanStatus;
   // When scanStatus is "error": "file" (unscannable, must remove) vs
   // "transient" (retryable). Drives which message the form shows.
   scanErrorKind?: ScanErrorKind;
+  // Whether a scan is actually running. "pending" alone is ambiguous: before
+  // Send, files sit pending with no scan in flight (the key isn't sent yet).
+  scanSubmitted?: boolean;
   error?: string;
 }
 
@@ -169,6 +172,7 @@ interface DraftDetailResponse {
     source_url: string;
     scan_status: ScanStatus;
     scan_error_kind: ScanErrorKind;
+    scan_submitted: boolean;
   }>;
 }
 
@@ -186,10 +190,8 @@ const POLL_INTERVAL_MS = 200;
 // are still being scanned. Re-poll on that interval, give up after the max.
 const SCAN_POLL_INTERVAL_MS = 2000;
 const SCAN_MAX_WAIT_MS = 120000;
-// A Drive import is a server-side download + encrypt + multipart upload of the
-// whole file, so it scales with size and routinely outlives a scan. Giving it
-// the scan budget would abort healthy imports of large files, so it gets its
-// own, much longer ceiling.
+// A Drive import scales with file size and routinely outlives a scan, so it
+// gets its own ceiling — the scan budget would abort healthy large imports.
 const DRIVE_IMPORT_MAX_WAIT_MS = 900000;
 
 interface FinalizePendingResponse {
@@ -228,9 +230,8 @@ export function useTransferDraft(): TransferDraftHandle {
   // don't churn the tree when it lands (the fragment string is the only
   // value the UI cares about).
   const e2eKeyRef = useRef<CryptoKey | null>(null);
-  // Synchronous mirror of ``keyFragment`` so submit reads the freshest value
-  // rather than a stale null captured by its closure when Send is clicked
-  // before the fragment-setting render has flushed. State stays for the UI.
+  // Synchronous mirror of `keyFragment`: submit would otherwise read a stale
+  // null from its closure if Send is clicked before the render flushes.
   const keyFragmentRef = useRef<string | null>(null);
   const confidentialRef = useRef(false);
 
@@ -419,21 +420,27 @@ export function useTransferDraft(): TransferDraftHandle {
   // server-side import progress.
 
   // --- Scan poller ---
-  // Once a file's upload is done, its antivirus verdict lands asynchronously
-  // (webhook → scan_status). Poll the draft so the form shows "clean" / "virus
-  // detected" per file as soon as the scan resolves, without waiting for the
-  // user to hit Create. Runs while any done file is still PENDING (or unknown).
+  // Verdicts land asynchronously (webhook → scan_status), so poll to show them
+  // per file. Only for scans actually in flight: before Send nothing is
+  // scanning, and polling then would spin forever and trip a bogus timeout.
   useEffect(() => {
-    const needsScan = files.some(
-      (f) =>
-        f.state === "done" &&
-        (f.scanStatus === undefined ||
-          f.scanStatus === "pending" ||
-          // A transient error auto-retries (reaper / finalize) — keep polling
-          // so it flips to clean once the scanner recovers. A file-bound error
-          // is terminal, so it doesn't keep us polling.
-          (f.scanStatus === "error" && f.scanErrorKind !== "file")),
-    );
+    const needsScan =
+      // Poll at least once after an upload lands, to learn the file's scan
+      // state at all (we can't know whether a scan is running until we ask).
+      files.some((f) => f.state === "done" && f.scanStatus === undefined) ||
+      // Finalize is currently blocked on the scan it just launched.
+      isScanning ||
+      // A scan the backend has actually submitted is still unresolved. A
+      // transient error auto-retries (reaper / rescan) — keep polling so it
+      // flips to clean once the scanner recovers. A file-bound error is
+      // terminal, so it doesn't keep us polling.
+      files.some(
+        (f) =>
+          f.state === "done" &&
+          f.scanSubmitted === true &&
+          (f.scanStatus === "pending" ||
+            (f.scanStatus === "error" && f.scanErrorKind !== "file")),
+      );
     if (!needsScan) {
       // Nothing left to wait on (resolved, or the stuck file was removed) —
       // reset the deadline and clear any timed-out notice so the next batch
@@ -475,19 +482,22 @@ export function useTransferDraft(): TransferDraftHandle {
           if (
             !server ||
             (server.scan_status === f.scanStatus &&
-              server.scan_error_kind === (f.scanErrorKind ?? ""))
+              server.scan_error_kind === (f.scanErrorKind ?? "") &&
+              server.scan_submitted === f.scanSubmitted)
           )
             return f;
           return {
             ...f,
             scanStatus: server.scan_status,
             scanErrorKind: server.scan_error_kind,
+            scanSubmitted: server.scan_submitted,
           };
         });
         const mutated = next.some(
           (f, i) =>
             filesRef.current[i]?.scanStatus !== f.scanStatus ||
-            filesRef.current[i]?.scanErrorKind !== f.scanErrorKind,
+            filesRef.current[i]?.scanErrorKind !== f.scanErrorKind ||
+            filesRef.current[i]?.scanSubmitted !== f.scanSubmitted,
         );
         if (mutated) writeFiles(next);
       } catch {
@@ -501,7 +511,7 @@ export function useTransferDraft(): TransferDraftHandle {
       cancelled = true;
       window.clearInterval(handle);
     };
-  }, [files, writeFiles, scanTimedOut]);
+  }, [files, writeFiles, scanTimedOut, isScanning]);
 
   // Re-arm scanning after the poller gave up. Re-submitting is the point: by
   // the time we time out, the backend's submit task has already exhausted its
@@ -868,10 +878,8 @@ export function useTransferDraft(): TransferDraftHandle {
         // is thrown by apiFetch and surfaced to the caller.
         const isConfidential = confidentialRef.current;
         const fragment = keyFragmentRef.current;
-        // A non-confidential transfer must ship the key so the backend can
-        // serve it to recipients. The fragment is minted during the first
-        // file's registration, so once uploads have finished it is always
-        // present — guard anyway rather than post a null key.
+        // Non-confidential must ship the key. It's minted on the first file's
+        // registration, so it's always here by now — guard anyway.
         if (!isConfidential && !fragment) {
           throw new Error("Encryption key not ready");
         }

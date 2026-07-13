@@ -146,10 +146,9 @@ def import_drive_file_task(transfer_file_id, encryption_key):
     fragment; it reaches this task as a kwarg, which is acceptable because a
     non-confidential transfer stores the same key in the DB anyway.
 
-    On success the row's ``upload_completed_at`` is set (scan SKIPPED, since
-    ciphertext can't be scanned). On failure ``import_failed_at`` is set and
-    the row is kept so the finalize poll can surface the failure; the user
-    removes the file and retries.
+    On success ``upload_completed_at`` is set and the row stays PENDING, so the
+    finalize gate submits its scan. On failure ``import_failed_at`` is set and
+    the row is kept, so the finalize poll can surface it to the user.
     """
     try:
         tf = TransferFile.objects.get(id=transfer_file_id)
@@ -179,12 +178,9 @@ def import_drive_file_task(transfer_file_id, encryption_key):
         with requests.get(tf.source_url, stream=True, timeout=60) as response:
             response.raise_for_status()
 
-            # Bound the download against the size the row declared. Without
-            # this we'd encrypt and ship an unbounded body to S3 and only
-            # notice at the final size check — after paying for the transfer
-            # and storage. Trust Content-Length for a cheap up-front reject,
-            # then cap the bytes actually read (the header may be missing or
-            # understated).
+            # Reject up front on the declared size, then cap what we actually
+            # read (the header may be missing or lying). Otherwise we'd encrypt
+            # and ship an unbounded body to S3 before the final check caught it.
             declared = response.headers.get("Content-Length")
             try:
                 declared = int(declared) if declared else None
@@ -270,10 +266,13 @@ def import_drive_file_task(transfer_file_id, encryption_key):
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        # Encrypted ciphertext can't be scanned (we don't hold the key at
-        # rest for confidential, and even in normal mode the scanner isn't
-        # wired to decrypt), so a Drive import is always SKIPPED.
-        tf.scan_status = ScanStatus.SKIPPED
+        # Drive implies non-confidential, so we hold the key and this object
+        # is scannable. Leave it PENDING — the import runs inside finalize, so
+        # the next poll submits the scan.
+        if not settings.CLAMAV_SCAN_ENABLED:
+            tf.scan_status = ScanStatus.SKIPPED
+        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
+            tf.scan_status = ScanStatus.TOO_LARGE
         tf.save(
             update_fields=[
                 "upload_id",
@@ -305,6 +304,38 @@ def import_drive_file_task(transfer_file_id, encryption_key):
         tf.upload_id = ""
         tf.import_failed_at = timezone.now()
         tf.save(update_fields=["upload_id", "import_failed_at", "updated_at"])
+
+
+class ScanNotPossible(Exception):
+    """This file cannot be meaningfully scanned, so it must not be submitted."""
+
+
+def _scan_encryption_params(tf):
+    """What the scanner needs to decrypt ``tf``.
+
+    Fail closed: scanning an encrypted object without these doesn't error out —
+    clamd reports the opaque bytes CLEAN. Everything we store is encrypted, so
+    anything we can't assemble decryption material for is a bug, not a plaintext
+    file, and must not be scanned. Read the state from the row's actual parent,
+    not the draft alone, so a reparented file can't pass as plaintext.
+    """
+    parent = tf.draft or tf.transfer
+    if parent is None:
+        raise ScanNotPossible("row has neither draft nor transfer")
+
+    if parent.encryption_chunk_size is None:
+        raise ScanNotPossible("no chunk size — cannot decrypt")
+
+    if not parent.encryption_key:
+        # No key yet (finalize supplies it), or confidential — never any key.
+        raise ScanNotPossible("encrypted, no key available")
+
+    return {
+        "key": parent.encryption_key,
+        "chunk_size": parent.encryption_chunk_size,
+        # AAD prefix — must match what the browser bound each chunk to.
+        "file_id": str(tf.id),
+    }
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -359,20 +390,30 @@ def submit_scan_task(self, transfer_file_id):
         )
         tf.refresh_from_db(fields=["webhook_secret"])
 
+    try:
+        encryption_params = _scan_encryption_params(tf)
+    except ScanNotPossible as exc:
+        logger.info("Not scanning TransferFile %s: %s", transfer_file_id, exc)
+        return
+
     scan_url = s3.sign_scan_url(tf.s3_key)
     webhook_url = (
         f"{settings.SCAN_WEBHOOK_BASE_URL}/api/{settings.API_VERSION}"
         f"/webhooks/scan-result/?file_id={tf.id}&secret={tf.webhook_secret}"
     )
 
+    payload = {
+        "url": scan_url,
+        "filename": tf.filename,
+        "webhook_url": webhook_url,
+    }
+    if encryption_params:
+        payload["encryption"] = encryption_params
+
     try:
         response = requests.post(
             f"{settings.CLAMAV_SERVICE_URL}/v2/scan-async",
-            json={
-                "url": scan_url,
-                "filename": tf.filename,
-                "webhook_url": webhook_url,
-            },
+            json=payload,
             headers={"X-API-Key": settings.CLAMAV_API_KEY},
             timeout=10,
         )
@@ -399,16 +440,11 @@ def submit_scan_task(self, transfer_file_id):
 
 @shared_task
 def reap_stale_pending_scans_task():
-    """Re-submit files stuck in PENDING for too long.
+    """Re-submit scans that never came back (lost webhook, dead worker),
+    otherwise the file stays PENDING — and undownloadable — forever.
 
-    The file-scanner is stateless and delivers async results only via webhook,
-    so a lost message (webhook delivery exhausted, worker/broker crash, expired
-    presigned URL) would otherwise pin a file in PENDING — and thus
-    undownloadable — forever. This periodic sweep re-submits any file whose
-    upload completed more than ``SCAN_PENDING_REAP_MINUTES`` ago and is still
-    PENDING. ``submit_scan_task`` reuses the existing per-file secret and mints
-    a fresh presigned URL, so re-submitting is safe and idempotent on the
-    receiving end.
+    Clocked on ``scan_submitted_at``, not the upload: a scan only starts at
+    finalize, which can be long after the bytes landed.
     """
     if not settings.CLAMAV_SCAN_ENABLED:
         return
@@ -416,8 +452,8 @@ def reap_stale_pending_scans_task():
     cutoff = timezone.now() - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
     stale = TransferFile.objects.filter(
         scan_status=ScanStatus.PENDING,
-        upload_completed_at__isnull=False,
-        upload_completed_at__lte=cutoff,
+        scan_submitted_at__isnull=False,
+        scan_submitted_at__lte=cutoff,
     ).values_list("id", flat=True)
 
     count = 0

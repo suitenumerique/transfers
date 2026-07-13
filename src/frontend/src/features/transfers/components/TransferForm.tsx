@@ -609,6 +609,10 @@ export function TransferForm() {
                 const pct = percent(df);
                 const isUploading = df.state === "uploading";
                 const isDone = df.state === "done";
+                // Confidential is never scanned. Flagging only the oversized
+                // file would imply the others *were* — one notice above Send
+                // covers the whole transfer instead.
+                const showScan = isDone && !draft.confidential;
                 const icon = isUploading ? (
                   <UploadRing percent={pct} />
                 ) : df.state === "registering" || df.state === "importing" ? (
@@ -669,7 +673,10 @@ export function TransferForm() {
                         {df.error ?? t("Error creating transfer.")}
                       </span>
                     )}
-                    {isDone &&
+                    {showScan &&
+                      // Only once a scan is actually running — before Send a
+                      // "pending" file has nothing scanning it.
+                      df.scanSubmitted === true &&
                       (df.scanStatus === "pending" ||
                         // A transient error is still "in progress" from the
                         // user's view, it auto-retries, nothing to act on.
@@ -705,7 +712,7 @@ export function TransferForm() {
                           </span>
                         </Tooltip>
                       ))}
-                    {isDone && df.scanStatus === "clean" && (
+                    {showScan && df.scanStatus === "clean" && (
                       <Tooltip
                         content={t("Scanned, no virus found")}
                         placement="top"
@@ -715,7 +722,7 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
-                    {isDone && df.scanStatus === "infected" && (
+                    {showScan && df.scanStatus === "infected" && (
                       <Tooltip
                         content={t(
                           "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
@@ -728,7 +735,7 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
-                    {isDone &&
+                    {showScan &&
                       df.scanStatus === "error" &&
                       df.scanErrorKind === "file" && (
                         <Tooltip
@@ -743,7 +750,7 @@ export function TransferForm() {
                           </span>
                         </Tooltip>
                       )}
-                    {isDone && df.scanStatus === "too_large" && (
+                    {showScan && df.scanStatus === "too_large" && (
                       <Tooltip
                         content={t(
                           "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
@@ -753,6 +760,7 @@ export function TransferForm() {
                       >
                         <span className="file-item__scan file-item__scan--warning">
                           <Warning />
+                          {t("Not scanned")}
                         </span>
                       </Tooltip>
                     )}
@@ -974,6 +982,15 @@ export function TransferForm() {
               </button>
             </Tooltip>
           </div>
+
+          {/* The trade-off of confidential, stated where the user commits. */}
+          {draft.confidential && hasFiles && (
+            <Alert type={VariantType.WARNING}>
+              {t(
+                "This transfer won't be scanned for viruses: the decryption key never reaches our servers, so we can't inspect the files.",
+              )}
+            </Alert>
+          )}
 
           <Button
             type="submit"
