@@ -32,6 +32,26 @@ class TestDecodeKey:
         with pytest.raises(ValueError):
             encryption.decode_key(short)
 
+    def test_rejects_malformed_base64(self):
+        # Junk outside the URL-safe alphabet must raise, not be silently
+        # stripped down to a wrong-length (or coincidentally valid) key.
+        with pytest.raises(ValueError):
+            encryption.decode_key("!!!!" + "A" * 39)
+        with pytest.raises(ValueError):
+            encryption.decode_key("not valid base64 @#$%")
+
+    def test_rejects_non_urlsafe_chars_at_valid_length(self):
+        # 43 chars — exactly the length of a well-formed fragment — but '+'
+        # belongs to the standard alphabet, not the URL-safe one. It must be
+        # rejected rather than silently discarded (which would otherwise
+        # shorten the input and decode to a bogus key).
+        fragment = _key_fragment(bytes(range(32)))
+        assert len(fragment) == 43
+        malformed = "+" + fragment[1:]
+        assert len(malformed) == 43
+        with pytest.raises(ValueError):
+            encryption.decode_key(malformed)
+
 
 class TestEncryptChunk:
     def test_layout_is_iv_ciphertext_tag(self):

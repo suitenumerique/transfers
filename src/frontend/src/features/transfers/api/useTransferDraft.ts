@@ -186,6 +186,11 @@ const POLL_INTERVAL_MS = 200;
 // are still being scanned. Re-poll on that interval, give up after the max.
 const SCAN_POLL_INTERVAL_MS = 2000;
 const SCAN_MAX_WAIT_MS = 120000;
+// A Drive import is a server-side download + encrypt + multipart upload of the
+// whole file, so it scales with size and routinely outlives a scan. Giving it
+// the scan budget would abort healthy imports of large files, so it gets its
+// own, much longer ceiling.
+const DRIVE_IMPORT_MAX_WAIT_MS = 900000;
 
 interface FinalizePendingResponse {
   reason: "scan_pending" | "drive_importing";
@@ -223,6 +228,10 @@ export function useTransferDraft(): TransferDraftHandle {
   // don't churn the tree when it lands (the fragment string is the only
   // value the UI cares about).
   const e2eKeyRef = useRef<CryptoKey | null>(null);
+  // Synchronous mirror of ``keyFragment`` so submit reads the freshest value
+  // rather than a stale null captured by its closure when Send is clicked
+  // before the fragment-setting render has flushed. State stays for the UI.
+  const keyFragmentRef = useRef<string | null>(null);
   const confidentialRef = useRef(false);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -271,6 +280,7 @@ export function useTransferDraft(): TransferDraftHandle {
     // confidential *intent* sticks — removing the last file shouldn't
     // silently flip the user's preference.
     e2eKeyRef.current = null;
+    keyFragmentRef.current = null;
     setKeyFragment(null);
   }, [writeFiles]);
 
@@ -537,6 +547,7 @@ export function useTransferDraft(): TransferDraftHandle {
         if (!e2eKeyRef.current) {
           const { cryptoKey, fragment } = await generateTransferKey();
           e2eKeyRef.current = cryptoKey;
+          keyFragmentRef.current = fragment;
           setKeyFragment(fragment);
         }
         const declaredSize = ciphertextSize(
@@ -856,12 +867,21 @@ export function useTransferDraft(): TransferDraftHandle {
         // everything has landed. A 4xx (scan_blocked, drive_import_failed…)
         // is thrown by apiFetch and surfaced to the caller.
         const isConfidential = confidentialRef.current;
+        const fragment = keyFragmentRef.current;
+        // A non-confidential transfer must ship the key so the backend can
+        // serve it to recipients. The fragment is minted during the first
+        // file's registration, so once uploads have finished it is always
+        // present — guard anyway rather than post a null key.
+        if (!isConfidential && !fragment) {
+          throw new Error("Encryption key not ready");
+        }
         const finalizeBody = {
           ...metadata,
           confidential: isConfidential,
-          ...(isConfidential ? {} : { encryption_key: keyFragment }),
+          ...(isConfidential ? {} : { encryption_key: fragment }),
         };
         const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
+        const driveDeadline = Date.now() + DRIVE_IMPORT_MAX_WAIT_MS;
         let finalized: TransferDetail;
         for (;;) {
           const resp = await apiFetch<TransferDetail | FinalizePendingResponse>(
@@ -873,11 +893,18 @@ export function useTransferDraft(): TransferDraftHandle {
           );
           const reason = (resp as FinalizePendingResponse)?.reason;
           if (reason === "scan_pending" || reason === "drive_importing") {
-            if (Date.now() > scanDeadline) {
+            const deadline =
+              reason === "scan_pending" ? scanDeadline : driveDeadline;
+            if (Date.now() > deadline) {
               throw new Error("finalize_timeout");
             }
-            if (reason === "scan_pending") setIsScanning(true);
-            else setIsImportingDrive(true);
+            if (reason === "scan_pending") {
+              setIsScanning(true);
+              setIsImportingDrive(false);
+            } else {
+              setIsImportingDrive(true);
+              setIsScanning(false);
+            }
             await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
             continue;
           }
@@ -896,7 +923,7 @@ export function useTransferDraft(): TransferDraftHandle {
         cancelSubmitRef.current = false;
       }
     },
-    [queryClient, resetLocal, setAwaitingUploads, keyFragment],
+    [queryClient, resetLocal, setAwaitingUploads],
   );
 
   const cancelSubmit = useCallback(() => {

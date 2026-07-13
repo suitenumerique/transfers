@@ -281,6 +281,15 @@ class Transfer(BaseModel):
     class Meta:
         db_table = "core_transfer"
         ordering = ["-created_at"]
+        constraints = [
+            CheckConstraint(
+                # A confidential transfer's key never reaches us, so the column
+                # must stay empty. The finalize serializer already rejects a
+                # posted key; this makes it a database-level invariant too.
+                condition=Q(confidential=False) | Q(encryption_key=""),
+                name="transfer_confidential_has_no_key",
+            ),
+        ]
 
     def __str__(self):
         return self.title or f"Transfer {self.id}"

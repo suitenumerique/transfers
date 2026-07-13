@@ -166,6 +166,9 @@ class TestDownloadFileView:
         )
         assert response.status_code == 200
         assert response.data == {"url": "https://s3.example.com/signed-get-url"}
+        # The presigned URL is short-lived and single-recipient — it must never
+        # be cached by a proxy or the browser.
+        assert response["Cache-Control"] == "no-store"
         # Same audit semantics as the 302 path — FILE_DOWNLOADED is
         # recorded as soon as the URL is handed out.
         assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED)

@@ -179,6 +179,23 @@ def import_drive_file_task(transfer_file_id, encryption_key):
         with requests.get(tf.source_url, stream=True, timeout=60) as response:
             response.raise_for_status()
 
+            # Bound the download against the size the row declared. Without
+            # this we'd encrypt and ship an unbounded body to S3 and only
+            # notice at the final size check — after paying for the transfer
+            # and storage. Trust Content-Length for a cheap up-front reject,
+            # then cap the bytes actually read (the header may be missing or
+            # understated).
+            declared = response.headers.get("Content-Length")
+            try:
+                declared = int(declared) if declared else None
+            except ValueError:
+                declared = None
+            if declared is not None and declared > tf.plaintext_size:
+                raise ValueError(
+                    f"Drive declared {declared} plaintext bytes but file "
+                    f"declared plaintext_size={tf.plaintext_size}."
+                )
+
             upload_id = s3.create_multipart_upload(
                 key=key, content_type=tf.mime_type or ""
             )
@@ -210,9 +227,17 @@ def import_drive_file_task(transfer_file_id, encryption_key):
                 total_plaintext += len(plaintext)
                 total_ciphertext += len(body)
 
+            downloaded = 0
             for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
                 if not chunk:
                     continue
+                downloaded += len(chunk)
+                if downloaded > tf.plaintext_size:
+                    raise ValueError(
+                        f"Drive stream exceeded the declared "
+                        f"plaintext_size={tf.plaintext_size} (Content-Length "
+                        f"missing or understated)."
+                    )
                 buffer.extend(chunk)
                 # One crypto chunk = one S3 part. Coalesce Drive's arbitrary
                 # read sizes into full ``chunk_size`` plaintext blocks so the

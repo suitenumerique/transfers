@@ -18,6 +18,7 @@ do, so a tampered storage layer cannot swap or reorder chunks.
 
 import base64
 import os
+import re
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -28,6 +29,11 @@ KEY_BYTES = 32  # AES-256
 # ``CRYPTO_OVERHEAD_PER_CHUNK`` on the frontend and in serializers.
 OVERHEAD_PER_CHUNK = IV_BYTES + GCM_TAG_BYTES
 
+# URL-safe base64 alphabet, optional padding. Mirrors the serializer's
+# ``_ENCRYPTION_KEY_RE`` — the fragment travels in a URL, so '+' and '/' are
+# not acceptable even though they are valid standard base64.
+_FRAGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+
 
 def decode_key(fragment: str) -> bytes:
     """Decode the URL-safe base64 key fragment into raw AES-256 key bytes.
@@ -35,6 +41,12 @@ def decode_key(fragment: str) -> bytes:
     Accepts the frontend's unpadded 43-char form as well as the padded
     44-char form.
     """
+    # Check the alphabet up front: ``urlsafe_b64decode`` silently discards junk
+    # characters, and passing ``altchars`` to ``b64decode`` would still accept
+    # the standard '+' and '/'. Neither belongs in a URL fragment, and both
+    # would otherwise decode to a key we'd happily use.
+    if not _FRAGMENT_RE.match(fragment or ""):
+        raise ValueError("Key fragment must be URL-safe base64 (A-Z a-z 0-9 - _).")
     padding = "=" * (-len(fragment) % 4)
     raw = base64.urlsafe_b64decode(fragment + padding)
     if len(raw) != KEY_BYTES:

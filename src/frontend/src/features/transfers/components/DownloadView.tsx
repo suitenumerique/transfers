@@ -60,6 +60,10 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // cleanup only unregisters when there's something to drop (set by both the
   // auto-effect and the paste handler).
   const registeredRef = useRef(false);
+  // Monotonic id per auto-registration attempt. A stale attempt (its effect
+  // cleaned up while its handshake was in flight) must not unregister a key a
+  // newer attempt has since registered under the same token.
+  const registerAttemptRef = useRef(0);
 
   const totalSize = transfer.files.reduce(
     (a, f) => a + (f.plaintext_size ?? f.size),
@@ -105,14 +109,19 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         // replaceState can throw under exotic sandboxing; the URL stays as-is.
       }
     }
+    const attempt = ++registerAttemptRef.current;
     let cancelled = false;
     (async () => {
       try {
         const ok = await registerKey(autoKey);
         if (cancelled) {
           // Cleanup already ran while the handshake was in flight — drop the
-          // key we just registered so it doesn't linger in the SW.
-          if (ok) unregisterE2eKey(token);
+          // key we just registered so it doesn't linger in the SW. Skip if a
+          // newer attempt superseded us: its key is the one now under this
+          // token, and unregistering would break its decryption.
+          if (ok && registerAttemptRef.current === attempt) {
+            unregisterE2eKey(token);
+          }
           return;
         }
         setE2eState(ok ? "ready" : "error");

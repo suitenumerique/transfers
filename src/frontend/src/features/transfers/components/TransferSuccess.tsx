@@ -18,10 +18,11 @@ export function TransferSuccess({
   onGoToDetail,
 }: {
   transfer: TransferDetail;
-  // For E2E link-mode finalizes only: the fragment is forwarded once from
-  // the form via navigation hash and stripped from the visible URL. Null
-  // for non-E2E, for email mode, and for any re-render where the user
-  // arrived at /confirm/<id> without the fragment (refresh, bookmark).
+  // Confidential finalizes forward the fragment once from the form via the
+  // navigation hash, then strip it from the visible URL — so it is present
+  // for confidential transfers in both link and email mode. Null only when
+  // the hash wasn't forwarded: non-E2E flows, or any render where the user
+  // reached /confirm/<id> without it (refresh, bookmark).
   e2eFragment: string | null;
   onNewTransfer: () => void;
   onGoToDetail: () => void;
@@ -177,6 +178,13 @@ export function TransferSuccess({
                 />
               </div>
             </div>
+          )}
+          {transfer.confidential && !e2eFragment && (
+            <p className="transfer-success__body">
+              {t(
+                "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.",
+              )}
+            </p>
           )}
         </>
       )}

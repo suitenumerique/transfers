@@ -9,6 +9,7 @@ from rest_framework import serializers
 
 from core import models
 from core.enums import SharingMode
+from core.services import encryption
 
 # URL-safe base64 alphabet, no padding required. The frontend ships exactly
 # 43 chars for a 256-bit key, but accept the padded 44-char form too so a
@@ -372,12 +373,21 @@ class DraftFinalizeSerializer(serializers.Serializer):
     )
 
     def validate_encryption_key(self, value):
-        # base64url key material only — reject any other alphabet so a
-        # malformed value can't be stored and later served to a recipient
-        # as an un-decryptable key.
-        if value and not _ENCRYPTION_KEY_RE.match(value):
+        # base64url key material only, and it must decode to a full AES-256
+        # key — reject any other alphabet or wrong size so a malformed value
+        # can't be stored and later served to a recipient as an un-decryptable
+        # key.
+        if not value:
+            return value
+        if not _ENCRYPTION_KEY_RE.match(value):
             raise serializers.ValidationError(
                 "Must be URL-safe base64 (A-Z, a-z, 0-9, '-', '_'; '=' padding optional)."
+            )
+        try:
+            encryption.decode_key(value)
+        except ValueError:
+            raise serializers.ValidationError(
+                "Must decode to a 32-byte AES-256 key."
             )
         return value
 

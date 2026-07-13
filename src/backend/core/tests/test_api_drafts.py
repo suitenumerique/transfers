@@ -1288,6 +1288,11 @@ class TestImportDriveFileTask:
         assert len(payload) == 12
 
         class _FakeResponse:
+            # A real requests.Response always exposes headers; the import task
+            # reads Content-Length from them to bound the download. Empty here
+            # (header absent), which exercises the mid-stream byte cap.
+            headers: dict = {}
+
             def __enter__(self_inner):
                 return self_inner
 
@@ -1332,6 +1337,11 @@ class TestImportDriveFileTask:
         tf, _ = self._make_file(user, plaintext_size=1000, filename="short.bin")
 
         class _FakeResponse:
+            # A real requests.Response always exposes headers; the import task
+            # reads Content-Length from them to bound the download. Empty here
+            # (header absent), which exercises the mid-stream byte cap.
+            headers: dict = {}
+
             def __enter__(self_inner):
                 return self_inner
 
@@ -1367,6 +1377,83 @@ class TestImportDriveFileTask:
         mock_abort.assert_called_once()
         mock_delete.assert_called_once()
 
+    def test_oversized_content_length_rejected_before_download(self, user):
+        """Drive advertises more bytes than the row declared — reject up front
+        on the Content-Length header, before opening a multipart upload or
+        streaming (and paying for) a single byte."""
+        from core.tasks import import_drive_file_task
+
+        tf, _ = self._make_file(user, plaintext_size=12, filename="lies.bin")
+
+        class _FakeResponse:
+            headers: dict = {"Content-Length": "999999999"}
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def raise_for_status(self_inner):
+                pass
+
+            def iter_content(self_inner, chunk_size):  # pragma: no cover
+                raise AssertionError("must not stream an oversized body")
+
+        with (
+            patch("core.tasks.requests.get", return_value=_FakeResponse()),
+            patch("core.tasks.s3.create_multipart_upload") as mock_create,
+            patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
+        ):
+            import_drive_file_task(str(tf.id), VALID_KEY)
+
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
+        assert tf.upload_completed_at is None
+        # Rejected before any S3 work happened.
+        mock_create.assert_not_called()
+        mock_complete.assert_not_called()
+
+    def test_stream_exceeding_declared_size_rejected(self, user):
+        """Content-Length absent (or lying): the mid-stream cap still stops the
+        download once it runs past the declared plaintext_size."""
+        from core.tasks import import_drive_file_task
+
+        tf, _ = self._make_file(user, plaintext_size=12, filename="runaway.bin")
+
+        class _FakeResponse:
+            headers: dict = {}
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def raise_for_status(self_inner):
+                pass
+
+            def iter_content(self_inner, chunk_size):
+                # Far more than the declared 12 bytes.
+                for _ in range(10):
+                    yield b"x" * 100
+
+        with (
+            patch("core.tasks.requests.get", return_value=_FakeResponse()),
+            patch("core.tasks.s3.create_multipart_upload", return_value="MP-3"),
+            patch("core.tasks.s3.upload_part_bytes", return_value='"etag-1"'),
+            patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
+            patch("core.tasks.s3.delete_object"),
+            patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
+        ):
+            import_drive_file_task(str(tf.id), VALID_KEY)
+
+        tf.refresh_from_db()
+        assert tf.import_failed_at is not None
+        assert tf.upload_completed_at is None
+        mock_complete.assert_not_called()
+        mock_abort.assert_called_once()
+
     def test_drive_http_error_marks_failed(self, user):
         """Drive responds 403 / 404 — the row is kept and marked failed, no
         multipart opened (the HTTP call errors before that)."""
@@ -1377,6 +1464,11 @@ class TestImportDriveFileTask:
         tf, _ = self._make_file(user)
 
         class _FakeResponse:
+            # A real requests.Response always exposes headers; the import task
+            # reads Content-Length from them to bound the download. Empty here
+            # (header absent), which exercises the mid-stream byte cap.
+            headers: dict = {}
+
             def __enter__(self_inner):
                 return self_inner
 
