@@ -13,7 +13,7 @@ function daysUntil(iso: string): number {
 
 export function TransferSuccess({
   transfer,
-  e2eFragment,
+  encryptionFragment,
   onNewTransfer,
   onGoToDetail,
 }: {
@@ -21,9 +21,9 @@ export function TransferSuccess({
   // Confidential finalizes forward the fragment once from the form via the
   // navigation hash, then strip it from the visible URL — so it is present
   // for confidential transfers in both link and email mode. Null only when
-  // the hash wasn't forwarded: non-E2E flows, or any render where the user
+  // the hash wasn't forwarded: non-encrypted flows, or any render where the user
   // reached /confirm/<id> without it (refresh, bookmark).
-  e2eFragment: string | null;
+  encryptionFragment: string | null;
   onNewTransfer: () => void;
   onGoToDetail: () => void;
 }) {
@@ -36,9 +36,9 @@ export function TransferSuccess({
   // get a bare, reusable link — the backend serves the key to recipients.
   const baseUrl = transferBaseUrl(transfer.public_token);
   const downloadUrl =
-    baseUrl && (!transfer.confidential || e2eFragment)
+    baseUrl && (!transfer.confidential || encryptionFragment)
       ? transfer.confidential
-        ? `${baseUrl}#${e2eFragment}`
+        ? `${baseUrl}#${encryptionFragment}`
         : baseUrl
       : "";
 
@@ -57,7 +57,7 @@ export function TransferSuccess({
   };
   const handleCopy = () => copyToClipboard(downloadUrl, setCopied);
   const handleCopyKey = () =>
-    copyToClipboard(e2eFragment ?? "", setKeyCopied);
+    copyToClipboard(encryptionFragment ?? "", setKeyCopied);
 
   const isLink = transfer.sharing_mode === "link";
   // Only true when *every* file was actually scanned clean — not the "skipped"
@@ -93,7 +93,7 @@ export function TransferSuccess({
                   )}
                   placement="top"
                 >
-                  <span className="transfer-success__e2e-tip">
+                  <span className="transfer-success__encryption-tip">
                     {t(
                       "Link to share. Copy it now, we won't show it again:",
                     )}
@@ -149,7 +149,7 @@ export function TransferSuccess({
             </strong>{" "}
             {t("to download your items.")}
           </p>
-          {transfer.confidential && e2eFragment && (
+          {transfer.confidential && encryptionFragment && (
             <div className="transfer-success__key-share">
               <p className="transfer-success__body">
                 {t(
@@ -161,7 +161,7 @@ export function TransferSuccess({
                   readOnly
                   hideLabel
                   label={t("Decryption key")}
-                  value={e2eFragment}
+                  value={encryptionFragment}
                   variant="classic"
                   fullWidth
                   onFocus={(e) => e.currentTarget.select()}
@@ -179,7 +179,7 @@ export function TransferSuccess({
               </div>
             </div>
           )}
-          {transfer.confidential && !e2eFragment && (
+          {transfer.confidential && !encryptionFragment && (
             <p className="transfer-success__body">
               {t(
                 "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.",

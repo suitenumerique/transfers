@@ -1,4 +1,4 @@
-// Service Worker for E2E-decrypted downloads.
+// Service Worker for decrypted downloads.
 //
 // The recipient's page extracts the AES-256 key from the URL fragment and
 // posts it here, indexed by transfer public_token. When the user clicks a
@@ -9,7 +9,7 @@
 // a Response with Content-Disposition: attachment — so the native download
 // manager streams the plaintext straight to disk, no Blob in RAM.
 //
-// Chunking matches the sender's `e2eCrypto.ts`: each S3 part is one
+// Chunking matches the sender's `encryption.ts`: each S3 part is one
 // self-contained AES-GCM chunk of `[ IV (12B) | ciphertext | tag (16B) ]`,
 // where the plaintext slice is `chunkSize` bytes (less for the last chunk).
 // Knowing `chunkSize` + `plaintextSize` lets us split the stream
@@ -44,7 +44,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
-  if (data.type === "e2e-register") {
+  if (data.type === "encryption-register") {
     // Always send back an ack — success or failure — so the page can
     // resolve the in-flight handshake promise either way instead of
     // hanging forever (e.g. malformed key bytes ⇒ importKey rejects).
@@ -52,7 +52,7 @@ self.addEventListener("message", (event) => {
       .then(() => {
         if (event.source && "postMessage" in event.source) {
           event.source.postMessage({
-            type: "e2e-register-ack",
+            type: "encryption-register-ack",
             token: data.token,
           });
         }
@@ -60,30 +60,30 @@ self.addEventListener("message", (event) => {
       .catch((err) => {
         if (event.source && "postMessage" in event.source) {
           event.source.postMessage({
-            type: "e2e-register-error",
+            type: "encryption-register-error",
             token: data.token,
             message: err && err.message ? String(err.message) : "register failed",
           });
         }
       });
-  } else if (data.type === "e2e-unregister") {
+  } else if (data.type === "encryption-unregister") {
     REGISTRY.delete(data.token);
-  } else if (data.type === "e2e-ping") {
+  } else if (data.type === "encryption-ping") {
     // Health-check the page can use to confirm we're alive.
     if (event.source && "postMessage" in event.source) {
-      event.source.postMessage({ type: "e2e-pong" });
+      event.source.postMessage({ type: "encryption-pong" });
     }
   }
 });
 
 async function registerKey({ token, keyBytes, files, apiOrigin }) {
   // Throw (don't silently return) on a malformed payload — the message
-  // handler routes rejections to `e2e-register-error`, so the page's
+  // handler routes rejections to `encryption-register-error`, so the page's
   // handshake promise rejects and DownloadView flips to its error
   // state. Silently returning here would let the same handler send
-  // back an `e2e-register-ack` even though no entry was recorded.
+  // back an `encryption-register-ack` even though no entry was recorded.
   if (!token || !(keyBytes instanceof Uint8Array) || !Array.isArray(files)) {
-    throw new Error("Malformed e2e-register payload");
+    throw new Error("Malformed encryption-register payload");
   }
   const key = await crypto.subtle.importKey(
     "raw",
@@ -107,7 +107,7 @@ async function registerKey({ token, keyBytes, files, apiOrigin }) {
       // One bad entry drops the whole registration: partial state would let
       // the page ack "ready" and then error only for the unlisted files,
       // which is harder to reason about than a single loud failure.
-      throw new Error("Invalid file entry in e2e-register payload");
+      throw new Error("Invalid file entry in encryption-register payload");
     }
     fileMap.set(f.id, {
       plaintextSize: f.plaintextSize,
@@ -202,7 +202,7 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
   // Each chunk's AAD is `${fileId}:${partNumber}` and must match what the
-  // uploader bound the GCM tag to — see e2eCrypto.aadForChunk.
+  // uploader bound the GCM tag to — see encryption.aadForChunk.
   const ciphertextChunkSize = chunkSize + OVERHEAD;
   const encoder = new TextEncoder();
   let pending = new Uint8Array(0);

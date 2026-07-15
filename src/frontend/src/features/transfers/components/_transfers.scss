@@ -522,7 +522,7 @@
   }
 }
 
-// Discreet warning marker next to the "Email" tab label when E2E is on:
+// Discreet warning marker next to the "Email" tab label when encryption is on:
 // surfaces the SMTP-leak caveat without taking a full Alert's space.
 .transfer-form__tab-warning {
   display: inline-flex;
@@ -1185,7 +1185,7 @@
       }
     }
 
-    // E2E-encrypted file marker. Same shape as the scan badges but in
+    // encrypted file marker. Same shape as the scan badges but in
     // the brand colour to distinguish "encrypted" (a property of the
     // file) from "scan passed" (a state).
     &--encrypted {
@@ -1249,11 +1249,11 @@
     }
   }
 
-  // Dotted underline hint on the E2E "link to share" body copy: the
+  // Dotted underline hint on the encryption "link to share" body copy: the
   // whole sentence is the Tooltip trigger, so a discreet cue tells the
   // reader more is available on hover (no separate info icon that
   // would dangle on a new line when the text wraps).
-  &__e2e-tip {
+  &__encryption-tip {
     text-decoration: underline dotted;
     text-underline-offset: 3px;
     cursor: help;

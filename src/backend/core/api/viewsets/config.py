@@ -31,7 +31,7 @@ class ConfigView(drf.views.APIView):
             "TRANSFER_MAX_TOTAL_SIZE": settings.TRANSFER_MAX_TOTAL_SIZE,
             "TRANSFER_MAX_FILES_PER_TRANSFER": settings.TRANSFER_MAX_FILES_PER_TRANSFER,
             # Multipart part / crypto chunk size in bytes. Surfaced so the
-            # frontend can declare a self-consistent E2E ``size`` upfront
+            # frontend can declare a self-consistent encryption ``size`` upfront
             # and slice the upload at the exact boundary the recipient SW
             # will decrypt against (one S3 part = one crypto chunk).
             "TRANSFER_CHUNK_SIZE": settings.TRANSFER_CHUNK_SIZE,

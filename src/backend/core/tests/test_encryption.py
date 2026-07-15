@@ -1,6 +1,6 @@
 """Unit tests for ``core.services.encryption`` — the server-side chunk
 encryption used by Drive imports. The layout must match the browser's
-``e2eCrypto.ts`` so a chunk encrypted here decrypts in the recipient SW."""
+``encryption.ts`` so a chunk encrypted here decrypts in the recipient SW."""
 
 import base64
 

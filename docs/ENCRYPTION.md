@@ -7,7 +7,7 @@ to the code.
 
 **Every transfer is encrypted client-side.** A per-transfer
 ``confidential`` flag decides whether the backend also holds the
-decryption key (normal) or never sees it (confidential). "E2E" in older
+decryption key (normal) or never sees it (confidential). "encryption" in older
 comments/paths refers to the confidential case; the crypto is identical
 in both.
 
@@ -18,7 +18,7 @@ file referenced for the mechanism you care about.
 
 ## Table of contents
 
-1. [What "E2E" means here](#what-e2e-means-here)
+1. [What "encryption" means here](#what-e2e-means-here)
 2. [Threat model](#threat-model)
 3. [The crypto primitive](#the-crypto-primitive)
 4. [The two chunking levels](#the-two-chunking-levels)
@@ -141,7 +141,7 @@ self-contained AEAD blob:
   download error, never silent corruption.
 
 The constant `CRYPTO_OVERHEAD_PER_CHUNK = 28` (IV + tag) appears
-verbatim on both sides (`e2eCrypto.ts` and `sw.js`).
+verbatim on both sides (`encryption.ts` and `sw.js`).
 
 ## The two chunking levels
 
@@ -176,7 +176,7 @@ the plumbing around those calls.
 If a bug looks like it lives in AES-GCM itself, it doesn't; it's in
 how we compose the inputs or interpret the outputs.
 
-**Ours** (custom code, `e2eCrypto.ts` + `useTransferDraft.ts` + `sw.js`):
+**Ours** (custom code, `encryption.ts` + `useTransferDraft.ts` + `sw.js`):
 
 - Chunking the file at 25 MiB boundaries via `MultipartUploader`.
 - Generating a fresh 12-byte IV per chunk with `crypto.getRandomValues`.
@@ -209,7 +209,7 @@ crypto.subtle.decrypt(
 
 ## Key lifecycle
 
-`generateTransferKey()` (in `e2eCrypto.ts`) produces 32 random bytes,
+`generateTransferKey()` (in `encryption.ts`) produces 32 random bytes,
 kept in two forms:
 
 - `cryptoKey` (opaque `CryptoKey` handle, `extractable: false`) is
@@ -229,7 +229,7 @@ source applies — the backend (`transfer.encryption_key`, normal), the URL
 fragment (confidential link), or a paste box (confidential without a
 fragment) — hands it to the SW via `postMessage`, and (for the fragment
 case) strips it from the URL bar with `history.replaceState`. The SW
-holds the key in memory until the page unmounts (`e2e-unregister`).
+holds the key in memory until the page unmounts (`encryption-unregister`).
 
 ## Upload pipeline
 
@@ -245,7 +245,7 @@ For each plaintext chunk at part_number P:
   │
   │   aad = TextEncoder.encode(`${fileId}:${P}`)
   │   iv  = random 12 bytes
-  │   ct  = AES-GCM-encrypt(key, plaintext, iv, aad)  ← e2eCrypto.encryptChunk
+  │   ct  = AES-GCM-encrypt(key, plaintext, iv, aad)  ← encryption.encryptChunk
   │   blob = [ iv | ct ]    (tag is at the end of ct)
   │
   ▼
@@ -314,23 +314,23 @@ stream.
 - **Confidential + link**: the key is in `window.location.hash`; the
   payload's `encryption_key` is empty.
 - **Confidential without a fragment** (email, or a bare link): no key
-  available, so `DownloadView` shows a paste box (`e2eState = "need-key"`)
+  available, so `DownloadView` shows a paste box (`encryptionState = "need-key"`)
   and waits for the recipient to enter the key.
 
 ```
 DownloadView mounts and, in order:
     1. resolve key: transfer.encryption_key (normal) OR
        window.location.hash (confidential link) OR paste box
-    2. ensureE2eServiceWorker():
+    2. ensureEncryptionServiceWorker():
          register /sw.js if needed, wait for the SW to control the
          page (controllerchange, bounded by CONTROLLER_WAIT_MS)
-    3. registerE2eKey(sw, token, keyStr, files, chunkSize):
+    3. registerEncryptionKey(sw, token, keyStr, files, chunkSize):
          base64UrlDecode(keyStr) → 32 key bytes
-         postMessage to SW { type: "e2e-register", token, ... }
-         wait for e2e-register-ack / -error (REGISTER_ACK_WAIT_MS)
+         postMessage to SW { type: "encryption-register", token, ... }
+         wait for encryption-register-ack / -error (REGISTER_ACK_WAIT_MS)
     4. for the fragment case, history.replaceState() strips it from
        the URL bar
-    5. e2eState = "ready" → download buttons become clickable
+    5. encryptionState = "ready" → download buttons become clickable
 ```
 
 **Phase 2 — the user clicks a file:**
@@ -410,7 +410,7 @@ the URL path `/_dl/<token>/<fileId>/...` on the recipient. partNumber
 is emitted by `MultipartUploader` and counted by `decryptStream`.
 
 ```js
-// e2eCrypto.ts
+// encryption.ts
 export function aadForChunk(fileId, partNumber) {
   return new TextEncoder().encode(`${fileId}:${partNumber}`);
 }
@@ -429,7 +429,7 @@ replacement with a fresh encryption under an attacker's key (standard
 AES-GCM already blocks that, our key isn't leaked). Replay is a
 non-issue because keys aren't reused across transfers.
 
-Verified by `e2eCrypto.test.ts::"rejects a chunk whose AAD does not
+Verified by `encryption.test.ts::"rejects a chunk whose AAD does not
 match the encrypt-side binding"`.
 
 ## Backend bookkeeping
@@ -480,7 +480,7 @@ either — with one exception: **Drive imports force normal mode**.
 registered (no fetch); at finalize `import_drive_file_task(file_id,
 encryption_key)` fetches the permalink server-to-server and encrypts it
 with the transfer key via `core/services/encryption.py` (byte-identical
-layout to `e2eCrypto.ts`), so a Drive file is indistinguishable from a
+layout to `encryption.ts`), so a Drive file is indistinguishable from a
 browser-encrypted upload. This needs the key, hence normal-mode-only.
 Finalize runs a 202 loop (`reason: "drive_importing"`) until every Drive
 file lands, then creates the Transfer; a failed import sets
@@ -534,14 +534,14 @@ The Caddyfile pins:
   picker needs `window.opener`).
 - `Permissions-Policy` locks down sensor/USB/payment/screen-capture.
 
-A successful XSS bypasses E2E entirely. The CSP is what stops an
+A successful XSS bypasses encryption entirely. The CSP is what stops an
 attacker from chaining a hostile script through a third-party origin.
 
 ### Service Worker scope
 
 `/sw.js` is served at the root with `Cache-Control: no-cache` so a new
 deploy's SW activates on the next page load. `DownloadView` sends
-`e2e-unregister` on unmount so cached keys don't linger across
+`encryption-unregister` on unmount so cached keys don't linger across
 transfers in the same tab.
 
 ### Chunk size knob
@@ -569,7 +569,7 @@ during `subtle.encrypt`).
 | Symptom | Likely cause | Where to look |
 |---|---|---|
 | Confidential recipient sees the paste box unexpectedly | URL fragment empty or stripped before SW load (link opened without `#…`) | `DownloadView.tsx` `autoKey` resolution + `need-key` state |
-| Recipient sees "could not set up decryption helper" | SW didn't take control in time, or `importKey` rejected | `e2eServiceWorker.ts::ensureE2eServiceWorker` (10s timeout) + the `e2e-register-error` path |
+| Recipient sees "could not set up decryption helper" | SW didn't take control in time, or `importKey` rejected | `encryptionServiceWorker.ts::ensureEncryptionServiceWorker` (10s timeout) + the `encryption-register-error` path |
 | Download truncated / stream errors mid-way | S3 ciphertext truncated, or chunk size doesn't match `Transfer.encryption_chunk_size` | `sw.js::decryptStream::flush` length check |
 | Decrypt throws on first chunk | Wrong key (backend served the wrong one, or a bad paste), or AAD mismatch (chunk reordering / corruption) | Inspect `event.error` in the SW's stream; cross-check `transfer.encryption_chunk_size` on the row vs the value the SW received |
 | Upload 400 with `size` error | Frontend computed `ciphertextSize` against a different chunk size than the backend's | Check `/config/` carries the same `TRANSFER_CHUNK_SIZE` the backend uses; both sides read from this single source |

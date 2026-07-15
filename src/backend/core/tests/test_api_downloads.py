@@ -151,7 +151,7 @@ class TestDownloadFileView:
     @patch("core.api.viewsets.download.sign_download_url")
     def test_download_file_as_json(self, mock_sign, api_client, transfer_with_file):
         # ``?as=json`` returns the presigned URL as data instead of a 302.
-        # The E2E Service Worker uses this to fetch S3 anonymously and
+        # The encryption Service Worker uses this to fetch S3 anonymously and
         # avoid cross-origin redirect quirks with credentials.
         t = transfer_with_file
         tf = t.files.first()

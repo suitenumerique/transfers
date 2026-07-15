@@ -16,7 +16,7 @@ export interface AppConfig {
   TRANSFER_MAX_FILE_SIZE: number;
   TRANSFER_MAX_TOTAL_SIZE: number;
   TRANSFER_MAX_FILES_PER_TRANSFER: number;
-  // Multipart part size in bytes. Doubles as the E2E crypto chunk size:
+  // Multipart part size in bytes. Doubles as the encryption crypto chunk size:
   // one S3 part = one AES-GCM chunk of [IV | CT | tag]. Recipient SW peels
   // ``TRANSFER_CHUNK_SIZE + 28`` bytes per chunk, so the frontend must
   // slice and declare against this value (server is the source of truth).

@@ -1,11 +1,11 @@
-// Helpers for the recipient side of E2E: register the decryption SW and
+// Helpers for the recipient side of encryption: register the decryption SW and
 // hand it the per-file metadata + the AES key extracted from the URL
 // fragment. The SW lives at /sw.js (scope /) and intercepts /_dl/...
 // requests to stream-decrypt the ciphertext into the native download
 // manager.
 
 import type { DownloadTransferFile } from "@/features/api/types";
-import { base64UrlDecode } from "./e2eCrypto";
+import { base64UrlDecode } from "./encryption";
 
 export interface ServiceWorkerFilePayload {
   id: string;
@@ -24,7 +24,7 @@ const CONTROLLER_WAIT_MS = 10_000;
 // 5s, something is broken (worker terminated, message lost, etc.).
 const REGISTER_ACK_WAIT_MS = 5_000;
 
-export async function ensureE2eServiceWorker(): Promise<ServiceWorker | null> {
+export async function ensureEncryptionServiceWorker(): Promise<ServiceWorker | null> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     return null;
   }
@@ -68,7 +68,7 @@ export async function ensureE2eServiceWorker(): Promise<ServiceWorker | null> {
   return navigator.serviceWorker.controller ?? reg.active ?? null;
 }
 
-export async function registerE2eKey(
+export async function registerEncryptionKey(
   sw: ServiceWorker,
   token: string,
   keyFragment: string,
@@ -100,10 +100,10 @@ export async function registerE2eKey(
     };
     const listener = (event: MessageEvent) => {
       if (!event.data || event.data.token !== token) return;
-      if (event.data.type === "e2e-register-ack") {
+      if (event.data.type === "encryption-register-ack") {
         cleanup();
         resolve();
-      } else if (event.data.type === "e2e-register-error") {
+      } else if (event.data.type === "encryption-register-error") {
         cleanup();
         reject(
           new Error(
@@ -120,7 +120,7 @@ export async function registerE2eKey(
     }, REGISTER_ACK_WAIT_MS);
     navigator.serviceWorker.addEventListener("message", listener);
     sw.postMessage({
-      type: "e2e-register",
+      type: "encryption-register",
       token,
       keyBytes,
       files: filesPayload,
@@ -133,13 +133,13 @@ export async function registerE2eKey(
 // key so it doesn't sit in worker memory after the user navigates away.
 // Failure to post is harmless — the worker will be terminated by the
 // browser eventually, and a fresh page load re-registers from scratch.
-export function unregisterE2eKey(token: string): void {
+export function unregisterEncryptionKey(token: string): void {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     return;
   }
   try {
     navigator.serviceWorker.controller?.postMessage({
-      type: "e2e-unregister",
+      type: "encryption-unregister",
       token,
     });
   } catch {

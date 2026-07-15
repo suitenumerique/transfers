@@ -3,7 +3,7 @@ import { apiFetch, apiUrl } from "@/features/api/client";
 import type { DownloadTransferFull } from "@/features/api/types";
 
 // Frontend origin + /t/<token> — the canonical shape of a recipient link,
-// without the E2E fragment. Empty string when the transfer has no public
+// without the encryption fragment. Empty string when the transfer has no public
 // token yet (never persisted) or when called outside a browser context
 // (SSR / test environment without a jsdom window), so consumers can
 // boolean-check it.

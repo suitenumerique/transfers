@@ -13,7 +13,7 @@ import {
   ciphertextSize,
   encryptChunk,
   generateTransferKey,
-} from "../upload/e2eCrypto";
+} from "../upload/encryption";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Eager-upload draft handle.
@@ -201,9 +201,9 @@ interface FinalizePendingResponse {
 
 export function useTransferDraft(): TransferDraftHandle {
   const queryClient = useQueryClient();
-  // Canonical chunk size for the whole upload + E2E pipeline. Pulled from
+  // Canonical chunk size for the whole upload + encryption pipeline. Pulled from
   // /config/ so we can never disagree with the backend (which imposes its
-  // own ``settings.TRANSFER_CHUNK_SIZE`` on E2E drafts) about where one
+  // own ``settings.TRANSFER_CHUNK_SIZE`` on encryption drafts) about where one
   // crypto chunk ends and the next begins.
   const config = useConfig();
   const chunkSizeFromConfig = config.TRANSFER_CHUNK_SIZE;
@@ -229,7 +229,7 @@ export function useTransferDraft(): TransferDraftHandle {
   // CryptoKey is opaque and non-serialisable; kept off React state so we
   // don't churn the tree when it lands (the fragment string is the only
   // value the UI cares about).
-  const e2eKeyRef = useRef<CryptoKey | null>(null);
+  const encryptionKeyRef = useRef<CryptoKey | null>(null);
   // Synchronous mirror of `keyFragment`: submit would otherwise read a stale
   // null from its closure if Send is clicked before the render flushes.
   const keyFragmentRef = useRef<string | null>(null);
@@ -280,7 +280,7 @@ export function useTransferDraft(): TransferDraftHandle {
     // Per-draft crypto state goes (a fresh draft mints a new key). The
     // confidential *intent* sticks — removing the last file shouldn't
     // silently flip the user's preference.
-    e2eKeyRef.current = null;
+    encryptionKeyRef.current = null;
     keyFragmentRef.current = null;
     setKeyFragment(null);
   }, [writeFiles]);
@@ -336,12 +336,12 @@ export function useTransferDraft(): TransferDraftHandle {
     // position, so storage tampering cannot swap or reorder chunks without
     // breaking GCM tag verification. The key is generated at first add-file
     // and always present here.
-    const e2eKey = e2eKeyRef.current;
-    if (!e2eKey) return;
+    const encryptionKey = encryptionKeyRef.current;
+    if (!encryptionKey) return;
     const transformChunk = async (blob: Blob, partNumber: number) => {
       const buf = await blob.arrayBuffer();
       const ct = await encryptChunk(
-        e2eKey,
+        encryptionKey,
         buf,
         aadForChunk(backendId, partNumber),
       );
@@ -554,9 +554,9 @@ export function useTransferDraft(): TransferDraftHandle {
         // generated on the first file (browser or Drive): browser files are
         // encrypted client-side with it, and a non-confidential Drive import
         // is encrypted server-side with the same key at finalize.
-        if (!e2eKeyRef.current) {
+        if (!encryptionKeyRef.current) {
           const { cryptoKey, fragment } = await generateTransferKey();
-          e2eKeyRef.current = cryptoKey;
+          encryptionKeyRef.current = cryptoKey;
           keyFragmentRef.current = fragment;
           setKeyFragment(fragment);
         }

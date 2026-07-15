@@ -28,18 +28,18 @@ export interface MultipartUploaderOptions {
   // Ask the backend for a presigned URL to upload a specific part.
   signPart: (partNumber: number) => Promise<string>;
   // Aggregate progress callback. `loaded` and `total` are in bytes.
-  // `total` is the *upload* total (ciphertext for E2E), so the value the UI
+  // `total` is the *upload* total (ciphertext for encryption), so the value the UI
   // surfaces matches what's actually crossing the wire.
   onProgress?: (loaded: number, total: number) => void;
   // Optional per-chunk transform applied to each plaintext slice before it
-  // hits S3. Used by E2E to encrypt; identity for the regular path. Must
+  // hits S3. Used by encryption to encrypt; identity for the regular path. Must
   // be deterministic in length given its input — the uploader streams its
   // output straight to PUT, so a transform that changes size is fine
   // (S3 only cares about the part size it sees), but the caller is on the
   // hook for declaring the right total to the backend.
   transformChunk?: (blob: Blob, partNumber: number) => Promise<Blob>;
   // Total bytes that will be PUT to S3. Defaults to `file.size`. With
-  // E2E the ciphertext is larger than the plaintext, and progress wants
+  // encryption the ciphertext is larger than the plaintext, and progress wants
   // the post-transform value to keep `loaded / total` honest.
   totalSize?: number;
 }
@@ -60,7 +60,7 @@ export class MultipartUploader {
     this.partProgress = new Array(this.totalParts).fill(0);
     this.abortController = new AbortController();
     // Bytes that will actually be PUT to S3. Without a transform that's
-    // exactly the file size; with E2E it's the ciphertext expansion
+    // exactly the file size; with encryption it's the ciphertext expansion
     // (overhead per part) — the caller computes it and passes it in so
     // `loaded` and `total` stay in the same unit and progress never
     // overshoots.

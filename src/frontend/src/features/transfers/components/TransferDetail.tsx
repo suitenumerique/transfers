@@ -94,9 +94,9 @@ export function TransferDetail({
   };
   const isRetrying = resendTransfer.isPending || isAwaitingRetry;
 
-  // E2E: the working link only ever existed on the success screen post-
+  // encryption: the working link only ever existed on the success screen post-
   // finalize (via the navigation hash). We don't persist it anywhere, so
-  // the detail page can never reconstruct it. For non-E2E the bare token
+  // the detail page can never reconstruct it. For non-encrypted the bare token
   // is enough — same URL the recipient receives.
   const baseUrl = transferBaseUrl(transfer.public_token);
   // Confidential transfers can't be reconstructed here — the key lived only
@@ -108,7 +108,7 @@ export function TransferDetail({
   // link instead.
   const isEncrypted = transfer.encryption_chunk_size != null;
   const isPublicLink = transfer.sharing_mode === "link";
-  // For E2E, ``size`` is the ciphertext sitting in S3. The user-facing
+  // For encryption, ``size`` is the ciphertext sitting in S3. The user-facing
   // total should be the plaintext bytes they'll eventually save to disk.
   const totalSize = transfer.files.reduce(
     (sum, f) => sum + (f.plaintext_size ?? f.size),
@@ -249,7 +249,7 @@ export function TransferDetail({
               )}
               placement="top"
             >
-              <span className="transfer-detail__meta-item transfer-detail__meta-item--e2e">
+              <span className="transfer-detail__meta-item transfer-detail__meta-item--encryption">
                 <Lock />
                 {t("Confidential")}
               </span>
@@ -404,7 +404,7 @@ export function TransferDetail({
       {isActive && (
         <div className="transfer-detail__actions">
           {isPublicLink && downloadUrl ? (
-            // E2E link-mode transfers have no downloadUrl on this page (the
+            // encryption link-mode transfers have no downloadUrl on this page (the
             // working link only existed on the success screen, with the key
             // fragment). The button would be visible but its onClick would
             // no-op — hide it entirely so the UI stops promising an action

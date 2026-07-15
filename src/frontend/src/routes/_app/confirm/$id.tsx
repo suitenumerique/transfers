@@ -9,18 +9,18 @@ const TransferConfirmPage = () => {
   const navigate = useNavigate();
   const { data: transfer, isLoading, isError } = useTransfer(id);
 
-  // The form passes the E2E key fragment via the navigation hash for
+  // The form passes the encryption key fragment via the navigation hash for
   // link-mode finalizes. We snapshot it once at initial render and strip
   // it from the visible URL on mount, so keys never end up in the
   // address bar beyond the moment of arrival, and a refresh of
   // /confirm/<id> loses the fragment (matches the "we don't store the
   // key" promise).
-  const [e2eFragment] = useState<string | null>(() => {
+  const [encryptionFragment] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     return window.location.hash.replace(/^#/, "") || null;
   });
   useEffect(() => {
-    if (!e2eFragment) return;
+    if (!encryptionFragment) return;
     try {
       // Strip the fragment but keep the query string (analytics utm=…,
       // debug flags, or router state can all ride on ``search``).
@@ -33,7 +33,7 @@ const TransferConfirmPage = () => {
       // replaceState can throw in exotic sandboxes; the URL stays as-is
       // but the component already has the fragment in state.
     }
-  }, [e2eFragment]);
+  }, [encryptionFragment]);
 
   if (isLoading)
     return (
@@ -50,7 +50,7 @@ const TransferConfirmPage = () => {
         <section className="home__upload">
           <TransferSuccess
             transfer={transfer}
-            e2eFragment={e2eFragment}
+            encryptionFragment={encryptionFragment}
             onNewTransfer={() => navigate({ to: "/" })}
             onGoToDetail={() =>
               navigate({ to: "/transfers/$id", params: { id: transfer.id } })

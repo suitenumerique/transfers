@@ -8,11 +8,11 @@ import { RelativeDate } from "@/features/ui/components/relative-date";
 import { isExpired } from "@/features/utils/date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
-  ensureE2eServiceWorker,
-  registerE2eKey,
+  ensureEncryptionServiceWorker,
+  registerEncryptionKey,
   streamingDownloadUrl,
-  unregisterE2eKey,
-} from "../upload/e2eServiceWorker";
+  unregisterEncryptionKey,
+} from "../upload/encryptionServiceWorker";
 import { FileItem } from "./FileItem";
 
 interface DownloadViewProps {
@@ -47,8 +47,8 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // downloads. `ready` (go), `loading` (SW handshake), `need-key`
   // (confidential + no key yet, show the paste box), `error` (SW/registration
   // failed). Resolved synchronously here so the effect only does async work.
-  type E2eState = "loading" | "ready" | "need-key" | "error";
-  const [e2eState, setE2eState] = useState<E2eState>(() => {
+  type EncryptionState = "loading" | "ready" | "need-key" | "error";
+  const [encryptionState, setEncryptionState] = useState<EncryptionState>(() => {
     if (!isEncrypted) return "ready";
     if (typeof window === "undefined") return "loading";
     if (!autoKey) return "need-key";
@@ -80,14 +80,14 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
 
   // Hand a key to the SW and flip to `ready`. Shared by the auto-effect
   // (backend key / URL fragment) and the paste box. A malformed key (wrong
-  // length/base64) throws inside registerE2eKey → surfaces as an error the
+  // length/base64) throws inside registerEncryptionKey → surfaces as an error the
   // caller maps to its state.
   const registerKey = async (keyStr: string): Promise<boolean> => {
     const chunkSize = transfer.encryption_chunk_size;
     if (!chunkSize) return false;
-    const sw = await ensureE2eServiceWorker();
+    const sw = await ensureEncryptionServiceWorker();
     if (!sw) return false;
-    await registerE2eKey(sw, token, keyStr, transfer.files, chunkSize);
+    await registerEncryptionKey(sw, token, keyStr, transfer.files, chunkSize);
     registeredRef.current = true;
     return true;
   };
@@ -119,13 +119,13 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           // newer attempt superseded us: its key is the one now under this
           // token, and unregistering would break its decryption.
           if (ok && registerAttemptRef.current === attempt) {
-            unregisterE2eKey(token);
+            unregisterEncryptionKey(token);
           }
           return;
         }
-        setE2eState(ok ? "ready" : "error");
+        setEncryptionState(ok ? "ready" : "error");
       } catch {
-        if (!cancelled) setE2eState("error");
+        if (!cancelled) setEncryptionState("error");
       }
     })();
     return () => {
@@ -138,7 +138,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // another transfer in the same tab, so stale keys are needless retention.
   useEffect(() => {
     return () => {
-      if (registeredRef.current) unregisterE2eKey(token);
+      if (registeredRef.current) unregisterEncryptionKey(token);
     };
   }, [token]);
 
@@ -146,15 +146,15 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     const key = pastedKey.trim();
     if (!key) return;
     setPasteError(false);
-    setE2eState("loading");
+    setEncryptionState("loading");
     try {
       const ok = await registerKey(key);
-      setE2eState(ok ? "ready" : "need-key");
+      setEncryptionState(ok ? "ready" : "need-key");
       if (!ok) setPasteError(true);
     } catch {
       // Malformed key (bad base64 / wrong length). A valid-length but wrong
       // key registers fine and instead fails at download time.
-      setE2eState("need-key");
+      setEncryptionState("need-key");
       setPasteError(true);
     }
   };
@@ -277,7 +277,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
               )}
               placement="top"
             >
-              <span className="download-view__meta-item download-view__meta-item--e2e">
+              <span className="download-view__meta-item download-view__meta-item--encryption">
                 <Lock />
                 {t("Confidential")}
               </span>
@@ -367,7 +367,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                     color="neutral"
                     variant="tertiary"
                     icon={<Download />}
-                    disabled={!downloadable || e2eState !== "ready"}
+                    disabled={!downloadable || encryptionState !== "ready"}
                     onClick={() => triggerDownload(file)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
                     title={
@@ -383,7 +383,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </ul>
       )}
 
-      {isEncrypted && e2eState === "need-key" && (
+      {isEncrypted && encryptionState === "need-key" && (
         <div className="download-view__key-box">
           <Alert type={VariantType.INFO}>
             {t(
@@ -420,7 +420,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           </div>
         </div>
       )}
-      {isEncrypted && e2eState === "error" && (
+      {isEncrypted && encryptionState === "error" && (
         <Alert type={VariantType.ERROR}>
           {t(
             "We couldn't set up the decryption helper in your browser. Try a different browser or check that service workers are enabled.",
@@ -434,7 +434,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           icon={<Download />}
           fullWidth
           onClick={downloadAll}
-          disabled={e2eState !== "ready"}
+          disabled={encryptionState !== "ready"}
           className="download-view__download-all"
         >
           {t("Download all")}

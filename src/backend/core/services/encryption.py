@@ -1,6 +1,6 @@
 """Server-side AES-256-GCM chunk encryption for Drive imports.
 
-Mirrors the browser's ``e2eCrypto.ts`` byte-for-byte so a chunk we encrypt
+Mirrors the browser's ``encryption.ts`` byte-for-byte so a chunk we encrypt
 here decrypts in the recipient's Service Worker with the same key. Only the
 Drive-import path uses this: browser uploads are encrypted client-side and
 we never see their plaintext. A Drive import happens server-side (the bytes
@@ -12,7 +12,7 @@ Layout per crypto chunk, identical to the frontend:
     [ IV (12 bytes) | ciphertext (N bytes) | GCM tag (16 bytes) ]
 
 The AAD binds each chunk to ``f"{file_id}:{part_number}"`` (1-based part
-number), exactly as ``e2eCrypto.aadForChunk`` and the SW's ``decryptStream``
+number), exactly as ``encryption.aadForChunk`` and the SW's ``decryptStream``
 do, so a tampered storage layer cannot swap or reorder chunks.
 """
 

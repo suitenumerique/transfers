@@ -40,8 +40,8 @@ export interface TransferFile {
   id: string;
   filename: string;
   size: number;
-  // Plaintext size for E2E-encrypted files; null otherwise. UIs should
-  // fall back to `size` when null. For E2E, `size` is the ciphertext size
+  // Plaintext size for encrypted files; null otherwise. UIs should
+  // fall back to `size` when null. For encryption, `size` is the ciphertext size
   // that sits in S3 (plaintext + per-chunk GCM overhead).
   plaintext_size: number | null;
   mime_type: string;

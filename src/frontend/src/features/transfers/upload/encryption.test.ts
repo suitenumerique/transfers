@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// Round-trip checks for the E2E crypto module. Targets the contract the
+// Round-trip checks for the encryption crypto module. Targets the contract the
 // recipient's Service Worker relies on: encrypt(plaintext) → decrypt →
 // identical bytes, size math matches what we declare to the backend.
 //
@@ -21,11 +21,11 @@ import {
   encryptChunk,
   generateTransferKey,
   importTransferKey,
-} from "./e2eCrypto";
+} from "./encryption";
 
 const AAD = aadForChunk("file-0", 1);
 
-describe("e2eCrypto", () => {
+describe("encryption", () => {
   it("encrypts and decrypts a chunk back to the original plaintext", async () => {
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);

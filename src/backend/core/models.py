@@ -455,7 +455,7 @@ class TransferFile(BaseModel):
         blank=True,
     )
     filename = models.CharField(max_length=255)
-    # Size of the bytes that land in S3. For E2E transfers this is the
+    # Size of the bytes that land in S3. For encryption transfers this is the
     # ciphertext size (plaintext + chunk_count * 28-byte GCM overhead); the
     # plaintext size for UI display lives in ``plaintext_size``.
     size = models.PositiveBigIntegerField()
@@ -463,7 +463,7 @@ class TransferFile(BaseModel):
         null=True,
         blank=True,
         help_text="Decoded file size before encryption. Null when the parent "
-        "transfer is not E2E-encrypted — UIs should fall back to ``size``.",
+        "transfer is not encrypted — UIs should fall back to ``size``.",
     )
     mime_type = models.CharField(max_length=255, blank=True, default="")
     s3_key = models.CharField(max_length=512)

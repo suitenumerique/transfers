@@ -18,7 +18,7 @@ from core.services import encryption
 _ENCRYPTION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
 # Per-chunk overhead the browser's AES-GCM helper prepends (IV) and appends
-# (GCM tag) to every encrypted chunk. The frontend's e2eCrypto module and
+# (GCM tag) to every encrypted chunk. The frontend's encryption module and
 # the recipient Service Worker share this constant; the value must stay in
 # sync across all three.
 CRYPTO_OVERHEAD_PER_CHUNK = 12 + 16
