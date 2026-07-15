@@ -44,9 +44,7 @@ class TestCleanupAbandonedDraftsTask:
         # holds — the task's contract is "abort whatever upload_id points to".
         key = f"transfers/{draft.id}/abandoned.bin"
         upload_id = seed_mpu(live_s3_bucket, bucket, key, n_parts=2)
-        TransferFileFactory(
-            transfer=None, draft=draft, upload_id=upload_id, s3_key=key
-        )
+        TransferFileFactory(transfer=None, draft=draft, upload_id=upload_id, s3_key=key)
 
         cleanup_abandoned_drafts_task()
 
@@ -80,14 +78,14 @@ class TestCleanupAbandonedDraftsTask:
         draft = TransferDraftFactory(owner=user)
         key = f"transfers/{draft.id}/young.bin"
         upload_id = seed_mpu(live_s3_bucket, bucket, key, n_parts=1)
-        TransferFileFactory(
-            transfer=None, draft=draft, upload_id=upload_id, s3_key=key
-        )
+        TransferFileFactory(transfer=None, draft=draft, upload_id=upload_id, s3_key=key)
 
         cleanup_abandoned_drafts_task()
 
         assert TransferDraft.objects.filter(id=draft.id).exists()
-        uploads = live_s3_bucket.list_multipart_uploads(Bucket=bucket).get("Uploads") or []
+        uploads = (
+            live_s3_bucket.list_multipart_uploads(Bucket=bucket).get("Uploads") or []
+        )
         assert len(uploads) == 1
 
 
@@ -208,9 +206,7 @@ class TestImportDriveFileTaskLeaks:
         assert tf.import_failed_at is not None
         assert_bucket_empty(live_s3_bucket, bucket)
 
-    def test_complete_multipart_failure_leaves_no_orphan(
-        self, user, live_s3_bucket
-    ):
+    def test_complete_multipart_failure_leaves_no_orphan(self, user, live_s3_bucket):
         # Stream succeeds end-to-end and the size matches, but S3 rejects
         # CompleteMultipartUpload (e.g. an inconsistent ETag set). The
         # except clause must abort the (now uncomplete) MPU and delete any
@@ -292,9 +288,7 @@ class TestImportDriveFileTaskLeaks:
 class TestExpireTransfersTask:
     """Cron sweep for expired transfers — two-step: flag then purge S3."""
 
-    def test_clears_completed_objects_on_expired_transfer(
-        self, user, live_s3_bucket
-    ):
+    def test_clears_completed_objects_on_expired_transfer(self, user, live_s3_bucket):
         bucket = settings.TRANSFERS_BUCKET_NAME
         transfer = TransferFactory(
             owner=user, expires_at=timezone.now() - timedelta(hours=1)

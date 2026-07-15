@@ -4,9 +4,8 @@ encryption used by Drive imports. The layout must match the browser's
 
 import base64
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from core.services import encryption
 
@@ -59,7 +58,9 @@ class TestEncryptChunk:
         plaintext = b"hello world"
         out = encryption.encrypt_chunk(key, plaintext, "file-1", 1)
         # 12-byte IV + ciphertext (== plaintext length) + 16-byte tag.
-        assert len(out) == encryption.IV_BYTES + len(plaintext) + encryption.GCM_TAG_BYTES
+        assert (
+            len(out) == encryption.IV_BYTES + len(plaintext) + encryption.GCM_TAG_BYTES
+        )
 
     def test_round_trips_with_matching_aad(self):
         # Decrypt exactly the way the recipient SW does: split off the IV,

@@ -38,6 +38,7 @@ from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
 
+
 class TransferDraftViewSet(viewsets.GenericViewSet):
     """Endpoints for the draft lifecycle: add-file, sign-part, complete-upload,
     remove-file, abort, finalize. Nothing public — a draft never holds
@@ -209,8 +210,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         s3.abort_multipart_upload(transfer_file.s3_key, upload_id)
                     except botocore.exceptions.ClientError:
                         logger.exception(
-                            "Failed to abort orphan MPU %s for key %s after "
-                            "rollback",
+                            "Failed to abort orphan MPU %s for key %s after rollback",
                             upload_id,
                             transfer_file.s3_key,
                         )
@@ -528,9 +528,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             and f.scan_submitted_at is None
                         ):
                             f.scan_submitted_at = timezone.now()
-                            f.save(
-                                update_fields=["scan_submitted_at", "updated_at"]
-                            )
+                            f.save(update_fields=["scan_submitted_at", "updated_at"])
                             transaction.on_commit(
                                 lambda fid=str(f.id): submit_scan_task.delay(fid)
                             )
@@ -659,8 +657,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             for f in draft.files.filter(upload_completed_at__isnull=False):
                 is_pending = f.scan_status == ScanStatus.PENDING
                 is_transient = (
-                    f.scan_status == ScanStatus.ERROR
-                    and f.scan_error_kind != "file"
+                    f.scan_status == ScanStatus.ERROR and f.scan_error_kind != "file"
                 )
                 if not (is_pending or is_transient):
                     continue
@@ -679,9 +676,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         "updated_at",
                     ]
                 )
-                transaction.on_commit(
-                    lambda fid=str(f.id): submit_scan_task.delay(fid)
-                )
+                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.delay(fid))
                 rescanned.append(str(f.id))
 
         logger.info(

@@ -67,8 +67,7 @@ class TestCleanOrphanObjects:
 
         remaining = {
             o["Key"]
-            for o in live_s3_bucket.list_objects_v2(Bucket=bucket).get("Contents")
-            or []
+            for o in live_s3_bucket.list_objects_v2(Bucket=bucket).get("Contents") or []
         }
         assert remaining == {"transfers/known/a.bin"}
 

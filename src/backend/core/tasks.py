@@ -55,7 +55,7 @@ def deactivate_expired_transfers_task():
         # deactivate() returns False when another feed (manual / first
         # download) already moved the row out of ACTIVE between the query
         # above and now. Only record the expiry audit event when the transfer gets
-        # deactivated HERE, otherwise the log would claim an expiry that never 
+        # deactivated HERE, otherwise the log would claim an expiry that never
         # happened.
         if not transfer.deactivate(DeactivationReason.EXPIRED):
             continue
@@ -290,9 +290,7 @@ def import_drive_file_task(transfer_file_id, encryption_key):
             try:
                 s3.abort_multipart_upload(key=key, upload_id=upload_id)
             except botocore.exceptions.ClientError:
-                logger.exception(
-                    "Failed to abort MPU %s for key %s", upload_id, key
-                )
+                logger.exception("Failed to abort MPU %s for key %s", upload_id, key)
         # delete_object is idempotent on missing keys (S3 returns 204).
         if tf.s3_key:
             try:
@@ -433,9 +431,7 @@ def submit_scan_task(self, transfer_file_id):
     # Targeted update: the row may have been concurrently mutated and we only
     # own the scan_job_id column here.
     TransferFile.objects.filter(id=tf.id).update(scan_job_id=job_id)
-    logger.info(
-        "Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id
-    )
+    logger.info("Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id)
 
 
 @shared_task

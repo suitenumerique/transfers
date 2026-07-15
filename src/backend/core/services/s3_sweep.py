@@ -48,9 +48,7 @@ def run_orphan_sweep(
     """
     bucket = settings.TRANSFERS_BUCKET_NAME
     cutoff = (
-        timezone.now() - timedelta(hours=min_age_hours)
-        if min_age_hours > 0
-        else None
+        timezone.now() - timedelta(hours=min_age_hours) if min_age_hours > 0 else None
     )
 
     client = s3.get_s3_client()
@@ -113,9 +111,7 @@ def _scan_mpus(
     shape on purpose.
     """
     known_uploads = set(
-        TransferFile.objects.exclude(upload_id="").values_list(
-            "s3_key", "upload_id"
-        )
+        TransferFile.objects.exclude(upload_id="").values_list("s3_key", "upload_id")
     )
     write(f"DB references {len(known_uploads)} in-progress MPU(s).")
 
@@ -157,7 +153,6 @@ def _flush_batch(client, bucket: str, batch: list[dict], write_error: Writer) ->
     response = client.delete_objects(Bucket=bucket, Delete={"Objects": batch})
     for err in response.get("Errors", []) or []:
         write_error(
-            f"failed to delete {err['Key']}: "
-            f"{err.get('Code')} {err.get('Message')}"
+            f"failed to delete {err['Key']}: {err.get('Code')} {err.get('Message')}"
         )
     return len(response.get("Deleted", []) or [])

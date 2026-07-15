@@ -72,8 +72,7 @@ class TestDownloadTransferView:
         )
         assert response.status_code == 200
         assert (
-            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
-            == 0
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count() == 0
         )
 
     def test_authenticated_non_owner_view_logs_link_opened_event(
@@ -81,9 +80,7 @@ class TestDownloadTransferView:
     ):
         # A registered user who isn't the owner is still a recipient — log it.
         api_client.force_authenticate(user=UserFactory())
-        response = api_client.get(
-            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/"
-        )
+        response = api_client.get(f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/")
         assert response.status_code == 200
         assert_single_event(transfer_with_file.id, TransferEventType.LINK_OPENED)
 
@@ -134,8 +131,7 @@ class TestDownloadFileView:
         assert response.status_code == 302
         # Owner self-download → no audit event.
         assert (
-            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
-            == 0
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count() == 0
         )
 
     @patch("core.api.viewsets.download.sign_download_url")

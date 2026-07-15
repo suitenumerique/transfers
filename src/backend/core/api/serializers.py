@@ -393,10 +393,10 @@ class DraftFinalizeSerializer(serializers.Serializer):
             )
         try:
             encryption.decode_key(value)
-        except ValueError:
+        except ValueError as err:
             raise serializers.ValidationError(
                 "Must decode to a 32-byte AES-256 key."
-            )
+            ) from err
         return value
 
     def validate(self, attrs):

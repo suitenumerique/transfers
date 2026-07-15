@@ -119,9 +119,7 @@ def _finalize(authenticated_client, draft_id, **metadata):
 
 def _scan_clean(draft_id):
     """Simulate the scanner's webhook landing: every file comes back CLEAN."""
-    TransferFile.objects.filter(draft_id=draft_id).update(
-        scan_status=ScanStatus.CLEAN
-    )
+    TransferFile.objects.filter(draft_id=draft_id).update(scan_status=ScanStatus.CLEAN)
 
 
 def _finalize_after_scan(authenticated_client, draft_id, **metadata):
@@ -556,8 +554,7 @@ class TestDraftFinalize:
             initiate["transfer_file_id"],
         )
 
-        response = _finalize_after_scan(
-authenticated_client, initiate["draft_id"])
+        response = _finalize_after_scan(authenticated_client, initiate["draft_id"])
         assert response.status_code == 200, response.data
         assert response.data["public_token"] is not None
 
@@ -582,8 +579,7 @@ authenticated_client, initiate["draft_id"])
         for tf_id in file_ids:
             _complete_upload(authenticated_client, draft_id, tf_id)
 
-        response = _finalize_after_scan(
-authenticated_client, draft_id)
+        response = _finalize_after_scan(authenticated_client, draft_id)
         assert response.status_code == 200
         transfer_id = response.data["id"]
 
@@ -606,8 +602,7 @@ authenticated_client, draft_id)
         for tf_id in file_ids:
             _complete_upload(authenticated_client, draft_id, tf_id)
 
-        response = _finalize_after_scan(
-authenticated_client, draft_id)
+        response = _finalize_after_scan(authenticated_client, draft_id)
         assert response.status_code == 200, response.data
         assert response.data["public_token"] is not None
         assert_single_event(response.data["id"], TransferEventType.TRANSFER_CREATED)
@@ -663,7 +658,7 @@ authenticated_client, draft_id)
         )
 
         response = _finalize_after_scan(
-authenticated_client,
+            authenticated_client,
             initiate["draft_id"],
             title="Dossier Marché",
             sharing_mode="email",
@@ -730,7 +725,7 @@ authenticated_client,
             initiate["transfer_file_id"],
         )
         response = _finalize_after_scan(
-authenticated_client,
+            authenticated_client,
             initiate["draft_id"],
             sharing_mode="link",
         )
@@ -758,9 +753,7 @@ class TestDraftEncryption:
         assert tf.size == 1024 + OVERHEAD
         assert tf.plaintext_size == 1024
 
-    def test_add_file_requires_plaintext_size(
-        self, patched_s3, authenticated_client
-    ):
+    def test_add_file_requires_plaintext_size(self, patched_s3, authenticated_client):
         resp = authenticated_client.post(
             ADD_FILE_URL,
             {"filename": "a.bin", "size": 2048},
@@ -836,8 +829,7 @@ class TestDraftEncryption:
             initiate["draft_id"],
             initiate["transfer_file_id"],
         )
-        resp = _finalize_after_scan(
-authenticated_client, initiate["draft_id"])
+        resp = _finalize_after_scan(authenticated_client, initiate["draft_id"])
         assert resp.status_code == 200, resp.data
 
         transfer = Transfer.objects.get(id=resp.data["id"])
@@ -858,9 +850,7 @@ authenticated_client, initiate["draft_id"])
             initiate["draft_id"],
             initiate["transfer_file_id"],
         )
-        resp = _finalize(
-            authenticated_client, initiate["draft_id"], confidential=True
-        )
+        resp = _finalize(authenticated_client, initiate["draft_id"], confidential=True)
         assert resp.status_code == 200, resp.data
 
         transfer = Transfer.objects.get(id=resp.data["id"])
@@ -894,7 +884,7 @@ authenticated_client, initiate["draft_id"])
             # reaches the scanner, not merely that something was enqueued.
             patch(
                 "core.api.viewsets.draft.submit_scan_task.delay",
-                side_effect=lambda fid: submit_scan_task(fid),
+                side_effect=submit_scan_task,
             ),
             patch(
                 "core.api.viewsets.draft.transaction.on_commit",
@@ -1460,9 +1450,7 @@ class TestSubmitScanTask:
             submit_scan_task(str(tf.id))
         return mock_post
 
-    def test_posts_scan_when_decryption_material_is_available(
-        self, user, settings
-    ):
+    def test_posts_scan_when_decryption_material_is_available(self, user, settings):
         """The positive control for this class. Every other test here asserts
         ``assert_not_called()`` — which would also pass if ``_run_task`` were
         broken and ran nothing at all. This one proves a POST does go out when
@@ -1565,7 +1553,6 @@ class TestSubmitScanTask:
         assert tf.scan_status == ScanStatus.PENDING  # never falsely CLEAN
 
 
-
 @pytest.mark.django_db
 class TestScanEncryptionParams:
     """The fail-closed rule, tested on its own: given a file, what (if anything)
@@ -1660,9 +1647,7 @@ class TestNoScanBeforeFinalize:
         )
         return initiate["draft_id"], initiate["transfer_file_id"]
 
-    def test_complete_upload_submits_nothing(
-        self, patched_s3, authenticated_client
-    ):
+    def test_complete_upload_submits_nothing(self, patched_s3, authenticated_client):
         with (
             patch("core.api.viewsets.draft.submit_scan_task.delay") as submit,
             # Without this the submit is scheduled on_commit and never fires in

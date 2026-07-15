@@ -306,7 +306,10 @@ class Transfer(BaseModel):
 
     @property
     def is_deactivated(self) -> bool:
-        return self.status in (TransferStatus.DEACTIVATED, TransferStatus.PENDING_FILE_DELETION)
+        return self.status in (
+            TransferStatus.DEACTIVATED,
+            TransferStatus.PENDING_FILE_DELETION,
+        )
 
     @property
     def is_accessible(self) -> bool:
@@ -345,7 +348,8 @@ class Transfer(BaseModel):
         ).update(
             status=TransferStatus.PENDING_FILE_DELETION,
             deactivation_reason=reason,
-            pending_deletion_at=now + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS),
+            pending_deletion_at=now
+            + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS),
             updated_at=now,
         )
         if updated:

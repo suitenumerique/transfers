@@ -212,11 +212,11 @@ class TestTransferList:
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
-    def test_list_deactivated_true_returns_non_active(
-        self, authenticated_client, user
-    ):
+    def test_list_deactivated_true_returns_non_active(self, authenticated_client, user):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        pending = TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
+        pending = TransferFactory(
+            owner=user, status=TransferStatus.PENDING_FILE_DELETION
+        )
         deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=true")
@@ -279,8 +279,12 @@ class TestTransferDeactivate:
         transfer.refresh_from_db()
         assert transfer.status == "pending_file_deletion"
         assert transfer.deactivation_reason == "manual"
-        expected_deletion = timezone.now() + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
-        assert abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
+        expected_deletion = timezone.now() + timedelta(
+            hours=settings.TRANSFER_PURGE_DELAY_HOURS
+        )
+        assert (
+            abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
+        )
 
         assert_single_event(
             transfer.id, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY
