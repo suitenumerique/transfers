@@ -1819,6 +1819,18 @@ class TestReapStalePendingScans:
         submit = self._reap(settings)
         submit.assert_not_called()
 
+    def test_bumped_timestamp_keeps_next_tick_from_re_reaping(self, user, settings):
+        """A single stale row is re-enqueued on the first tick and left alone on
+        the second, back-to-back — the re-enqueue bumps ``scan_submitted_at``
+        so the row drops out of the reaper's window until another interval
+        elapses. Without this the reaper would spawn N concurrent scans per row
+        while a legitimately-slow retry is still running."""
+        tf = self._file(user, submitted_ago_minutes=60)
+        first = self._reap(settings)
+        first.assert_called_once_with(str(tf.id))
+        second = self._reap(settings)
+        second.assert_not_called()
+
 
 @pytest.mark.django_db
 class TestImportDriveFileTask:
@@ -1865,12 +1877,18 @@ class TestImportDriveFileTask:
             import_drive_file_task(str(_uuid.uuid4()))
         mock_get.assert_not_called()
 
-    def test_happy_path_encrypts_and_marks_complete(self, user):
+    def test_happy_path_encrypts_and_marks_complete(self, user, settings):
         """One-part happy path: Drive returns the bytes, the task encrypts
         them into a fresh multipart, row is marked complete. The uploaded
         part is IV + ciphertext + tag, so it's larger than the plaintext."""
         from core.tasks import import_drive_file_task
 
+        # Enable scanning so the row-status assertion below distinguishes
+        # "no bricolage at add-file" (PENDING is preserved) from "scan
+        # exempt because scanner is off" (SKIPPED). Only PENDING confirms
+        # the row will actually be handed to the scanner on the next poll.
+        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_MAX_FILE_SIZE = 10 * 1024 * 1024
         tf, _ = self._make_file(user, plaintext_size=12, filename="hi.txt")
         payload = b"hello-bytes!"
         assert len(payload) == 12
@@ -1910,6 +1928,10 @@ class TestImportDriveFileTask:
         tf.refresh_from_db()
         assert tf.upload_completed_at is not None
         assert tf.upload_id == ""
+        # Row stays PENDING (the model default) — same lane as browser uploads,
+        # so the finalize scan-submission loop picks it up on the next poll.
+        # A regression to SKIPPED here would silently skip the antivirus scan.
+        assert tf.scan_status == ScanStatus.PENDING
         mock_upload_part.assert_called_once()
         # The body uploaded is the encrypted chunk (12 plaintext + 28 overhead).
         body = mock_upload_part.call_args.kwargs["body"]

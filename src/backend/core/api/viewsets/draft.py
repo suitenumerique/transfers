@@ -401,233 +401,263 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         TransferFile in the draft is reparented in one UPDATE, and the draft
         is deleted. Recipient emails are scheduled on transaction commit.
 
-        Refuses to finalize a draft whose files haven't all completed their
-        multipart upload (``upload_completed_at IS NULL`` on a per-file basis).
+        The action is a 202 poll loop: it answers 202 while Drive imports
+        or antivirus scans are in flight, and 200 with the Transfer once
+        every file is settled. The whole body runs under the draft's row
+        lock so concurrent re-posts see a consistent state.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         metadata = serializer.validated_data
+        confidential = metadata["confidential"]
 
         with transaction.atomic():
             draft = self._get_locked_draft(pk)
-
-            confidential = metadata["confidential"]
-
             files = list(draft.files.all())
-            if not files:
-                raise drf.exceptions.ValidationError(
-                    {"files": "Draft has no files to finalize."}
-                )
-
-            # Drive files carry a ``source_url`` and are fetched + encrypted
-            # server-side at finalize (needs the key). A confidential transfer
-            # has no key on our side, so it can't host a Drive import — reject
-            # it so the user removes the Drive file or drops confidential. The
-            # frontend greys the confidential toggle while a Drive file is
-            # present; this is the belt-and-braces.
             drive_files = [f for f in files if f.source_url]
             browser_files = [f for f in files if not f.source_url]
-            if drive_files and confidential:
-                raise drf.exceptions.ValidationError(
-                    {
-                        "confidential": (
-                            "A confidential transfer cannot include a Drive "
-                            "import (we would have to hold the key to encrypt "
-                            "the fetched bytes). Remove the Drive file or turn "
-                            "confidential off."
-                        )
-                    }
-                )
 
-            # Browser uploads must all have landed. Drive files are expected
-            # to be pending here (imported by the poll block below), so
-            # they're excluded from this gate.
-            pending = [
-                str(f.id) for f in browser_files if f.upload_completed_at is None
-            ]
-            if pending:
-                raise drf.exceptions.ValidationError(
-                    {
-                        "files": (
-                            "Cannot finalize: some files have not completed "
-                            "their upload yet."
-                        ),
-                        "pending_file_ids": pending,
-                    }
-                )
-
-            # Drive imports run here, then finalize polls: the first call kicks
-            # off the (encrypting) import task per Drive file and returns 202;
-            # the client re-posts finalize until every Drive file has landed.
-            # The transfer is created only once they're all complete, so a
-            # finalized transfer never has a half-imported file.
-            # ``import_started_at`` marks "import kicked off" so re-posts don't
-            # double-fire, and the draft lock held here serialises the polls.
-            if drive_files:
-                imported_failed = [
-                    str(f.id) for f in drive_files if f.import_failed_at is not None
-                ]
-                if imported_failed:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "files": "A Drive import failed.",
-                            "reason": "drive_import_failed",
-                            "failed_file_ids": imported_failed,
-                        }
-                    )
-
-                # Park the key on the draft so the import worker can read it
-                # from the DB instead of receiving it as a Celery kwarg (which
-                # would surface it in task metadata and broker payloads). Drive
-                # implies non-confidential, so we hold the key anyway; the
-                # draft row is discarded at finalize.
-                if not draft.encryption_key:
-                    draft.encryption_key = metadata["encryption_key"]
-                    draft.save(update_fields=["encryption_key", "updated_at"])
-                still_importing = []
-                for f in drive_files:
-                    if f.upload_completed_at is not None:
-                        continue
-                    if f.import_started_at is None:
-                        # Not started yet — mark it and enqueue the encrypting
-                        # import. ``import_started_at`` keeps the next poll from
-                        # re-enqueuing while the task spins up its MPU.
-                        f.import_started_at = timezone.now()
-                        f.save(update_fields=["import_started_at", "updated_at"])
-                        transaction.on_commit(
-                            lambda fid=str(f.id): import_drive_file_task.delay(fid)
-                        )
-                    still_importing.append(str(f.id))
-
-                if still_importing:
-                    return drf.response.Response(
-                        {
-                            "detail": "Drive files are still being imported.",
-                            "reason": "drive_importing",
-                            "pending_file_ids": still_importing,
-                        },
-                        status=202,
-                    )
-
-            # The key only reaches us here, so this is the first moment the
-            # ciphertext can be scanned at all.
-            if settings.CLAMAV_SCAN_ENABLED and draft.encryption_chunk_size:
-                if confidential:
-                    # No key, ever — unscannable. Scan-exempt: downloadable,
-                    # but claiming nothing.
-                    for f in files:
-                        if f.scan_status == ScanStatus.PENDING:
-                            f.scan_status = ScanStatus.SKIPPED
-                            f.save(update_fields=["scan_status", "updated_at"])
-                else:
-                    # Park the key so submit_scan_task can decrypt with it.
-                    # It dies with the draft; only the Transfer keeps it.
-                    if not draft.encryption_key:
-                        draft.encryption_key = metadata["encryption_key"]
-                        draft.save(update_fields=["encryption_key", "updated_at"])
-                    for f in files:
-                        # Finalize is a 202 poll loop — without this marker
-                        # every re-post would launch another scan.
-                        if (
-                            f.scan_status == ScanStatus.PENDING
-                            and f.upload_completed_at is not None
-                            and f.scan_submitted_at is None
-                        ):
-                            f.scan_submitted_at = timezone.now()
-                            f.save(update_fields=["scan_submitted_at", "updated_at"])
-                            transaction.on_commit(
-                                lambda fid=str(f.id): submit_scan_task.delay(fid)
-                            )
-
-            # Antivirus gate: a transfer is created only once every file is
-            # non-blocking (CLEAN, or scan-exempt SKIPPED / TOO_LARGE). PENDING
-            # keeps the client polling. Re-arming a failed scan is /rescan/'s
-            # job, not ours.
-            if settings.CLAMAV_SCAN_ENABLED:
-                infected, unscannable, scan_errored, scanning = [], [], [], []
-                for f in files:
-                    if f.scan_status == ScanStatus.INFECTED:
-                        infected.append(str(f.id))
-                    elif f.scan_status == ScanStatus.ERROR:
-                        if f.scan_error_kind == "file":
-                            unscannable.append(str(f.id))
-                        else:
-                            scan_errored.append(str(f.id))
-                    elif f.scan_status == ScanStatus.PENDING:
-                        scanning.append(str(f.id))
-
-                if infected:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "files": "The antivirus scan blocked one or more files.",
-                            "reason": "scan_blocked",
-                            "blocked_file_ids": infected,
-                        }
-                    )
-                if unscannable:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "files": "One or more files could not be scanned.",
-                            "reason": "scan_file_error",
-                            "blocked_file_ids": unscannable,
-                        }
-                    )
-                if scan_errored:
-                    raise drf.exceptions.ValidationError(
-                        {
-                            "files": "The antivirus scan could not complete for one "
-                            "or more files.",
-                            "reason": "scan_error",
-                            "blocked_file_ids": scan_errored,
-                        }
-                    )
-
-                if scanning:
-                    return drf.response.Response(
-                        {
-                            "detail": "Files are still being scanned for viruses.",
-                            "reason": "scan_pending",
-                            "pending_file_ids": scanning,
-                        },
-                        status=202,
-                    )
-
-            transfer = models.Transfer.objects.create(
-                owner=draft.owner,
-                title=metadata["title"],
-                sharing_mode=metadata["sharing_mode"],
-                expires_at=timezone.now()
-                + timedelta(days=int(metadata["expires_in_days"])),
-                auto_archive_on_download=metadata["auto_archive_on_download"],
-                confidential=confidential,
-                # Stored only in normal mode; empty for confidential (the key
-                # never reached us). The serializer already enforces this.
-                encryption_key=metadata["encryption_key"],
-                encryption_chunk_size=draft.encryption_chunk_size,
+            self._reject_bad_finalize_shape(
+                files, drive_files, browser_files, confidential
             )
-            models.TransferFile.objects.filter(draft=draft).update(
-                transfer=transfer, draft=None
+            self._park_encryption_key(draft, metadata, confidential)
+
+            drive_response = self._process_drive_imports(drive_files)
+            if drive_response is not None:
+                return drive_response
+
+            self._submit_pending_scans(draft, files, confidential)
+            scan_response = self._scan_gate(files)
+            if scan_response is not None:
+                return scan_response
+
+            transfer = self._create_transfer_from_draft(draft, metadata, request)
+
+        return drf.response.Response(TransferDetailSerializer(transfer).data)
+
+    def _reject_bad_finalize_shape(
+        self, files, drive_files, browser_files, confidential
+    ):
+        """Raise 400 for the three finalize-time invariants that the client
+        could still violate: empty draft, Drive+confidential mix (the key
+        would have to reach us to encrypt the fetched bytes), or a browser
+        upload that never completed. Drive files are exempt from the last
+        gate — they're expected pending until the import block below runs."""
+        if not files:
+            raise drf.exceptions.ValidationError(
+                {"files": "Draft has no files to finalize."}
             )
-            if metadata["sharing_mode"] == SharingMode.EMAIL:
-                for email in metadata["recipients"]:
-                    models.TransferRecipient.objects.create(
-                        transfer=transfer,
-                        email=email,
+        if drive_files and confidential:
+            raise drf.exceptions.ValidationError(
+                {
+                    "confidential": (
+                        "A confidential transfer cannot include a Drive "
+                        "import (we would have to hold the key to encrypt "
+                        "the fetched bytes). Remove the Drive file or turn "
+                        "confidential off."
                     )
+                }
+            )
+        pending = [str(f.id) for f in browser_files if f.upload_completed_at is None]
+        if pending:
+            raise drf.exceptions.ValidationError(
+                {
+                    "files": (
+                        "Cannot finalize: some files have not completed "
+                        "their upload yet."
+                    ),
+                    "pending_file_ids": pending,
+                }
+            )
 
-            log_agent_event(transfer, TransferEventType.TRANSFER_CREATED, request)
+    def _park_encryption_key(self, draft, metadata, confidential):
+        """Park the key on the draft so background workers (Drive import,
+        scan submit) read it from the DB rather than receiving it as a
+        Celery kwarg — which would surface it in task metadata and broker
+        payloads. Confidential drafts never see the key, so this is a
+        no-op for them. The row (and the key with it) is discarded when
+        the Transfer is created at the end of ``finalize``."""
+        if not confidential and not draft.encryption_key:
+            draft.encryption_key = metadata["encryption_key"]
+            draft.save(update_fields=["encryption_key", "updated_at"])
 
-            if transfer.sharing_mode == SharingMode.EMAIL:
-                from core.tasks import send_recipient_invitations_task
+    def _process_drive_imports(self, drive_files):
+        """Drive imports run at finalize (needs the key). The first call
+        marks ``import_started_at`` and enqueues the import task; every
+        re-post that finds files still importing returns 202 immediately.
+        The transfer is created only once every Drive file has completed,
+        so a finalized transfer never has a half-imported file.
 
+        Returns a 202/400 Response when the caller must return early, or
+        ``None`` to let the outer flow continue to the scan phase.
+        """
+        if not drive_files:
+            return None
+
+        imported_failed = [
+            str(f.id) for f in drive_files if f.import_failed_at is not None
+        ]
+        if imported_failed:
+            raise drf.exceptions.ValidationError(
+                {
+                    "files": "A Drive import failed.",
+                    "reason": "drive_import_failed",
+                    "failed_file_ids": imported_failed,
+                }
+            )
+
+        still_importing = []
+        for f in drive_files:
+            if f.upload_completed_at is not None:
+                continue
+            if f.import_started_at is None:
+                # Not started yet — mark it and enqueue the encrypting
+                # import. ``import_started_at`` keeps the next poll from
+                # re-enqueuing while the task spins up its MPU.
+                f.import_started_at = timezone.now()
+                f.save(update_fields=["import_started_at", "updated_at"])
                 transaction.on_commit(
-                    lambda: send_recipient_invitations_task.delay(str(transfer.id))
+                    lambda fid=str(f.id): import_drive_file_task.delay(fid)
+                )
+            still_importing.append(str(f.id))
+
+        if still_importing:
+            return drf.response.Response(
+                {
+                    "detail": "Drive files are still being imported.",
+                    "reason": "drive_importing",
+                    "pending_file_ids": still_importing,
+                },
+                status=202,
+            )
+        return None
+
+    def _submit_pending_scans(self, draft, files, confidential):
+        """Antivirus submission: confidential drafts mark every PENDING
+        row SKIPPED (no key, unscannable — the recipient gets a lock icon
+        instead of a "scanned" badge), non-confidential drafts enqueue a
+        scan for each row whose bytes are on S3 and haven't been sent to
+        the scanner yet. Idempotent: ``scan_submitted_at`` gates re-posts."""
+        if not settings.CLAMAV_SCAN_ENABLED or not draft.encryption_chunk_size:
+            return
+        if confidential:
+            for f in files:
+                if f.scan_status == ScanStatus.PENDING:
+                    f.scan_status = ScanStatus.SKIPPED
+                    f.save(update_fields=["scan_status", "updated_at"])
+            return
+        # ``submit_scan_task`` decrypts with the key parked on the draft.
+        for f in files:
+            if (
+                f.scan_status == ScanStatus.PENDING
+                and f.upload_completed_at is not None
+                and f.scan_submitted_at is None
+            ):
+                f.scan_submitted_at = timezone.now()
+                f.save(update_fields=["scan_submitted_at", "updated_at"])
+                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.delay(fid))
+
+    def _scan_gate(self, files):
+        """Classify every file by scan status. A transfer is created only
+        once every file is non-blocking (CLEAN, or scan-exempt SKIPPED /
+        TOO_LARGE). Any INFECTED / ERROR fails the finalize; PENDING
+        keeps the client polling. Re-arming a failed scan is /rescan/'s
+        job — the reason strings are what the client keys its UI on.
+
+        Returns a 202/400 Response when the caller must return early, or
+        ``None`` to let the transfer creation proceed.
+        """
+        if not settings.CLAMAV_SCAN_ENABLED:
+            return None
+
+        infected, unscannable, scan_errored, scanning = [], [], [], []
+        for f in files:
+            if f.scan_status == ScanStatus.INFECTED:
+                infected.append(str(f.id))
+            elif f.scan_status == ScanStatus.ERROR:
+                if f.scan_error_kind == "file":
+                    unscannable.append(str(f.id))
+                else:
+                    scan_errored.append(str(f.id))
+            elif f.scan_status == ScanStatus.PENDING:
+                scanning.append(str(f.id))
+
+        if infected:
+            raise drf.exceptions.ValidationError(
+                {
+                    "files": "The antivirus scan blocked one or more files.",
+                    "reason": "scan_blocked",
+                    "blocked_file_ids": infected,
+                }
+            )
+        if unscannable:
+            raise drf.exceptions.ValidationError(
+                {
+                    "files": "One or more files could not be scanned.",
+                    "reason": "scan_file_error",
+                    "blocked_file_ids": unscannable,
+                }
+            )
+        if scan_errored:
+            raise drf.exceptions.ValidationError(
+                {
+                    "files": "The antivirus scan could not complete for one "
+                    "or more files.",
+                    "reason": "scan_error",
+                    "blocked_file_ids": scan_errored,
+                }
+            )
+        if scanning:
+            return drf.response.Response(
+                {
+                    "detail": "Files are still being scanned for viruses.",
+                    "reason": "scan_pending",
+                    "pending_file_ids": scanning,
+                },
+                status=202,
+            )
+        return None
+
+    def _create_transfer_from_draft(self, draft, metadata, request):
+        """Build the Transfer from the draft's metadata, reparent every
+        file in one UPDATE, schedule recipient emails on commit, and
+        delete the draft. The Transfer is born fully-formed — the
+        ``public_token`` is populated by its default and ``created_at``
+        acts as the publication timestamp."""
+        transfer = models.Transfer.objects.create(
+            owner=draft.owner,
+            title=metadata["title"],
+            sharing_mode=metadata["sharing_mode"],
+            expires_at=timezone.now()
+            + timedelta(days=int(metadata["expires_in_days"])),
+            auto_archive_on_download=metadata["auto_archive_on_download"],
+            confidential=metadata["confidential"],
+            # Stored only in normal mode; empty for confidential (the key
+            # never reached us). The serializer already enforces this.
+            encryption_key=metadata["encryption_key"],
+            encryption_chunk_size=draft.encryption_chunk_size,
+        )
+        models.TransferFile.objects.filter(draft=draft).update(
+            transfer=transfer, draft=None
+        )
+        if metadata["sharing_mode"] == SharingMode.EMAIL:
+            for email in metadata["recipients"]:
+                models.TransferRecipient.objects.create(
+                    transfer=transfer,
+                    email=email,
                 )
 
-            draft.delete()
+        log_agent_event(transfer, TransferEventType.TRANSFER_CREATED, request)
 
-        detail = TransferDetailSerializer(transfer)
-        return drf.response.Response(detail.data)
+        if transfer.sharing_mode == SharingMode.EMAIL:
+            from core.tasks import send_recipient_invitations_task
+
+            transaction.on_commit(
+                lambda: send_recipient_invitations_task.delay(str(transfer.id))
+            )
+
+        draft.delete()
+        return transfer
 
     @extend_schema(
         request=None,
