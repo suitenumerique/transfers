@@ -5,6 +5,8 @@ import os
 import tomllib
 from socket import gethostbyname, gethostname
 
+from django.core.exceptions import ImproperlyConfigured
+
 import dj_database_url
 import sentry_sdk
 from configurations import Configuration, values
@@ -164,6 +166,68 @@ class Base(Configuration):
     TRANSFER_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
         600,  # 10 min
         environ_name="TRANSFER_PRESIGNED_URL_EXPIRY",
+        environ_prefix=None,
+    )
+    # Grace period between the moment a transfer becomes terminal (expiry
+    # reached, or auto-archive triggered by the last file being downloaded)
+    # and the moment the periodic sweep is allowed to purge the S3 objects.
+    # Covers in-flight downloads still running on the recipient's side — a
+    # 20 GiB file on a slow link can take hours, so the default sits
+    # comfortably above that.
+    TRANSFER_PURGE_DELAY_HOURS = values.PositiveIntegerValue(
+        6,
+        environ_name="TRANSFER_PURGE_DELAY_HOURS",
+        environ_prefix=None,
+    )
+
+    # Antivirus scanning (clamav file-scanner service)
+    # ------------------------------------------------
+    # When enabled, every file that completes its upload is submitted to the
+    # external file-scanner service for an asynchronous virus scan; the
+    # result comes back via the scan-result webhook and gates downloads.
+    # Disabled by default so the service runs standalone without the scanner.
+    CLAMAV_SCAN_ENABLED = values.BooleanValue(
+        False, environ_name="CLAMAV_SCAN_ENABLED", environ_prefix=None
+    )
+    # Base URL of the file-scanner REST service, reachable from the backend
+    # AND worker containers (e.g. http://clamav_rest:8090 on the shared
+    # Docker network). No trailing slash.
+    CLAMAV_SERVICE_URL = values.Value(
+        "", environ_name="CLAMAV_SERVICE_URL", environ_prefix=None
+    )
+    # API key presented to the file-scanner as the X-API-Key header.
+    CLAMAV_API_KEY = values.Value(
+        "", environ_name="CLAMAV_API_KEY", environ_prefix=None
+    )
+    # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
+    # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
+    # sendable, but flagged "not scanned" rather than claimed clean. Keep this
+    # at or below the scanner's own max_url_size (2 GB).
+    SCAN_MAX_FILE_SIZE = values.PositiveIntegerValue(
+        2 * 1024 * 1024 * 1024,  # 2 GB
+        environ_name="SCAN_MAX_FILE_SIZE",
+        environ_prefix=None,
+    )
+    # Public base URL of THIS service as seen by the scanner container, used
+    # to build the webhook callback URL (e.g. http://backend-dev:8000 on the
+    # shared Docker network). No trailing slash.
+    SCAN_WEBHOOK_BASE_URL = values.Value(
+        "", environ_name="SCAN_WEBHOOK_BASE_URL", environ_prefix=None
+    )
+    # Lifetime of the presigned GET URL handed to the scanner. Longer than a
+    # browser download's: the scan request may queue on the scanner side
+    # before the file is fetched.
+    SCAN_PRESIGNED_URL_EXPIRY = values.PositiveIntegerValue(
+        3600,  # 1 hour
+        environ_name="SCAN_PRESIGNED_URL_EXPIRY",
+        environ_prefix=None,
+    )
+    # Files still PENDING this long after their upload completed are assumed to
+    # have lost their scan result (the scanner is stateless / webhook-only) and
+    # are re-submitted by ``reap_stale_pending_scans_task``.
+    SCAN_PENDING_REAP_MINUTES = values.PositiveIntegerValue(
+        15,
+        environ_name="SCAN_PENDING_REAP_MINUTES",
         environ_prefix=None,
     )
 
@@ -559,6 +623,24 @@ class Base(Configuration):
                 f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
 
+        # Fail fast: scanning enabled but its endpoints/credentials unset would
+        # otherwise surface only later, as silently-skipped scans in the worker.
+        if cls.CLAMAV_SCAN_ENABLED:
+            missing = [
+                name
+                for name in (
+                    "CLAMAV_SERVICE_URL",
+                    "CLAMAV_API_KEY",
+                    "SCAN_WEBHOOK_BASE_URL",
+                )
+                if not getattr(cls, name)
+            ]
+            if missing:
+                raise ImproperlyConfigured(
+                    "CLAMAV_SCAN_ENABLED is set but these required settings are "
+                    f"empty: {', '.join(missing)}."
+                )
+
 
 class Build(Base):
     """Settings for building the application (not for running)."""
@@ -582,7 +664,7 @@ class Development(Base):
 
     ALLOWED_HOSTS = ["*"]
     CORS_ALLOW_ALL_ORIGINS = True
-    CSRF_TRUSTED_ORIGINS = ["http://localhost:8900", "http://localhost:8901"]
+    CSRF_TRUSTED_ORIGINS = ["http://localhost:8980", "http://localhost:8981"]
     DEBUG = True
 
     # OIDC (mozilla-django-oidc / lasuite) stores ``state`` / nonce under
@@ -697,7 +779,8 @@ class Production(Base):
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_HSTS_SECONDS = 60
+    # 1 year — the minimum the HSTS preload list accepts.
+    SECURE_HSTS_SECONDS = 31_536_000
     SECURE_HSTS_PRELOAD = True
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_SSL_REDIRECT = True

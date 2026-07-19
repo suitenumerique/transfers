@@ -4,7 +4,7 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
-import { useRouter } from "next/router";
+import { useLocation } from "@tanstack/react-router";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -28,7 +28,9 @@ export function ShellLayout({ children }: PropsWithChildren) {
   // The toggle button in TopBar flips this regardless of viewport — only
   // the CSS visual interpretation differs.
   const [collapsed, setCollapsed] = useState(false);
-  const router = useRouter();
+  // Watch the active pathname so a navigation (typically a sidebar link
+  // click) can auto-close the mobile drawer.
+  const pathname = useLocation({ select: (l) => l.pathname });
 
   // Hydrate from localStorage on desktop; mobile always boots closed
   // (the drawer is a transient action, not a preference). useLayoutEffect
@@ -50,12 +52,8 @@ export function ShellLayout({ children }: PropsWithChildren) {
   // the typical case). Desktop's collapsed state is a UI preference and
   // shouldn't be touched by navigation.
   useEffect(() => {
-    const close = () => {
-      if (isMobileViewport()) setCollapsed(true);
-    };
-    router.events.on("routeChangeStart", close);
-    return () => router.events.off("routeChangeStart", close);
-  }, [router.events]);
+    if (isMobileViewport()) setCollapsed(true);
+  }, [pathname]);
 
   const persist = (next: boolean) => {
     setCollapsed(next);

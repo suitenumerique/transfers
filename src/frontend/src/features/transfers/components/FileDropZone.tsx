@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDropzone } from "react-dropzone";
-import { CloudArrow, FileError } from "@gouvfr-lasuite/ui-kit";
+import { CloudArrow, FileError } from "@gouvfr-lasuite/ui-kit/icons";
 import { useConfig } from "@/features/providers/config";
 
 interface FileDropZoneProps {

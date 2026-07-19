@@ -1,30 +1,9 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Input } from "@gouvfr-lasuite/cunningham-react";
-import {
-  ArrowUpCircle,
-  ArrowUpDown,
-  Checkmark,
-  Copy,
-  Link as LinkIcon,
-  MailCheckFilled,
-} from "@gouvfr-lasuite/ui-kit";
+import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
-
-function formatExpiry(iso: string): string {
-  // Matches the Figma mock: "25/12/2026 à 00h00". We split on `|` so the
-  // date and time chunks can be wrapped in <strong> separately.
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-  const time = d
-    .toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-    .replace(":", "h");
-  return `${date}|${time}`;
-}
+import { RelativeDate } from "@/features/ui/components/relative-date";
 
 function daysUntil(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
@@ -59,7 +38,13 @@ export function TransferSuccess({
   };
 
   const isLink = transfer.sharing_mode === "link";
-  const [expiryDate, expiryTime] = formatExpiry(transfer.expires_at).split("|");
+  // Only true when *every* file was actually scanned clean — not the "skipped"
+  // state of an AV-disabled instance, nor a "too_large" file that bypassed the
+  // scan. Reassures the sender the whole transfer passed the virus check before
+  // going out, so we don't over-claim on a mixed clean / not-scanned list.
+  const scanned =
+    transfer.files.length > 0 &&
+    transfer.files.every((f) => f.scan_status === "clean");
 
   return (
     <div className="transfer-success" role="status">
@@ -69,6 +54,12 @@ export function TransferSuccess({
       <h1 className="transfer-success__title">
         {isLink ? t("Transfer ready") : t("Transfer sent")}
       </h1>
+      {scanned && (
+        <p className="transfer-success__scan">
+          <CheckmarkShield />
+          {t("Files scanned, no virus found")}
+        </p>
+      )}
       {isLink ? (
         <>
           <p className="transfer-success__body">
@@ -96,8 +87,10 @@ export function TransferSuccess({
             />
           </div>
           <p className="transfer-success__expiry">
-            {t("This link will expire on")} <strong>{expiryDate}</strong>{" "}
-            {t("at")} <strong>{expiryTime}</strong>
+            {t("This link expires")}{" "}
+            <strong>
+              <RelativeDate iso={transfer.expires_at} />
+            </strong>
           </p>
         </>
       ) : (

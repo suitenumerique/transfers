@@ -12,6 +12,7 @@ Two-tier helper API:
 
 import logging
 from functools import cache
+from urllib.parse import quote
 
 from django.conf import settings
 
@@ -50,7 +51,7 @@ def _get_presigning_client():
     """Return the client used to generate presigned URLs.
 
     In dev, backend and frontend may see the object storage on different
-    hostnames (``objectstorage:9000`` vs ``localhost:8906``). Signatures are
+    hostnames (``objectstorage:9000`` vs ``localhost:8986``). Signatures are
     tied to the hostname, so presigned URLs generated against the internal
     hostname are unusable from the browser. ``AWS_S3_DOMAIN_REPLACE`` lets us
     generate signatures against the browser-facing hostname.
@@ -90,6 +91,28 @@ def sign_upload_part(key: str, upload_id: str, part_number: int) -> str:
     )
 
 
+def _content_disposition(filename: str) -> str:
+    """Build an RFC 6266 ``Content-Disposition`` value for ``filename``.
+
+    A user-supplied filename can contain quotes, control chars or non-ASCII
+    (``report.pdf"; filename=invoice.exe``), which would break out of a naive
+    ``filename="…"`` token and let a sender spoof the saved name. We emit an
+    ASCII-sanitised ``filename`` token (quotes/backslashes/control chars
+    stripped) for legacy clients plus a percent-encoded ``filename*`` that
+    carries the exact UTF-8 name for modern browsers, which take precedence.
+    """
+    ascii_fallback = (
+        filename.encode("ascii", "ignore")
+        .decode("ascii")
+        .replace("\\", "")
+        .replace('"', "")
+    )
+    # Strip control characters that would otherwise survive the ASCII encode.
+    ascii_fallback = "".join(c for c in ascii_fallback if c >= " ") or "download"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
+
+
 def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     """Return a presigned GET URL that triggers a browser download.
 
@@ -104,10 +127,35 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
         Params={
             "Bucket": settings.TRANSFERS_BUCKET_NAME,
             "Key": key,
-            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentDisposition": _content_disposition(filename),
             "ResponseContentType": content_type or "application/octet-stream",
         },
         ExpiresIn=settings.TRANSFER_PRESIGNED_URL_EXPIRY,
+    )
+
+
+def sign_scan_url(key: str) -> str:
+    """Return a presigned GET URL for the antivirus scanner to fetch the file.
+
+    Signed with the *internal* client (``get_s3_client`` → ``AWS_S3_ENDPOINT_URL``),
+    NOT the browser-facing ``_get_presigning_client``. The scanner runs as a
+    container on the shared Docker network and reaches the object storage at
+    its internal hostname (``objectstorage:9000`` in dev); a URL signed against
+    the browser host (``localhost:8906``) would be unreachable from inside the
+    scanner container. In prod both clients resolve to the same public endpoint,
+    so this is equivalent there.
+
+    Uses a dedicated, longer TTL than a browser download: the scan request may
+    sit in the scanner's own queue before the file is actually fetched.
+    """
+    client = get_s3_client()
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Key": key,
+        },
+        ExpiresIn=settings.SCAN_PRESIGNED_URL_EXPIRY,
     )
 
 
@@ -191,10 +239,17 @@ def best_effort_abort_multipart_uploads_from_files(files) -> None:
             )
 
 
-def best_effort_delete_objects_from_files(files) -> None:
+def best_effort_delete_objects_from_files(files) -> bool:
     """Best-effort delete across ``files`` (queryset or list of ``TransferFile``).
     Files without ``s3_key`` are skipped; per-file ``ClientError`` is logged
-    and swallowed."""
+    and swallowed.
+
+    Returns ``True`` iff every object with an ``s3_key`` was deleted without
+    error — callers that own a data-deletion guarantee (the purge task) use
+    this to decide whether the row may move to its terminal DEACTIVATED state
+    or must stay PENDING_FILE_DELETION for a retry.
+    """
+    all_deleted = True
     for tf in files:
         if not tf.s3_key:
             continue
@@ -202,3 +257,5 @@ def best_effort_delete_objects_from_files(files) -> None:
             delete_object(tf.s3_key)
         except botocore.exceptions.ClientError:
             logger.exception("Failed to delete S3 object %s", tf.s3_key)
+            all_deleted = False
+    return all_deleted

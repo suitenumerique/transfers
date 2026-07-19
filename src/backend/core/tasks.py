@@ -1,8 +1,10 @@
 """Celery tasks for the transferts core app."""
 
 import logging
+import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -10,7 +12,13 @@ import botocore
 import requests
 from celery import shared_task
 
-from core.enums import ActorType, TransferEventType, TransferStatus
+from core.enums import (
+    ActorType,
+    DeactivationReason,
+    ScanStatus,
+    TransferEventType,
+    TransferStatus,
+)
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import s3
 from core.services.email import send_recipient_invitation
@@ -27,41 +35,40 @@ _DRIVE_IMPORT_CHUNK_SIZE = 16 * 1024 * 1024
 
 
 @shared_task
-def expire_transfers_task():
-    """Expire transfers whose expiry date has passed.
+def deactivate_expired_transfers_task():
+    """Deactivate transfers whose expiry date has passed.
 
-    Flips ``status: ACTIVE → EXPIRED``, deletes the underlying S3 files, and
-    emits both ``TRANSFER_EXPIRED`` and ``FILES_DELETED`` audit events.
-    Public access is already gated by ``Transfer.is_accessible`` so the
-    deletion closes the loop atomically.
+    One of three deactivation feeds (alongside manual deactivation and
+    first-download auto-archive). All three go through
+    ``Transfer.deactivate`` and differ only by the ``deactivation_reason``
+    they record — the grace window + actual S3 purge is owned by
+    ``delete_pending_transfer_files_task``.
     """
     now = timezone.now()
-    transfers_to_expire = Transfer.objects.filter(
+    transfers_to_deactivate = Transfer.objects.filter(
         status=TransferStatus.ACTIVE,
         expires_at__lte=now,
-    ).prefetch_related("files")
+    )
 
     count = 0
-    for transfer in transfers_to_expire:
-        transfer.delete_s3_objects()
-
-        transfer.status = TransferStatus.EXPIRED
-        transfer.save(update_fields=["status", "updated_at"])
+    for transfer in transfers_to_deactivate:
+        # deactivate() returns False when another feed (manual / first
+        # download) already moved the row out of ACTIVE between the query
+        # above and now. Only record the expiry audit event when the transfer gets
+        # deactivated HERE, otherwise the log would claim an expiry that never 
+        # happened.
+        if not transfer.deactivate(DeactivationReason.EXPIRED):
+            continue
 
         TransferEvent.objects.create(
             transfer_id=transfer.id,
-            event_type=TransferEventType.TRANSFER_EXPIRED,
-            actor_type=ActorType.AGENT,
-        )
-        TransferEvent.objects.create(
-            transfer_id=transfer.id,
-            event_type=TransferEventType.FILES_DELETED,
+            event_type=TransferEventType.TRANSFER_DEACTIVATED_AFTER_EXPIRY,
             actor_type=ActorType.AGENT,
         )
         count += 1
 
     if count:
-        logger.info("Expired %d transfer(s).", count)
+        logger.info("Deactivated %d expired transfer(s).", count)
 
 
 @shared_task
@@ -209,7 +216,23 @@ def import_drive_file_task(transfer_file_id):
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        tf.save(update_fields=["upload_id", "upload_completed_at", "updated_at"])
+        # SKIPPED when scanning is off (downloadable, not "clean"), else
+        # PENDING until the scanner's webhook resolves it.
+        if not settings.CLAMAV_SCAN_ENABLED:
+            tf.scan_status = ScanStatus.SKIPPED
+        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
+            tf.scan_status = ScanStatus.TOO_LARGE
+        tf.save(
+            update_fields=[
+                "upload_id",
+                "upload_completed_at",
+                "scan_status",
+                "updated_at",
+            ]
+        )
+        # PENDING ⟺ AV on AND within size limit (SKIPPED / TOO_LARGE set above).
+        if tf.scan_status == ScanStatus.PENDING:
+            submit_scan_task.delay(str(tf.id))
     except Exception:
         # Catch broadly: any failure between create_multipart_upload and the
         # final save (DB hiccup, S3 error, size mismatch, …) needs the same
@@ -232,6 +255,203 @@ def import_drive_file_task(transfer_file_id):
             except botocore.exceptions.ClientError:
                 logger.exception("Failed to delete object %s", tf.s3_key)
         tf.delete()
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def submit_scan_task(self, transfer_file_id):
+    """Submit a completed file to the file-scanner service for a virus scan.
+
+    Fire-and-forget from the caller's view: we hand the scanner a presigned
+    GET URL for the file plus a callback URL carrying a per-file secret, and
+    the result lands later on the scan-result webhook (which flips
+    ``scan_status``). The file stays ``PENDING`` — and thus undownloadable —
+    until then.
+
+    No-ops cleanly when scanning is disabled, when the file row has vanished
+    (uploaded then removed before the task ran), or when the upload never
+    actually completed. Only the HTTP submit is retried; once the scanner has
+    accepted the job, delivery of the result is the webhook's problem.
+    """
+    if not settings.CLAMAV_SCAN_ENABLED:
+        return
+    if not settings.CLAMAV_SERVICE_URL or not settings.SCAN_WEBHOOK_BASE_URL:
+        logger.error(
+            "Scan enabled but CLAMAV_SERVICE_URL / SCAN_WEBHOOK_BASE_URL unset; "
+            "skipping scan for %s",
+            transfer_file_id,
+        )
+        return
+
+    try:
+        tf = TransferFile.objects.get(id=transfer_file_id)
+    except TransferFile.DoesNotExist:
+        # Uploaded then deleted before the scan was submitted — nothing to do.
+        return
+
+    if tf.upload_completed_at is None:
+        # Upload not finished (or was rolled back) — don't scan a partial object.
+        return
+
+    if tf.scan_status != ScanStatus.PENDING:
+        # Already resolved (or a retry/rescan racing a verdict that just landed)
+        # — don't launch a redundant scan. Correctness is enforced by the
+        # PENDING-guarded webhook; this just avoids the wasted scanner work.
+        return
+
+    # Mint the per-file callback secret on first submit; reuse it on retries so
+    # the webhook URL stays stable across attempts. The conditional update only
+    # matches while the secret is still empty, so concurrent submissions (e.g. a
+    # reaper re-submit racing the initial one) converge on a single value instead
+    # of each minting its own.
+    if not tf.webhook_secret:
+        TransferFile.objects.filter(id=tf.id, webhook_secret="").update(
+            webhook_secret=secrets.token_urlsafe(32), updated_at=timezone.now()
+        )
+        tf.refresh_from_db(fields=["webhook_secret"])
+
+    scan_url = s3.sign_scan_url(tf.s3_key)
+    webhook_url = (
+        f"{settings.SCAN_WEBHOOK_BASE_URL}/api/{settings.API_VERSION}"
+        f"/webhooks/scan-result/?file_id={tf.id}&secret={tf.webhook_secret}"
+    )
+
+    try:
+        response = requests.post(
+            f"{settings.CLAMAV_SERVICE_URL}/v2/scan-async",
+            json={
+                "url": scan_url,
+                "filename": tf.filename,
+                "webhook_url": webhook_url,
+            },
+            headers={"X-API-Key": settings.CLAMAV_API_KEY},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning(
+            "Scan submission failed for TransferFile %s: %s", transfer_file_id, exc
+        )
+        raise self.retry(exc=exc) from exc
+
+    job_id = ""
+    try:
+        job_id = response.json().get("job_id", "")
+    except ValueError:
+        logger.warning("Scanner returned a non-JSON body for %s", transfer_file_id)
+
+    # Targeted update: the row may have been concurrently mutated and we only
+    # own the scan_job_id column here.
+    TransferFile.objects.filter(id=tf.id).update(scan_job_id=job_id)
+    logger.info(
+        "Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id
+    )
+
+
+@shared_task
+def reap_stale_pending_scans_task():
+    """Re-submit files stuck in PENDING for too long.
+
+    The file-scanner is stateless and delivers async results only via webhook,
+    so a lost message (webhook delivery exhausted, worker/broker crash, expired
+    presigned URL) would otherwise pin a file in PENDING — and thus
+    undownloadable — forever. This periodic sweep re-submits any file whose
+    upload completed more than ``SCAN_PENDING_REAP_MINUTES`` ago and is still
+    PENDING. ``submit_scan_task`` reuses the existing per-file secret and mints
+    a fresh presigned URL, so re-submitting is safe and idempotent on the
+    receiving end.
+    """
+    if not settings.CLAMAV_SCAN_ENABLED:
+        return
+
+    cutoff = timezone.now() - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
+    stale = TransferFile.objects.filter(
+        scan_status=ScanStatus.PENDING,
+        upload_completed_at__isnull=False,
+        upload_completed_at__lte=cutoff,
+    ).values_list("id", flat=True)
+
+    count = 0
+    for file_id in stale:
+        submit_scan_task.delay(str(file_id))
+        count += 1
+
+    if count:
+        logger.info("Re-submitted %d stale pending scan(s).", count)
+
+
+@shared_task
+def delete_pending_transfer_files_task():
+    """Wipe S3 objects for transfers whose grace period has elapsed.
+
+    Single feed: every row flagged ``PENDING_FILE_DELETION`` with a past
+    ``pending_deletion_at`` — regardless of *why* it got deactivated
+    (manual, expiry, first-download; carried by ``deactivation_reason``).
+    The grace window between "link closed" and "bytes gone" lets
+    recipients' in-flight downloads finish before the bytes disappear.
+    After the wipe the row transitions ``PENDING_FILE_DELETION →
+    DEACTIVATED`` and ``pending_deletion_at`` is null-ified so the sweep
+    is idempotent.
+    """
+    now = timezone.now()
+    to_purge = Transfer.objects.filter(
+        status=TransferStatus.PENDING_FILE_DELETION,
+        pending_deletion_at__lte=now,
+    ).prefetch_related("files")
+
+    count = 0
+    for transfer in to_purge:
+        # Isolate each transfer: a DB failure on save / bulk_create must not
+        # abort the whole batch. The row stays PENDING_FILE_DELETION and is
+        # retried on the next run (delete_s3_objects is idempotent). count is
+        # only bumped once the status flip + events commit successfully.
+        try:
+            deleted_files = list(transfer.files.all())
+
+            if not transfer.delete_s3_objects():
+                # At least one object failed to delete. Flipping to
+                # DEACTIVATED here would strand those bytes forever: the
+                # orphan sweep can't reclaim them while the TransferFile
+                # rows still list the keys as known. Leave the row
+                # PENDING_FILE_DELETION so the next run retries the wipe.
+                logger.warning(
+                    "Transfer %s: some S3 objects failed to delete; "
+                    "leaving it PENDING_FILE_DELETION for the next run",
+                    transfer.id,
+                )
+                continue
+
+            with transaction.atomic():
+                transfer.status = TransferStatus.DEACTIVATED
+                transfer.deactivated_at = now
+                transfer.pending_deletion_at = None
+                transfer.save(
+                    update_fields=[
+                        "status",
+                        "deactivated_at",
+                        "pending_deletion_at",
+                        "updated_at",
+                    ]
+                )
+
+                TransferEvent.objects.bulk_create(
+                    TransferEvent(
+                        transfer_id=transfer.id,
+                        event_type=TransferEventType.FILE_DELETED,
+                        actor_type=ActorType.AGENT,
+                        payload={"file_id": str(f.id), "filename": f.filename},
+                    )
+                    for f in deleted_files
+                )
+            count += 1
+        except Exception:
+            logger.exception(
+                "Failed to purge transfer %s; leaving it for the next run",
+                transfer.id,
+            )
+            continue
+
+    if count:
+        logger.info("Deleted files of %d transfer(s).", count)
 
 
 @shared_task

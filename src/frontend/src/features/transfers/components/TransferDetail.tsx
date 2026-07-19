@@ -1,30 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  Input,
-  Modal,
-  ModalSize,
-  useModal,
-} from "@gouvfr-lasuite/cunningham-react";
-import {
-  ArrowUpRight,
-  Checkmark,
-  ChevronDown,
-  Clock,
-  Copy,
-  Doc,
-  Download,
-  Folder,
-  Globe,
-  Perso,
-  Spinner,
-  UserAvatar,
-  Warning,
-} from "@gouvfr-lasuite/ui-kit";
-import type { TransferDetail as TransferDetailType } from "@/features/api/types";
+import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
+import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
@@ -37,19 +20,14 @@ const EVENT_LABELS: Record<string, string> = {
   email_sent: "Notification email sent",
   link_opened: "Link opened",
   file_downloaded: "File downloaded",
-  transfer_deactivated: "Transfer deactivated",
-  transfer_expired: "Transfer expired",
-  files_deleted: "Files deleted",
+  transfer_deactivated_manually: "Transfer deactivated",
+  transfer_deactivated_after_first_download: "Deactivated after download",
+  transfer_deactivated_after_expiry: "Transfer expired",
+  // file_deleted carries ``filename`` in its payload — interpolated below
+  // so the row reads "Fichier screenshot.png supprimé" rather than a
+  // generic label that forces the user to cross-reference the file list.
+  file_deleted: "File {{filename}} deleted",
 };
-
-function formatActivityDate(iso: string): string {
-  return new Date(iso).toLocaleString("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 // Turn "amed.benarfa@email.fr" into "Amed Ben Arfa" — purely cosmetic so the
 // avatar picks a deterministic color per person. Falls back to the raw email
@@ -64,17 +42,13 @@ function displayNameFromEmail(email: string): string {
   return parts.length >= 2 ? parts.join(" ") : email;
 }
 
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
-}
-
 export function TransferDetail({
   transfer,
 }: {
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
+  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
@@ -125,13 +99,38 @@ export function TransferDetail({
     : "";
   const isPublicLink = transfer.sharing_mode === "link";
   const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
-  const days = daysUntil(transfer.expires_at);
   const isActive = transfer.status === "active";
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(
     (r) => r.email_sent_at === null,
   );
+
+  // Meta summary: single line, single reason. For non-active transfers the
+  // "why is it dead" signal replaces the expiry date (which is noise once the
+  // transfer is terminal). The deactivation_reason column on the server is the
+  // source of truth — we no longer infer it from a mix of status + flags on
+  // the client. Active/expired show the expiry as a relative date (+ hover).
+  let metaReason: ReactNode;
+  if (isActive) {
+    metaReason = (
+      <>
+        {t("Expires")} <RelativeDate iso={transfer.expires_at} />
+      </>
+    );
+  } else if (transfer.deactivation_reason === "expired") {
+    metaReason = (
+      <>
+        {t("Expired")} <RelativeDate iso={transfer.expires_at} />
+      </>
+    );
+  } else if (transfer.deactivation_reason === "first_download") {
+    metaReason = t("Deactivated after download");
+  } else if (transfer.deactivation_reason === "manual" || !transfer.deactivation_reason) {
+    metaReason = t("Deactivated by you");
+  } else {
+    metaReason = t("Deactivated");
+  }
 
   const copyLink = async () => {
     if (!downloadUrl) return;
@@ -154,6 +153,41 @@ export function TransferDetail({
     deactivateTransfer.mutate(transfer.id);
   };
 
+  // Sender-side mirror of the recipient's antivirus badge. The recap shows
+  // the same state the recipient sees so that, when a recipient flags an
+  // infected file, the sender can confirm it from their own view. The
+  // useTransfer query polls while anything is "pending", so a freshly
+  // uploaded file flips from "scanning…" to clean/blocked without a reload.
+  // A finalized transfer's files are always clean (scan gates creation), so the
+  // recap badge is just the "validated" mark. "skipped" (scanning off) = none.
+  const scanBadge = (status: ScanStatus) => {
+    if (status === "clean") {
+      return (
+        <Tooltip content={t("Scanned, no virus found")} placement="top">
+          <span className="file-item__scan file-item__scan--clean">
+            <CheckmarkShield />
+          </span>
+        </Tooltip>
+      );
+    }
+    if (status === "too_large") {
+      return (
+        <Tooltip
+          content={t(
+            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
+            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+          )}
+          placement="top"
+        >
+          <span className="file-item__scan file-item__scan--warning">
+            <Warning />
+          </span>
+        </Tooltip>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="transfer-detail">
       <header className="transfer-detail__header">
@@ -174,15 +208,19 @@ export function TransferDetail({
           {t("Public link")}
         </span>
         <span className="transfer-detail__meta-sep">·</span>
-        <span>
-          {isActive
-            ? t("Expires in {{count}} days", { count: days })
-            : t("Expired")}
-        </span>
+        <span>{metaReason}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="transfer-detail__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
+        {transfer.auto_archive_on_download && isActive && (
+          <>
+            <span className="transfer-detail__meta-sep">·</span>
+            <span className="transfer-detail__meta-auto-archive">
+              {t("Deactivates after download")}
+            </span>
+          </>
+        )}
       </div>
 
       {downloadUrl && (
@@ -269,26 +307,38 @@ export function TransferDetail({
         className="transfer-detail__file-list"
         aria-label={t("Files ({{count}})", { count: transfer.files.length })}
       >
-        {transfer.files.map((file) => (
-          <FileItem
-            key={file.id}
-            icon={<Doc />}
-            name={file.filename}
-            size={formatFileSize(file.size)}
-            state="done"
-            action={
-              <Button
-                color="neutral"
-                variant="tertiary"
-                icon={<Download />}
-                onClick={() => handleDownload(file.id)}
-                disabled={!isActive || !transfer.public_token}
-                aria-label={t("Download {{name}}", { name: file.filename })}
-                title={t("Download")}
-              />
-            }
-          />
-        ))}
+        {transfer.files.map((file) => {
+          const downloadable =
+            file.scan_status === "clean" ||
+            file.scan_status === "skipped" ||
+            file.scan_status === "too_large";
+          return (
+            <FileItem
+              key={file.id}
+              icon={<Doc />}
+              name={file.filename}
+              size={formatFileSize(file.size)}
+              state={
+                file.scan_status === "infected" ||
+                file.scan_status === "error"
+                  ? "error"
+                  : "done"
+              }
+              extras={scanBadge(file.scan_status)}
+              action={
+                <Button
+                  color="neutral"
+                  variant="tertiary"
+                  icon={<Download />}
+                  onClick={() => handleDownload(file.id)}
+                  disabled={!isActive || !transfer.public_token || !downloadable}
+                  aria-label={t("Download {{name}}", { name: file.filename })}
+                  title={t("Download")}
+                />
+              }
+            />
+          );
+        })}
       </ul>
 
       {isActive && (
@@ -352,7 +402,10 @@ export function TransferDetail({
               </div>
             </div>
             {events.data.results.map((ev) => {
-              const label = t(EVENT_LABELS[ev.event_type] ?? ev.event_type);
+              const label = t(
+                EVENT_LABELS[ev.event_type] ?? ev.event_type,
+                ev.payload as Record<string, unknown>,
+              );
               const by =
                 ev.actor_type === "agent" ? t("You") : t("Recipient");
               return (
@@ -367,7 +420,7 @@ export function TransferDetail({
                     <span>{label}</span>
                   </div>
                   <div className="transfer-detail__history-date">
-                    {formatActivityDate(ev.created_at)}
+                    <RelativeDate iso={ev.created_at} />
                   </div>
                   <div className="transfer-detail__history-actor">{by}</div>
                 </div>

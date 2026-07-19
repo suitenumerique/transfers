@@ -1,10 +1,7 @@
 import { type PropsWithChildren } from "react";
-import Link from "next/link";
+import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import {
-  LaGaufreV2,
-  MainLayout as UIKitLayout,
-} from "@gouvfr-lasuite/ui-kit";
+import { LaGaufreV2, MainLayout as UIKitLayout } from "@gouvfr-lasuite/ui-kit";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { ShellLayout } from "@/features/layouts/components/shell";
@@ -25,7 +22,7 @@ export function MainLayout({ children }: PropsWithChildren) {
     <UIKitLayout
       hideLeftPanelOnDesktop
       icon={
-        <Link href="/" aria-label={t("Home")}>
+        <Link to="/" aria-label={t("Home")}>
           <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
         </Link>
       }

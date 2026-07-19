@@ -1,14 +1,10 @@
-import { type ReactElement } from "react";
-import { useRouter } from "next/router";
+import { createFileRoute } from "@tanstack/react-router";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { MainLayout } from "@/features/layouts/components/main/MainLayout";
 import { TransferDetail } from "@/features/transfers/components/TransferDetail";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
-import type { NextPageWithLayout } from "../_app";
 
-const TransferDetailPage: NextPageWithLayout = () => {
-  const router = useRouter();
-  const id = router.query.id as string | undefined;
+const TransferDetailPage = () => {
+  const { id } = Route.useParams();
   const { data: transfer, isLoading, isError } = useTransfer(id);
 
   if (isLoading)
@@ -27,8 +23,6 @@ const TransferDetailPage: NextPageWithLayout = () => {
   );
 };
 
-TransferDetailPage.getLayout = (page: ReactElement) => {
-  return <MainLayout>{page}</MainLayout>;
-};
-
-export default TransferDetailPage;
+export const Route = createFileRoute("/_app/transfers/$id")({
+  component: TransferDetailPage,
+});

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
-import type { SharingMode, TransferDetail } from "@/features/api/types";
+import type {
+  ScanErrorKind,
+  ScanStatus,
+  SharingMode,
+  TransferDetail,
+} from "@/features/api/types";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
 // Eager-upload draft handle.
@@ -47,6 +52,12 @@ export interface DraftFile {
   loaded: number;
   total: number;
   state: DraftFileState;
+  // Antivirus verdict, polled once the upload is done. Undefined until the
+  // first poll lands. "pending" while clamd is scanning.
+  scanStatus?: ScanStatus;
+  // When scanStatus is "error": "file" (unscannable, must remove) vs
+  // "transient" (retryable). Drives which message the form shows.
+  scanErrorKind?: ScanErrorKind;
   error?: string;
 }
 
@@ -56,6 +67,7 @@ export interface FinalizeMetadata {
   sharing_mode?: SharingMode;
   recipients?: string[];
   sensitive?: boolean;
+  auto_archive_on_download?: boolean;
 }
 
 // Shape of an item returned by the Drive picker after Nathan's fix — the
@@ -78,6 +90,16 @@ export interface TransferDraftHandle {
   //   The draft is being turned into a Transfer server-side — no way back.
   isAwaitingUploads: boolean;
   isFinalizing: boolean;
+  // True while finalize is blocked on the antivirus scan (backend returns 202
+  // until every file is clean). Drives the "checking for viruses" loading step.
+  isScanning: boolean;
+  // True once the background scan poller has waited SCAN_MAX_WAIT_MS without a
+  // verdict (scanner likely down). Polling is stopped; `retryScan` re-arms it.
+  scanTimedOut: boolean;
+  retryScan: () => void;
+  // True while a `retryScan` request is in flight — used to disable the retry
+  // affordance so a second click can't fire an overlapping re-submit.
+  isRetrying: boolean;
   error: string | null;
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
@@ -120,6 +142,8 @@ interface DraftDetailResponse {
     mime_type: string;
     state: "uploading" | "importing" | "done";
     source_url: string;
+    scan_status: ScanStatus;
+    scan_error_kind: ScanErrorKind;
   }>;
 }
 
@@ -133,6 +157,15 @@ export function fileKey(f: File): string {
 }
 
 const POLL_INTERVAL_MS = 200;
+// Finalize is gated by the antivirus scan: the backend answers 202 while files
+// are still being scanned. Re-poll on that interval, give up after the max.
+const SCAN_POLL_INTERVAL_MS = 2000;
+const SCAN_MAX_WAIT_MS = 120000;
+
+interface ScanPendingResponse {
+  reason: "scan_pending";
+  pending_file_ids: string[];
+}
 
 export function useTransferDraft(): TransferDraftHandle {
   const queryClient = useQueryClient();
@@ -140,6 +173,17 @@ export function useTransferDraft(): TransferDraftHandle {
   const [files, setFiles] = useState<DraftFile[]>([]);
   const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  // The background scan poller gives up after SCAN_MAX_WAIT_MS so a durably
+  // unreachable scanner doesn't leave the form polling /drafts/ forever. The
+  // backend reaper keeps re-submitting, so the file still self-heals once the
+  // scanner recovers — the user just re-arms polling via `retryScan`.
+  const [scanTimedOut, setScanTimedOut] = useState(false);
+  const scanDeadlineRef = useRef<number | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  // Ref guard mirrors `isRetrying` so overlapping calls are rejected without
+  // waiting for the state to flush.
+  const isRetryingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // Refs mirror state so async work can observe the freshest list without
@@ -338,6 +382,120 @@ export function useTransferDraft(): TransferDraftHandle {
       window.clearInterval(handle);
     };
   }, [files, writeFiles]);
+
+  // --- Scan poller ---
+  // Once a file's upload is done, its antivirus verdict lands asynchronously
+  // (webhook → scan_status). Poll the draft so the form shows "clean" / "virus
+  // detected" per file as soon as the scan resolves, without waiting for the
+  // user to hit Create. Runs while any done file is still PENDING (or unknown).
+  useEffect(() => {
+    const needsScan = files.some(
+      (f) =>
+        f.state === "done" &&
+        (f.scanStatus === undefined ||
+          f.scanStatus === "pending" ||
+          // A transient error auto-retries (reaper / finalize) — keep polling
+          // so it flips to clean once the scanner recovers. A file-bound error
+          // is terminal, so it doesn't keep us polling.
+          (f.scanStatus === "error" && f.scanErrorKind !== "file")),
+    );
+    if (!needsScan) {
+      // Nothing left to wait on (resolved, or the stuck file was removed) —
+      // reset the deadline and clear any timed-out notice so the next batch
+      // starts clean. This is a deliberate reset-on-batch-change: leaving a
+      // stale `scanTimedOut` would block polling of a freshly added file.
+      scanDeadlineRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (scanTimedOut) setScanTimedOut(false);
+      return;
+    }
+    // Stopped after timing out: stay put until the user hits retry.
+    if (scanTimedOut) return;
+    const id = draftIdRef.current;
+    if (!id) return;
+
+    // Anchor the deadline the first time we start waiting on this batch; it
+    // survives re-renders (the effect re-runs whenever `files` changes) because
+    // it lives in a ref, so unrelated file edits don't reset the clock.
+    if (scanDeadlineRef.current === null) {
+      scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
+    }
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (Date.now() > scanDeadlineRef.current!) {
+        setScanTimedOut(true);
+        return;
+      }
+      try {
+        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
+        if (cancelled) return;
+
+        const byBackendId = new Map(resp.files.map((f) => [f.id, f]));
+        const next = filesRef.current.map((f) => {
+          if (!f.backendId) return f;
+          const server = byBackendId.get(f.backendId);
+          if (
+            !server ||
+            (server.scan_status === f.scanStatus &&
+              server.scan_error_kind === (f.scanErrorKind ?? ""))
+          )
+            return f;
+          return {
+            ...f,
+            scanStatus: server.scan_status,
+            scanErrorKind: server.scan_error_kind,
+          };
+        });
+        const mutated = next.some(
+          (f, i) =>
+            filesRef.current[i]?.scanStatus !== f.scanStatus ||
+            filesRef.current[i]?.scanErrorKind !== f.scanErrorKind,
+        );
+        if (mutated) writeFiles(next);
+      } catch {
+        // Transient errors are fine — the next tick will catch the state.
+      }
+    };
+
+    const handle = window.setInterval(tick, 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [files, writeFiles, scanTimedOut]);
+
+  // Re-arm scanning after the poller gave up. Re-submitting is the point: by
+  // the time we time out, the backend's submit task has already exhausted its
+  // retries and died, so merely resuming the poll would find nothing in flight.
+  // Ask the server to re-queue the scan, then restart polling to pick up the
+  // fresh verdict. Best-effort — a failed re-arm just leaves the retry visible.
+  const retryScan = useCallback(async () => {
+    const id = draftIdRef.current;
+    // Reject overlapping retries: a second in-flight re-submit would race the
+    // first and could momentarily null the deadline (see below).
+    if (!id || isRetryingRef.current) return;
+    isRetryingRef.current = true;
+    setIsRetrying(true);
+    try {
+      await apiFetch(`/drafts/${id}/rescan/`, { method: "POST" });
+    } catch {
+      // Network/hiccup — keep the timed-out state so the user can retry again.
+      return;
+    } finally {
+      isRetryingRef.current = false;
+      setIsRetrying(false);
+    }
+    // Arm a *fresh* deadline rather than nulling it: if `setScanTimedOut(false)`
+    // is a no-op (state already false), the poller effect won't re-run to
+    // re-anchor a null deadline, and the next tick would read `now > null` and
+    // time out immediately. A concrete deadline is always valid.
+    scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
+    setScanTimedOut(false);
+  }, []);
 
   const registerFile = useCallback(
     async (
@@ -645,13 +803,30 @@ export function useTransferDraft(): TransferDraftHandle {
         // finalize is the one write that creates the Transfer with its
         // title / sharing mode / recipients / expiry in a single atomic
         // step. The returned Transfer has a *different* id from the draft.
-        const finalized = await apiFetch<TransferDetail>(
-          `/drafts/${id}/finalize/`,
-          {
-            method: "POST",
-            body: JSON.stringify(metadata),
-          },
-        );
+        // Finalize is antivirus-gated: 200 = transfer created, 202 = files
+        // still scanning (poll again), 4xx with reason "scan_blocked" = a file
+        // was rejected (thrown by apiFetch, surfaced to the caller).
+        const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
+        let finalized: TransferDetail;
+        for (;;) {
+          const resp = await apiFetch<TransferDetail | ScanPendingResponse>(
+            `/drafts/${id}/finalize/`,
+            {
+              method: "POST",
+              body: JSON.stringify(metadata),
+            },
+          );
+          if (resp && (resp as ScanPendingResponse).reason === "scan_pending") {
+            if (Date.now() > scanDeadline) {
+              throw new Error("scan_timeout");
+            }
+            setIsScanning(true);
+            await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
+            continue;
+          }
+          finalized = resp as TransferDetail;
+          break;
+        }
 
         queryClient.invalidateQueries({ queryKey: ["transfers"] });
         resetLocal();
@@ -659,6 +834,7 @@ export function useTransferDraft(): TransferDraftHandle {
       } finally {
         setAwaitingUploads(false);
         setIsFinalizing(false);
+        setIsScanning(false);
         cancelSubmitRef.current = false;
       }
     },
@@ -676,6 +852,10 @@ export function useTransferDraft(): TransferDraftHandle {
     files,
     isAwaitingUploads,
     isFinalizing,
+    isScanning,
+    scanTimedOut,
+    retryScan,
+    isRetrying,
     error,
     addFile,
     attachFromDrive,

@@ -1,14 +1,11 @@
-import { type ReactElement } from "react";
-import { useRouter } from "next/router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { MainLayout } from "@/features/layouts/components/main/MainLayout";
 import { TransferFailed } from "@/features/transfers/components/TransferFailed";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
-import type { NextPageWithLayout } from "../_app";
 
-const TransferConfirmFailedPage: NextPageWithLayout = () => {
-  const router = useRouter();
-  const id = router.query.id as string | undefined;
+const TransferConfirmFailedPage = () => {
+  const { id } = Route.useParams();
+  const navigate = useNavigate();
   const { data: transfer, isLoading, isError } = useTransfer(id);
 
   if (isLoading)
@@ -26,8 +23,10 @@ const TransferConfirmFailedPage: NextPageWithLayout = () => {
         <section className="home__upload">
           <TransferFailed
             transfer={transfer}
-            onNewTransfer={() => router.push("/")}
-            onGoToDetail={() => router.push(`/transfers/${transfer.id}`)}
+            onNewTransfer={() => navigate({ to: "/" })}
+            onGoToDetail={() =>
+              navigate({ to: "/transfers/$id", params: { id: transfer.id } })
+            }
           />
         </section>
       </div>
@@ -35,8 +34,6 @@ const TransferConfirmFailedPage: NextPageWithLayout = () => {
   );
 };
 
-TransferConfirmFailedPage.getLayout = (page: ReactElement) => {
-  return <MainLayout>{page}</MainLayout>;
-};
-
-export default TransferConfirmFailedPage;
+export const Route = createFileRoute("/_app/confirm-failed/$id")({
+  component: TransferConfirmFailedPage,
+});

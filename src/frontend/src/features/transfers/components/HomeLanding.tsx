@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ArrowRight, ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import { ProConnectButton } from "@gouvfr-lasuite/ui-kit";
+import { ArrowRight } from "@gouvfr-lasuite/ui-kit/icons";
 import { login } from "@/features/auth";
 
 // Public landing, pre-login. Single centered column for now — the mock

@@ -82,7 +82,15 @@ class TransferRecipientSerializer(serializers.ModelSerializer):
 class TransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
-        fields = ["id", "filename", "size", "mime_type", "created_at"]
+        fields = [
+            "id",
+            "filename",
+            "size",
+            "mime_type",
+            "created_at",
+            "scan_status",
+            "scan_error_kind",
+        ]
         read_only_fields = fields
 
 
@@ -131,6 +139,9 @@ class TransferListSerializer(serializers.ModelSerializer):
             "total_size",
             "consulted",
             "downloaded",
+            "auto_archive_on_download",
+            "pending_deletion_at",
+            "deactivation_reason",
         ]
         read_only_fields = fields
 
@@ -155,6 +166,9 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "notifications_completed_at",
             "files",
             "recipients",
+            "auto_archive_on_download",
+            "pending_deletion_at",
+            "deactivation_reason",
         ]
         read_only_fields = fields
 
@@ -215,6 +229,8 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
             "mime_type",
             "state",
             "source_url",
+            "scan_status",
+            "scan_error_kind",
         ]
         read_only_fields = fields
 
@@ -275,6 +291,10 @@ class DraftFinalizeSerializer(serializers.Serializer):
         default=list,
         max_length=50,
     )
+    # Opt-in: when true, the finalized Transfer deactivates itself (S3
+    # delete + status DEACTIVATED) once every file has been downloaded at
+    # least once.
+    auto_archive_on_download = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -323,7 +343,7 @@ class DraftCompleteUploadSerializer(serializers.Serializer):
 class DownloadTransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
-        fields = ["id", "filename", "size", "mime_type"]
+        fields = ["id", "filename", "size", "mime_type", "scan_status"]
         read_only_fields = fields
 
 
@@ -335,7 +355,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
 
     files = serializers.SerializerMethodField()
     owner_name = serializers.CharField(source="owner.full_name", read_only=True)
-    owner_email = serializers.CharField(source="owner.email", read_only=True)
+    is_owner = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Transfer
@@ -345,10 +365,25 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "created_at",
             "files",
             "owner_name",
-            "owner_email",
+            "is_owner",
             "sharing_mode",
+            "auto_archive_on_download",
         ]
         read_only_fields = fields
+
+    @extend_schema_field({"type": "boolean"})
+    def get_is_owner(self, obj) -> bool:
+        # The download payload is served to anyone holding the link
+        # (``AllowAny``), so we must not leak the owner's identity email.
+        # The frontend only needs a boolean to tailor the auto-archive
+        # copy ("…by another user." for the owner), so we resolve it
+        # server-side from the authenticated session instead.
+        request = self.context.get("request")
+        return bool(
+            request
+            and request.user.is_authenticated
+            and request.user.id == obj.owner_id
+        )
 
     def get_files(self, obj):
         # Every TransferFile attached to a Transfer is complete by

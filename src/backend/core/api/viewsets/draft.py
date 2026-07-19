@@ -32,9 +32,9 @@ from core.api.serializers import (
     TransferDetailSerializer,
 )
 from core.api.utils import log_agent_event
-from core.enums import SharingMode, TransferEventType
+from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
-from core.tasks import import_drive_file_task
+from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
 
@@ -307,13 +307,29 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
+                    # No scan coming → mark SKIPPED (downloadable, no "clean"
+                    # claim), else it stays PENDING forever (perpetual spinner +
+                    # blocked download). Scanning on → PENDING until the webhook.
+                    if not settings.CLAMAV_SCAN_ENABLED:
+                        transfer_file.scan_status = ScanStatus.SKIPPED
+                    elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
+                        transfer_file.scan_status = ScanStatus.TOO_LARGE
                     transfer_file.save(
                         update_fields=[
                             "upload_completed_at",
                             "upload_id",
+                            "scan_status",
                             "updated_at",
                         ]
                     )
+                    # on_commit so the scanner never races the transaction.
+                    # PENDING ⟺ AV on AND within size limit (the only case that
+                    # needs a scan — SKIPPED / TOO_LARGE were set above).
+                    if transfer_file.scan_status == ScanStatus.PENDING:
+                        file_id = str(transfer_file.id)
+                        transaction.on_commit(
+                            lambda fid=file_id: submit_scan_task.delay(fid)
+                        )
 
         if error_detail is not None:
             raise drf.exceptions.ValidationError(error_detail)
@@ -411,12 +427,69 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     }
                 )
 
+            # Antivirus gate — read only. Finalize just reads each file's scan
+            # verdict; it never re-submits or resets a scan (that lives entirely
+            # in the pre-send retry path: the /rescan/ endpoint). A draft becomes
+            # a transfer once every file is non-blocking — CLEAN or scan-exempt
+            # (SKIPPED / TOO_LARGE). Blocks: a virus, an unscannable file, or a
+            # scan that errored (the user retries or removes it on the form). A
+            # still-PENDING file keeps the client polling.
+            if settings.CLAMAV_SCAN_ENABLED:
+                infected, unscannable, scan_errored, scanning = [], [], [], []
+                for f in files:
+                    if f.scan_status == ScanStatus.INFECTED:
+                        infected.append(str(f.id))
+                    elif f.scan_status == ScanStatus.ERROR:
+                        if f.scan_error_kind == "file":
+                            unscannable.append(str(f.id))
+                        else:
+                            scan_errored.append(str(f.id))
+                    elif f.scan_status == ScanStatus.PENDING:
+                        scanning.append(str(f.id))
+
+                if infected:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "The antivirus scan blocked one or more files.",
+                            "reason": "scan_blocked",
+                            "blocked_file_ids": infected,
+                        }
+                    )
+                if unscannable:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "One or more files could not be scanned.",
+                            "reason": "scan_file_error",
+                            "blocked_file_ids": unscannable,
+                        }
+                    )
+                if scan_errored:
+                    raise drf.exceptions.ValidationError(
+                        {
+                            "files": "The antivirus scan could not complete for one "
+                            "or more files.",
+                            "reason": "scan_error",
+                            "blocked_file_ids": scan_errored,
+                        }
+                    )
+
+                if scanning:
+                    return drf.response.Response(
+                        {
+                            "detail": "Files are still being scanned for viruses.",
+                            "reason": "scan_pending",
+                            "pending_file_ids": scanning,
+                        },
+                        status=202,
+                    )
+
             transfer = models.Transfer.objects.create(
                 owner=draft.owner,
                 title=metadata["title"],
                 sharing_mode=metadata["sharing_mode"],
                 expires_at=timezone.now()
                 + timedelta(days=int(metadata["expires_in_days"])),
+                auto_archive_on_download=metadata["auto_archive_on_download"],
             )
             models.TransferFile.objects.filter(draft=draft).update(
                 transfer=transfer, draft=None
@@ -441,6 +514,70 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
         detail = TransferDetailSerializer(transfer)
         return drf.response.Response(detail.data)
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="DraftRescanResponse",
+                fields={
+                    "rescanned_file_ids": serializers.ListField(
+                        child=serializers.UUIDField()
+                    )
+                },
+            )
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="rescan")
+    def rescan(self, request, pk=None):
+        """Re-submit a draft's stuck files to the antivirus scanner.
+
+        When the scanner is unreachable, ``submit_scan_task`` exhausts its
+        retries and dies (or a webhook is lost), leaving files PENDING with no
+        job in flight until the 5-minute reaper eventually catches them. This
+        lets the user re-arm the scan on demand instead of waiting — it's what
+        the front's "retry" affordance calls when its poller has given up.
+        Files under a hard block (INFECTED, or a file-bound ERROR) are left
+        untouched: retrying can't help them.
+        """
+        if not settings.CLAMAV_SCAN_ENABLED:
+            return drf.response.Response({"rescanned_file_ids": []})
+
+        with transaction.atomic():
+            draft = self._get_locked_draft(pk)
+            rescanned = []
+            for f in draft.files.filter(upload_completed_at__isnull=False):
+                is_pending = f.scan_status == ScanStatus.PENDING
+                is_transient = (
+                    f.scan_status == ScanStatus.ERROR
+                    and f.scan_error_kind != "file"
+                )
+                if not (is_pending or is_transient):
+                    continue
+                if is_transient:
+                    # Mirror the finalize gate: a transient error goes back to
+                    # PENDING before re-submitting.
+                    f.scan_status = ScanStatus.PENDING
+                    f.scan_error_kind = ""
+                    f.save(
+                        update_fields=[
+                            "scan_status",
+                            "scan_error_kind",
+                            "updated_at",
+                        ]
+                    )
+                transaction.on_commit(
+                    lambda fid=str(f.id): submit_scan_task.delay(fid)
+                )
+                rescanned.append(str(f.id))
+
+        logger.info(
+            "Rescan requested for draft %s: re-submitted %d file(s) %s",
+            pk,
+            len(rescanned),
+            rescanned,
+        )
+        return drf.response.Response({"rescanned_file_ids": rescanned})
 
 
 # --- Helpers ---

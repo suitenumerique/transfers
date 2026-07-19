@@ -1,0 +1,56 @@
+{
+  "realm": "transferts",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 3600,
+  "clients": [
+    {
+      "clientId": "transferts",
+      "name": "Transferts (local dev)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "secret": "transferts-dev-secret",
+      "redirectUris": [
+        "http://localhost:8980/*",
+        "http://localhost:8981/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8980",
+        "http://localhost:8981"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8980/*##http://localhost:8981/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "agent",
+      "email": "agent@collectivite.fr",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Agent",
+      "lastName": "Dev",
+      "credentials": [
+        { "type": "password", "value": "transferts", "temporary": false }
+      ]
+    },
+    {
+      "username": "agent2",
+      "email": "agent2@collectivite.fr",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Agent",
+      "lastName": "Deux",
+      "credentials": [
+        { "type": "password", "value": "transferts", "temporary": false }
+      ]
+    }
+  ]
+}
