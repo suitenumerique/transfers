@@ -632,9 +632,12 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             + timedelta(days=int(metadata["expires_in_days"])),
             auto_archive_on_download=metadata["auto_archive_on_download"],
             confidential=metadata["confidential"],
-            # Stored only in normal mode; empty for confidential (the key
-            # never reached us). The serializer already enforces this.
-            encryption_key=metadata["encryption_key"],
+            # Read from the draft, not the request body — this is the same
+            # value the Drive-import and scan tasks consumed, so recipients
+            # get the exact key those workers used to encrypt / decrypt.
+            # Empty for confidential (parking skips it, the serializer also
+            # enforces an empty body key).
+            encryption_key=draft.encryption_key,
             encryption_chunk_size=draft.encryption_chunk_size,
         )
         models.TransferFile.objects.filter(draft=draft).update(

@@ -235,26 +235,27 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
       // Last chunk: whatever's left in `pending` should be exactly
       // `plaintextRemaining + OVERHEAD` bytes. If not, the upstream stream
       // was truncated — propagate the failure so the browser surfaces a
-      // partial download as an error.
-      if (plaintextRemaining > 0) {
-        const expected = plaintextRemaining + OVERHEAD;
-        if (pending.length !== expected) {
-          controller.error(
-            new Error(
-              "Truncated ciphertext stream (expected " +
-                expected +
-                " trailing bytes, got " +
-                pending.length +
-                ")",
-            ),
-          );
-          return;
-        }
-        const aad = encoder.encode(fileId + ":" + partNumber);
-        const plain = await decryptOne(cryptoKey, pending, aad);
-        controller.enqueue(plain);
-        plaintextRemaining -= plain.length;
+      // partial download as an error. Zero-byte plaintext is not a special
+      // case: the sender still emits one chunk (just IV + tag, OVERHEAD
+      // bytes) so the recipient authenticates it too, discards the empty
+      // plaintext, and catches a swapped-in nonsense trailing chunk.
+      const expected = plaintextRemaining + OVERHEAD;
+      if (pending.length !== expected) {
+        controller.error(
+          new Error(
+            "Truncated ciphertext stream (expected " +
+              expected +
+              " trailing bytes, got " +
+              pending.length +
+              ")",
+          ),
+        );
+        return;
       }
+      const aad = encoder.encode(fileId + ":" + partNumber);
+      const plain = await decryptOne(cryptoKey, pending, aad);
+      if (plain.length > 0) controller.enqueue(plain);
+      plaintextRemaining -= plain.length;
       if (plaintextRemaining !== 0) {
         controller.error(
           new Error(
