@@ -190,10 +190,11 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # at finalize (non-confidential mode). Record the intent here
                 # with no multipart and no fetch task; the client won't upload
                 # parts, so it gets no ``upload_id`` / ``chunk_size`` back.
-                # Encrypted ciphertext can't be scanned, so mark SKIPPED now —
-                # otherwise the file sits PENDING and the finalize scan gate
-                # would mistake an in-progress import for a running scan.
-                transfer_file.scan_status = ScanStatus.SKIPPED
+                # scan_status stays PENDING (the default) — the row will be
+                # scanned like any other once the import lands. The finalize
+                # scan-submission loop gates on ``upload_completed_at``, and
+                # the 202 classifier reports ``drive_importing`` (not
+                # ``scan_pending``) for rows still waiting on bytes.
                 transfer_file.save()
             else:
                 upload_id = s3.create_multipart_upload(
@@ -475,7 +476,14 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         }
                     )
 
-                key_fragment = metadata["encryption_key"]
+                # Park the key on the draft so the import worker can read it
+                # from the DB instead of receiving it as a Celery kwarg (which
+                # would surface it in task metadata and broker payloads). Drive
+                # implies non-confidential, so we hold the key anyway; the
+                # draft row is discarded at finalize.
+                if not draft.encryption_key:
+                    draft.encryption_key = metadata["encryption_key"]
+                    draft.save(update_fields=["encryption_key", "updated_at"])
                 still_importing = []
                 for f in drive_files:
                     if f.upload_completed_at is not None:
@@ -487,9 +495,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                         f.import_started_at = timezone.now()
                         f.save(update_fields=["import_started_at", "updated_at"])
                         transaction.on_commit(
-                            lambda fid=str(f.id), k=key_fragment: (
-                                import_drive_file_task.delay(fid, k)
-                            )
+                            lambda fid=str(f.id): import_drive_file_task.delay(fid)
                         )
                     still_importing.append(str(f.id))
 

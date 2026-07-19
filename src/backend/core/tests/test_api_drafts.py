@@ -1102,9 +1102,13 @@ class TestDraftEncryption:
         assert finalize.status_code == 202, finalize.data
         assert finalize.data["reason"] == "drive_importing"
         import_mock.assert_called_once()
-        # The key is passed to the import task so it can encrypt server-side.
+        # Only the file id crosses Celery — the key is parked on the draft
+        # so the worker can read it from the DB without exposing it in task
+        # metadata or broker payloads.
         args = import_mock.call_args.args
-        assert args[1] == VALID_KEY
+        assert len(args) == 1
+        draft = TransferDraft.objects.get(id=resp.data["draft_id"])
+        assert draft.encryption_key == VALID_KEY
         # No transfer yet — it's created only once the import lands.
         assert Transfer.objects.count() == 0
 
@@ -1347,8 +1351,10 @@ class TestDraftAddFileFromDrive:
         assert tf.source_url == self.DRIVE_URL
         assert tf.upload_id == ""
         assert tf.upload_completed_at is None
-        # Encrypted ciphertext isn't scannable, so it's marked SKIPPED now.
-        assert tf.scan_status == ScanStatus.SKIPPED
+        # PENDING like any other row — the finalize scan-submission loop
+        # gates on ``upload_completed_at``, and the 202 classifier reports
+        # ``drive_importing`` (not ``scan_pending``) while the import runs.
+        assert tf.scan_status == ScanStatus.PENDING
 
         # Import is deferred to finalize — nothing enqueued at add-file.
         mock_task.delay.assert_not_called()
@@ -1821,7 +1827,11 @@ class TestImportDriveFileTask:
     def _make_file(self, user, plaintext_size=100, filename="d.jpg"):
         from core.tasks import import_drive_file_task
 
-        draft = TransferDraftFactory(owner=user, encryption_chunk_size=CHUNK)
+        draft = TransferDraftFactory(
+            owner=user,
+            encryption_chunk_size=CHUNK,
+            encryption_key=VALID_KEY,
+        )
         tf = TransferFile.objects.create(
             draft=draft,
             filename=filename,
@@ -1842,7 +1852,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.requests.get") as mock_get,
             patch("core.tasks.s3"),
         ):
-            task(str(tf.id), VALID_KEY)
+            task(str(tf.id))
 
         # Never touched Drive: the row was already done.
         mock_get.assert_not_called()
@@ -1852,7 +1862,7 @@ class TestImportDriveFileTask:
         from core.tasks import import_drive_file_task
 
         with patch("core.tasks.requests.get") as mock_get:
-            import_drive_file_task(str(_uuid.uuid4()), VALID_KEY)
+            import_drive_file_task(str(_uuid.uuid4()))
         mock_get.assert_not_called()
 
     def test_happy_path_encrypts_and_marks_complete(self, user):
@@ -1895,7 +1905,7 @@ class TestImportDriveFileTask:
             ) as mock_upload_part,
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id), VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         tf.refresh_from_db()
         assert tf.upload_completed_at is not None
@@ -1946,7 +1956,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.s3.delete_object") as mock_delete,
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id), VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         tf.refresh_from_db()
         assert tf.import_failed_at is not None
@@ -1983,7 +1993,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.s3.create_multipart_upload") as mock_create,
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id), VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         tf.refresh_from_db()
         assert tf.import_failed_at is not None
@@ -2024,7 +2034,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.s3.delete_object"),
             patch("core.tasks.s3.complete_multipart_upload") as mock_complete,
         ):
-            import_drive_file_task(str(tf.id), VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         tf.refresh_from_db()
         assert tf.import_failed_at is not None
@@ -2065,7 +2075,7 @@ class TestImportDriveFileTask:
             patch("core.tasks.s3.abort_multipart_upload") as mock_abort,
             patch("core.tasks.s3.delete_object"),
         ):
-            import_drive_file_task(str(tf.id), VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         tf.refresh_from_db()
         assert tf.import_failed_at is not None

@@ -7,9 +7,8 @@ to the code.
 
 **Every transfer is encrypted client-side.** A per-transfer
 ``confidential`` flag decides whether the backend also holds the
-decryption key (normal) or never sees it (confidential). "encryption" in older
-comments/paths refers to the confidential case; the crypto is identical
-in both.
+decryption key (normal) or never sees it (confidential); the crypto is
+identical in both.
 
 Audience: developers maintaining the upload pipeline, the download view,
 the recipient Service Worker, or the backend serializers that touch the
@@ -18,7 +17,7 @@ file referenced for the mechanism you care about.
 
 ## Table of contents
 
-1. [What "encryption" means here](#what-e2e-means-here)
+1. [What encryption means here](#what-encryption-means-here)
 2. [Threat model](#threat-model)
 3. [The crypto primitive](#the-crypto-primitive)
 4. [The two chunking levels](#the-two-chunking-levels)

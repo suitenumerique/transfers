@@ -63,6 +63,9 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // A stale attempt (cleaned up mid-handshake) must not unregister the key a
   // newer one has since registered under the same token.
   const registerAttemptRef = useRef(0);
+  // Flipped to false in the unmount cleanup below so async paste handlers can
+  // tell "still on the page" from "resolved after the user navigated away".
+  const mountedRef = useRef(true);
 
   const totalSize = transfer.files.reduce(
     (a, f) => a + (f.plaintext_size ?? f.size),
@@ -138,6 +141,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // another transfer in the same tab, so stale keys are needless retention.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (registeredRef.current) unregisterEncryptionKey(token);
     };
   }, [token]);
@@ -147,11 +151,23 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     if (!key) return;
     setPasteError(false);
     setEncryptionState("loading");
+    const attempt = ++registerAttemptRef.current;
     try {
       const ok = await registerKey(key);
+      if (!mountedRef.current) {
+        // The recipient navigated away mid-registration. Drop the key we
+        // just parked in the SW so it doesn't outlive the page. Mirrors
+        // the auto-key cleanup path; skip if a newer attempt overwrote us.
+        if (ok && registerAttemptRef.current === attempt) {
+          unregisterEncryptionKey(token);
+          registeredRef.current = false;
+        }
+        return;
+      }
       setEncryptionState(ok ? "ready" : "need-key");
       if (!ok) setPasteError(true);
     } catch {
+      if (!mountedRef.current) return;
       // Malformed key (bad base64 / wrong length). A valid-length but wrong
       // key registers fine and instead fails at download time.
       setEncryptionState("need-key");

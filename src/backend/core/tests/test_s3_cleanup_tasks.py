@@ -101,7 +101,11 @@ class TestImportDriveFileTaskLeaks:
     OVERHEAD = 28
 
     def _make_drive_file(self, user, plaintext_size: int) -> TransferFile:
-        draft = TransferDraftFactory(owner=user, encryption_chunk_size=self.CHUNK)
+        draft = TransferDraftFactory(
+            owner=user,
+            encryption_chunk_size=self.CHUNK,
+            encryption_key=self.VALID_KEY,
+        )
         chunks = -(-plaintext_size // self.CHUNK)
         return TransferFileFactory(
             transfer=None,
@@ -137,7 +141,7 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id), self.VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         # The row is kept and marked failed so the finalize poll can
         # surface it; the bucket must still be clean.
@@ -169,7 +173,7 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id), self.VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         # The row is kept and marked failed so the finalize poll can
         # surface it; the bucket must still be clean.
@@ -198,7 +202,7 @@ class TestImportDriveFileTaskLeaks:
         mock_resp.__exit__.return_value = False
 
         with patch("core.tasks.requests.get", return_value=mock_resp):
-            import_drive_file_task(str(tf.id), self.VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         # The row is kept and marked failed so the finalize poll can
         # surface it; the bucket must still be clean.
@@ -238,7 +242,7 @@ class TestImportDriveFileTaskLeaks:
                 side_effect=forced_error,
             ),
         ):
-            import_drive_file_task(str(tf.id), self.VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         # The row is kept and marked failed so the finalize poll can
         # surface it; the bucket must still be clean.
@@ -275,7 +279,7 @@ class TestImportDriveFileTaskLeaks:
             patch("core.tasks.requests.get", return_value=mock_resp),
             patch.object(TransferFile, "save", _raise_on_first_post_mpu_save),
         ):
-            import_drive_file_task(str(tf.id), self.VALID_KEY)
+            import_drive_file_task(str(tf.id))
 
         # The row is kept and marked failed so the finalize poll can
         # surface it; the bucket must still be clean.

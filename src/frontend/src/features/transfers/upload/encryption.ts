@@ -1,9 +1,15 @@
-// Client-side AES-256-GCM helpers for end-to-end encrypted transfers.
+// Client-side AES-256-GCM helpers for encrypted transfers.
 //
-// Threat model: the key is generated here, embedded in the download URL
-// fragment (`#k=...`), and never leaves the browser of the sender (until
-// the recipient opens the link). The backend stores ciphertext only and
-// has no way to read the files.
+// Threat model splits by mode: every transfer is encrypted in the sender's
+// browser and S3 stores ciphertext only. In **confidential** mode the key
+// is embedded in the download URL fragment (`#k=...`) and never leaves the
+// sender's browser until the recipient opens the link — the backend never
+// sees it and cannot read the files. In the default (non-confidential)
+// mode ``useTransferDraft.submit()`` posts the key to the backend at
+// finalize so the download API can serve it to recipients transparently:
+// the encryption still protects against an S3-only breach (ciphertext
+// without the key) but not against a full backend compromise. See
+// ``docs/ENCRYPTION.md`` for the full mode comparison.
 //
 // Layout per crypto chunk on S3:
 //

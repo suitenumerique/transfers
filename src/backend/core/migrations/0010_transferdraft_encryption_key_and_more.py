@@ -4,23 +4,20 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+
     dependencies = [
-        ("core", "0009_transfer_transfer_confidential_has_no_key"),
+        ('core', '0009_transfer_transfer_confidential_has_no_key'),
     ]
 
     operations = [
         migrations.AddField(
-            model_name="transferdraft",
-            name="encryption_key",
-            field=models.CharField(blank=True, default="", max_length=64),
+            model_name='transferdraft',
+            name='encryption_key',
+            field=models.CharField(blank=True, default='', help_text='URL-safe base64 of the AES-256 key, mirrored here at finalize so the Drive-import worker can encrypt server-fetched bytes without receiving the key through Celery kwargs. Populated only for non-confidential transfers; empty for confidential ones (key never reaches us). Dropped with the draft.', max_length=64),
         ),
         migrations.AddField(
-            model_name="transferfile",
-            name="scan_submitted_at",
-            field=models.DateTimeField(
-                blank=True,
-                help_text="Set when the file was handed to the scanner. Encrypted files can only be scanned once the key arrives (at finalize), and finalize is a 202 poll loop — this keeps each re-post from launching another scan for a job already in flight. Cleared by /rescan/.",
-                null=True,
-            ),
+            model_name='transferfile',
+            name='scan_submitted_at',
+            field=models.DateTimeField(blank=True, help_text='Set when the file was handed to the scanner. Encrypted files can only be scanned once the key arrives (at finalize), and finalize is a 202 poll loop — this keeps each re-post from launching another scan for a job already in flight. Cleared by /rescan/.', null=True),
         ),
     ]

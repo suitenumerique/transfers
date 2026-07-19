@@ -103,6 +103,11 @@ export interface TransferDraftHandle {
   // sender to share out-of-band (email); for normal transfers it is posted
   // to the backend at finalize instead.
   keyFragment: string | null;
+  // Synchronous mirror of ``keyFragment`` for callers that need to snapshot
+  // the value before ``submit()``'s reset clears it — a render may not have
+  // flushed between ``setKeyFragment`` and the click that fires submit, so
+  // the state ``keyFragment`` above can still be null in that window.
+  keyFragmentRef: { readonly current: string | null };
   // Two-phase submit state:
   // - `isAwaitingUploads`: user clicked Send but uploads are still running.
   //   Auto-finalize is armed but cancellable via `cancelSubmit()` or by
@@ -193,6 +198,12 @@ const SCAN_MAX_WAIT_MS = 120000;
 // A Drive import scales with file size and routinely outlives a scan, so it
 // gets its own ceiling — the scan budget would abort healthy large imports.
 const DRIVE_IMPORT_MAX_WAIT_MS = 900000;
+// Drive imports run for minutes, not seconds — a 2s poll would hammer
+// finalize (each hit takes the draft lock and re-checks per-file state)
+// without pulling the result any sooner. Start at the scan interval so
+// small imports still surface quickly, then double up to the cap.
+const DRIVE_IMPORT_POLL_INITIAL_MS = SCAN_POLL_INTERVAL_MS;
+const DRIVE_IMPORT_POLL_MAX_MS = 15000;
 
 interface FinalizePendingResponse {
   reason: "scan_pending" | "drive_importing";
@@ -890,6 +901,7 @@ export function useTransferDraft(): TransferDraftHandle {
         };
         const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
         const driveDeadline = Date.now() + DRIVE_IMPORT_MAX_WAIT_MS;
+        let driveInterval = DRIVE_IMPORT_POLL_INITIAL_MS;
         let finalized: TransferDetail;
         for (;;) {
           const resp = await apiFetch<TransferDetail | FinalizePendingResponse>(
@@ -906,14 +918,21 @@ export function useTransferDraft(): TransferDraftHandle {
             if (Date.now() > deadline) {
               throw new Error("finalize_timeout");
             }
+            let interval: number;
             if (reason === "scan_pending") {
               setIsScanning(true);
               setIsImportingDrive(false);
+              interval = SCAN_POLL_INTERVAL_MS;
             } else {
               setIsImportingDrive(true);
               setIsScanning(false);
+              interval = driveInterval;
+              driveInterval = Math.min(
+                driveInterval * 2,
+                DRIVE_IMPORT_POLL_MAX_MS,
+              );
             }
-            await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
+            await new Promise((r) => setTimeout(r, interval));
             continue;
           }
           finalized = resp as TransferDetail;
@@ -953,6 +972,11 @@ export function useTransferDraft(): TransferDraftHandle {
     error,
     confidential,
     keyFragment,
+    // Synchronous mirror of ``keyFragment`` for callers that need to snapshot
+    // the value before ``submit()``'s resetLocal clears it — a render may not
+    // have flushed between ``setKeyFragment`` and the click that fires submit,
+    // so the state value on the returned object can still be null.
+    keyFragmentRef,
     setConfidential,
     addFile,
     attachFromDrive,

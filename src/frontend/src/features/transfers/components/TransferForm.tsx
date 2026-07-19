@@ -416,12 +416,19 @@ export function TransferForm() {
 
     setSubmitError(null);
     // Snapshot the fragment before submit() runs `resetLocal` and clears it.
+    // Read the synchronous ref rather than draft.keyFragment: if the user
+    // clicks Send before the render triggered by the fragment's arrival has
+    // flushed, the state value on the draft object is still the prior null
+    // and the confirm URL loses its ``#…``. The ref is written the same tick
+    // the fragment lands, so it's always current.
     // Only confidential transfers carry it to the confirm page (link: to
     // rebuild the working URL; email: to show the sender the key to share
     // separately). Normal transfers get a bare link — the backend serves the
     // key — so nothing to carry. Shown once: a refresh of the confirm URL
     // drops the fragment, matching "we don't store it".
-    const fragmentToCarry = draft.confidential ? draft.keyFragment : null;
+    const fragmentToCarry = draft.confidential
+      ? draft.keyFragmentRef.current
+      : null;
     carryFragmentRef.current = fragmentToCarry;
     try {
       const result = await draft.submit({

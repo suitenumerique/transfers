@@ -418,10 +418,16 @@ class TransferDraft(BaseModel):
     # confidential is decided only at finalize, so the draft holds no
     # ``confidential`` flag: the same ciphertext serves either outcome.
     encryption_chunk_size = models.PositiveIntegerField(null=True, blank=True)
-    # Set at finalize, non-confidential only: the antivirus needs it to decrypt
-    # the object before scanning. A confidential draft never gets one, so its
-    # files are marked SKIPPED. Dropped with the draft.
-    encryption_key = models.CharField(max_length=64, blank=True, default="")
+    encryption_key = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="URL-safe base64 of the AES-256 key, mirrored here at "
+        "finalize so the Drive-import worker can encrypt server-fetched "
+        "bytes without receiving the key through Celery kwargs. Populated "
+        "only for non-confidential transfers; empty for confidential ones "
+        "(key never reaches us). Dropped with the draft.",
+    )
 
     class Meta:
         db_table = "core_transfer_draft"
@@ -557,6 +563,18 @@ class TransferFile(BaseModel):
                     | Q(transfer__isnull=True, draft__isnull=False)
                 ),
                 name="transferfile_exactly_one_parent",
+            ),
+        ]
+        indexes = [
+            # Feeds reap_stale_pending_scans_task's periodic sweep for
+            # scans whose webhook never came back. PENDING is the only
+            # status the reaper considers, so a partial index keeps it
+            # small (drops as files clear) and avoids scanning the full
+            # table on every tick.
+            models.Index(
+                fields=["scan_submitted_at"],
+                condition=Q(scan_status=ScanStatus.PENDING),
+                name="transferfile_pending_scan_idx",
             ),
         ]
 
