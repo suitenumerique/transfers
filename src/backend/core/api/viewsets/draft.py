@@ -488,6 +488,14 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         The transfer is created only once every Drive file has completed,
         so a finalized transfer never has a half-imported file.
 
+        The 202 payload carries ``import_progress`` for each still-running
+        file (``bytes_imported`` vs ``plaintext_size``) so the client can
+        render a progress bar rather than an opaque spinner — the user is
+        their own timeout: if the bar stops advancing they close the tab,
+        and ``cleanup_abandoned_drafts_task`` reaps the orphaned draft
+        24 h later. Worker-death is caught at the broker level by
+        ``acks_late`` + ``reject_on_worker_lost`` on the task.
+
         Returns a 202/400 Response when the caller must return early, or
         ``None`` to let the outer flow continue to the scan phase.
         """
@@ -519,14 +527,26 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 transaction.on_commit(
                     lambda fid=str(f.id): import_drive_file_task.delay(fid)
                 )
-            still_importing.append(str(f.id))
+            still_importing.append(f)
 
         if still_importing:
             return drf.response.Response(
                 {
                     "detail": "Drive files are still being imported.",
                     "reason": "drive_importing",
-                    "pending_file_ids": still_importing,
+                    "pending_file_ids": [str(f.id) for f in still_importing],
+                    "import_progress": [
+                        {
+                            "file_id": str(f.id),
+                            "filename": f.filename,
+                            # Bumped per-chunk by ``import_drive_file_task``;
+                            # 0 before the first chunk lands. Frontend
+                            # computes ``bytes_imported / plaintext_size``.
+                            "bytes_imported": f.bytes_imported,
+                            "plaintext_size": f.plaintext_size,
+                        }
+                        for f in still_importing
+                    ],
                 },
                 status=202,
             )

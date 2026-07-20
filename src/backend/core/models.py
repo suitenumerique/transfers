@@ -510,6 +510,14 @@ class TransferFile(BaseModel):
         "poll surfaces this to the user (who removes the file and retries) "
         "instead of the import silently dropping the row.",
     )
+    bytes_imported = models.PositiveBigIntegerField(
+        default=0,
+        help_text="Plaintext bytes streamed into S3 so far by "
+        "``import_drive_file_task``. Bumped after each S3 part upload; the "
+        "finalize 202 poll exposes it so the frontend can render a "
+        "progress bar rather than an opaque spinner. Stays 0 for browser "
+        "uploads (client-side already knows its own progress).",
+    )
 
     scan_status = models.CharField(
         max_length=10,

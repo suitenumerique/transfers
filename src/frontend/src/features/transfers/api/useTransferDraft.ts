@@ -128,6 +128,9 @@ export interface TransferDraftHandle {
   isRetrying: boolean;
   // True while finalize is importing Drive files server-side (202 loop).
   isImportingDrive: boolean;
+  // Per-file progress for the current Drive import — refreshed on every
+  // finalize poll while ``isImportingDrive`` is true. Empty otherwise.
+  driveImportProgress: DriveImportProgress[];
   error: string | null;
   // Confidentiality is chosen at finalize, not locked at draft creation, so
   // this is a free toggle: the ciphertext is identical either way and the key
@@ -205,9 +208,22 @@ const DRIVE_IMPORT_MAX_WAIT_MS = 900000;
 const DRIVE_IMPORT_POLL_INITIAL_MS = SCAN_POLL_INTERVAL_MS;
 const DRIVE_IMPORT_POLL_MAX_MS = 15000;
 
+export interface DriveImportProgress {
+  file_id: string;
+  filename: string;
+  // Plaintext bytes streamed into S3 so far by the server-side import
+  // task. Divide by ``plaintext_size`` for a progress percentage. 0
+  // before the first chunk lands.
+  bytes_imported: number;
+  plaintext_size: number;
+}
+
 interface FinalizePendingResponse {
   reason: "scan_pending" | "drive_importing";
   pending_file_ids: string[];
+  // Only populated on ``drive_importing`` — one entry per file whose
+  // server-side import hasn't yet set ``upload_completed_at``.
+  import_progress?: DriveImportProgress[];
 }
 
 export function useTransferDraft(): TransferDraftHandle {
@@ -234,6 +250,9 @@ export function useTransferDraft(): TransferDraftHandle {
   // waiting for the state to flush.
   const isRetryingRef = useRef(false);
   const [isImportingDrive, setIsImportingDrive] = useState(false);
+  const [driveImportProgress, setDriveImportProgress] = useState<
+    DriveImportProgress[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const [confidential, setConfidentialState] = useState(false);
   const [keyFragment, setKeyFragment] = useState<string | null>(null);
@@ -922,10 +941,14 @@ export function useTransferDraft(): TransferDraftHandle {
             if (reason === "scan_pending") {
               setIsScanning(true);
               setIsImportingDrive(false);
+              setDriveImportProgress([]);
               interval = SCAN_POLL_INTERVAL_MS;
             } else {
               setIsImportingDrive(true);
               setIsScanning(false);
+              setDriveImportProgress(
+                (resp as FinalizePendingResponse).import_progress ?? [],
+              );
               interval = driveInterval;
               driveInterval = Math.min(
                 driveInterval * 2,
@@ -947,6 +970,7 @@ export function useTransferDraft(): TransferDraftHandle {
         setIsFinalizing(false);
         setIsScanning(false);
         setIsImportingDrive(false);
+        setDriveImportProgress([]);
         cancelSubmitRef.current = false;
       }
     },
@@ -969,6 +993,7 @@ export function useTransferDraft(): TransferDraftHandle {
     retryScan,
     isRetrying,
     isImportingDrive,
+    driveImportProgress,
     error,
     confidential,
     keyFragment,

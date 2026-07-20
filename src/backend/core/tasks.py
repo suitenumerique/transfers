@@ -134,7 +134,7 @@ def cleanup_abandoned_drafts_task():
         logger.info("Cleaned up %d abandoned draft(s).", count)
 
 
-@shared_task
+@shared_task(acks_late=True, reject_on_worker_lost=True)
 def import_drive_file_task(transfer_file_id):
     """Stream a public Drive permalink into our S3 multipart, encrypting it.
 
@@ -147,9 +147,20 @@ def import_drive_file_task(transfer_file_id):
     rather than passed as a Celery kwarg, keeping it out of task metadata
     and broker payloads.
 
+    ``acks_late`` + ``reject_on_worker_lost``: the message stays in the
+    queue until the task returns, and is redelivered to another worker if
+    the current one dies mid-execution (OOM kill, container restart).
+    The idempotency check at the top handles the redelivery cleanly.
+
     On success ``upload_completed_at`` is set and the row stays PENDING, so the
     finalize gate submits its scan. On failure ``import_failed_at`` is set and
-    the row is kept, so the finalize poll can surface it to the user.
+    the row is kept, so the finalize poll can surface it to the user. In
+    the (rare) case where the broker itself loses a message with no visible
+    failure, the draft stays "importing" until the user closes the tab, and
+    ``cleanup_abandoned_drafts_task`` reaps the orphan 24 h later.
+
+    Progress is published to ``bytes_imported`` after each S3 part upload
+    so the finalize poll can surface a per-file %.
     """
     try:
         tf = TransferFile.objects.get(id=transfer_file_id)
@@ -160,6 +171,27 @@ def import_drive_file_task(transfer_file_id):
         # Idempotency: a re-enqueued task for a row that already landed is
         # a no-op rather than a duplicate import.
         return
+
+    # Redelivery cleanup: a previous invocation of this task may have
+    # created an MPU then died mid-upload (OOM, container restart), before
+    # its ``except`` cleanup could run. Its ``upload_id`` is still parked
+    # on the row — abort it before starting fresh, or the parts it uploaded
+    # would sit as an orphan MPU past ``cleanup_abandoned_drafts_task``'s
+    # reach (that task aborts ``tf.upload_id``, which we're about to
+    # overwrite with our new one) and only reach S3's multipart lifecycle
+    # cleanup days later.
+    if tf.upload_id:
+        try:
+            s3.abort_multipart_upload(key=tf.s3_key, upload_id=tf.upload_id)
+        except botocore.exceptions.ClientError:
+            logger.warning(
+                "Failed to abort stale MPU %s for TransferFile %s "
+                "(likely already gone or forgotten by S3); continuing.",
+                tf.upload_id,
+                tf.id,
+            )
+        TransferFile.objects.filter(id=tf.id).update(upload_id="")
+        tf.upload_id = ""
 
     # The import runs at finalize while the file is still on the draft (the
     # Transfer is created only once every Drive import has completed). The
@@ -224,6 +256,12 @@ def import_drive_file_task(transfer_file_id):
                 part_number += 1
                 total_plaintext += len(plaintext)
                 total_ciphertext += len(body)
+                # Publish progress so the finalize poll can surface a %.
+                # Direct UPDATE (no full-row save + auto_now churn) — cheap
+                # even for a 20 GiB / 800-chunk import.
+                TransferFile.objects.filter(id=tf.id).update(
+                    bytes_imported=total_plaintext
+                )
 
             downloaded = 0
             for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):

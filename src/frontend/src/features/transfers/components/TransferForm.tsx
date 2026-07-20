@@ -1042,6 +1042,39 @@ export function TransferForm() {
             </p>
           )}
 
+          {importingDrive && draft.driveImportProgress.length > 0 && (
+            <ul
+              className="transfer-form__drive-progress"
+              aria-label={t("Drive import progress")}
+            >
+              {draft.driveImportProgress.map((f) => {
+                const pct =
+                  f.plaintext_size > 0
+                    ? Math.min(
+                        100,
+                        Math.round((f.bytes_imported / f.plaintext_size) * 100),
+                      )
+                    : 0;
+                return (
+                  <li
+                    key={f.file_id}
+                    className="transfer-form__drive-progress-item"
+                  >
+                    <span className="transfer-form__drive-progress-name">
+                      {f.filename}
+                    </span>
+                    <span
+                      className="transfer-form__drive-progress-pct"
+                      aria-live="polite"
+                    >
+                      {pct}%
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
           {submitError && (
             <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
