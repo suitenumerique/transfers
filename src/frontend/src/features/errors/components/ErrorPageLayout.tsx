@@ -1,5 +1,5 @@
 import { type PropsWithChildren } from "react";
-import Link from "next/link";
+import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
   LaGaufreV2,
@@ -14,7 +14,7 @@ export function ErrorPageLayout({ children }: PropsWithChildren) {
     <UIKitLayout
       hideLeftPanelOnDesktop
       icon={
-        <Link href="/" aria-label={t("Home")}>
+        <Link to="/" aria-label={t("Home")}>
           <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
         </Link>
       }

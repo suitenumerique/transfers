@@ -1,4 +1,4 @@
-import { Mail } from "@gouvfr-lasuite/ui-kit";
+import { Mail } from "@gouvfr-lasuite/ui-kit/icons";
 
 const SUPPORT_LINK_URL =
   "https://docs.suite.anct.gouv.fr/docs/281bc1f0-5911-4442-b4b7-af78d77f0e1e/";

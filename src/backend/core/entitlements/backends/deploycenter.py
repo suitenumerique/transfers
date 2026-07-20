@@ -52,7 +52,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         """
         params = {
             "service_id": self.service_id,
-            "account_type": "email",
+            "account_type": "user",
             "account_id": str(user.pk),
             "account_email": user.email or "",
         }
