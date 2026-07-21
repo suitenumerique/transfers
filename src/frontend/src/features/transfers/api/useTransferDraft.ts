@@ -942,13 +942,45 @@ export function useTransferDraft(): TransferDraftHandle {
               setIsScanning(true);
               setIsImportingDrive(false);
               setDriveImportProgress([]);
+              // Reaching scan_pending means every Drive file finished
+              // importing — the backend moved past _process_drive_imports.
+              // The last ``bytes_imported`` we saw might have been 0 (task
+              // hadn't bumped it before completing on a small file), so
+              // fill in the final value here so the ring doesn't get stuck
+              // at 0 % throughout the scan phase.
+              writeFiles(
+                filesRef.current.map((f) =>
+                  f.sourceUrl && f.state === "importing"
+                    ? { ...f, loaded: f.total }
+                    : f,
+                ),
+              );
               interval = SCAN_POLL_INTERVAL_MS;
             } else {
               setIsImportingDrive(true);
               setIsScanning(false);
-              setDriveImportProgress(
-                (resp as FinalizePendingResponse).import_progress ?? [],
-              );
+              const progress =
+                (resp as FinalizePendingResponse).import_progress ?? [];
+              setDriveImportProgress(progress);
+              // Feed ``loaded`` on each Drive draft file and flip its
+              // state to ``"importing"`` so the same ``UploadRing`` +
+              // ``file-item__pct`` that browser uploads use renders the
+              // % on the file's row — consistent look with local uploads
+              // instead of a separate list. Nothing else in the codebase
+              // sets ``state = "importing"``, so this is where a Drive
+              // file transitions from ``registered`` into the active
+              // import phase.
+              if (progress.length) {
+                const byId = new Map(progress.map((p) => [p.file_id, p]));
+                writeFiles(
+                  filesRef.current.map((f) => {
+                    const p = f.backendId ? byId.get(f.backendId) : undefined;
+                    return p
+                      ? { ...f, state: "importing", loaded: p.bytes_imported }
+                      : f;
+                  }),
+                );
+              }
               interval = driveInterval;
               driveInterval = Math.min(
                 driveInterval * 2,

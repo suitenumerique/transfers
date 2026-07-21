@@ -646,7 +646,14 @@ class Development(Base):
 
     ALLOWED_HOSTS = ["*"]
     CORS_ALLOW_ALL_ORIGINS = True
-    CSRF_TRUSTED_ORIGINS = ["http://localhost:8980", "http://localhost:8981"]
+    CSRF_TRUSTED_ORIGINS = values.ListValue(
+        default=[
+            "http://localhost:8980",
+            "http://localhost:8981",
+        ],
+        environ_name="CSRF_TRUSTED_ORIGINS",
+        environ_prefix=None,
+    )
     DEBUG = True
 
     SESSION_COOKIE_NAME = "transferts_sessionid"

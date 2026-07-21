@@ -615,14 +615,19 @@ export function TransferForm() {
               {draft.files.map((df) => {
                 const pct = percent(df);
                 const isUploading = df.state === "uploading";
+                // Server-side Drive import in progress. Reuses the same
+                // ring + % chip as browser uploads (``loaded`` is fed
+                // from the finalize poll's ``import_progress``), so both
+                // upload flows read the same on the file row.
+                const isImporting = df.state === "importing";
                 const isDone = df.state === "done";
                 // Confidential is never scanned. Flagging only the oversized
                 // file would imply the others *were* — one notice above Send
                 // covers the whole transfer instead.
                 const showScan = isDone && !draft.confidential;
-                const icon = isUploading ? (
+                const icon = isUploading || isImporting ? (
                   <UploadRing percent={pct} />
-                ) : df.state === "registering" || df.state === "importing" ? (
+                ) : df.state === "registering" ? (
                   <ImportSpinner />
                 ) : isDone ? (
                   <FileCheck />
@@ -659,7 +664,7 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
-                    {isUploading && (
+                    {(isUploading || isImporting) && (
                       <span
                         className="file-item__pct"
                         role="progressbar"
@@ -668,11 +673,6 @@ export function TransferForm() {
                         aria-valuemax={100}
                       >
                         {pct}%
-                      </span>
-                    )}
-                    {df.state === "importing" && (
-                      <span className="file-item__pct">
-                        {t("Importing...")}
                       </span>
                     )}
                     {df.state === "error" && (
@@ -1042,38 +1042,6 @@ export function TransferForm() {
             </p>
           )}
 
-          {importingDrive && draft.driveImportProgress.length > 0 && (
-            <ul
-              className="transfer-form__drive-progress"
-              aria-label={t("Drive import progress")}
-            >
-              {draft.driveImportProgress.map((f) => {
-                const pct =
-                  f.plaintext_size > 0
-                    ? Math.min(
-                        100,
-                        Math.round((f.bytes_imported / f.plaintext_size) * 100),
-                      )
-                    : 0;
-                return (
-                  <li
-                    key={f.file_id}
-                    className="transfer-form__drive-progress-item"
-                  >
-                    <span className="transfer-form__drive-progress-name">
-                      {f.filename}
-                    </span>
-                    <span
-                      className="transfer-form__drive-progress-pct"
-                      aria-live="polite"
-                    >
-                      {pct}%
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
 
           {submitError && (
             <Alert type={VariantType.ERROR}>{submitError}</Alert>
