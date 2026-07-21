@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { isExpired } from "@/features/utils/date";
 
-// setTimeout wraps around 2^31 ms — for anything further out we set a
-// shorter timer and re-arm on the next render. User-facing deadlines are
-// typically well within this range so a single arm is enough in practice.
+// setTimeout's delay is a 32-bit signed integer — a value beyond ~24.8 days
+// wraps and fires immediately, so cap each schedule and re-arm on the next
+// tick when the actual deadline is further out.
 const MAX_TIMER_MS = 2_000_000_000;
 
 // Returns a boolean that flips to true at ``deadlineIso`` (or immediately
@@ -23,12 +23,20 @@ export function useDeadlineFlag(
   const [flag, setFlag] = useState(() => enabled && isExpired(deadlineIso));
   useEffect(() => {
     if (flag || !enabled) return;
-    const msUntil = new Date(deadlineIso).getTime() - Date.now();
-    if (msUntil <= 0) {
-      setFlag(true);
-      return;
-    }
-    const timer = setTimeout(() => setFlag(true), Math.min(msUntil, MAX_TIMER_MS));
+    // Recompute the remaining time on every tick so a deadline past the
+    // single-timer ceiling (setTimeout's ~24.8-day cap) doesn't flip the
+    // flag prematurely after MAX_TIMER_MS. Each firing re-arms the next
+    // one until the actual deadline passes.
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const msUntil = new Date(deadlineIso).getTime() - Date.now();
+      if (msUntil <= 0) {
+        setFlag(true);
+        return;
+      }
+      timer = setTimeout(tick, Math.min(msUntil, MAX_TIMER_MS));
+    };
+    tick();
     return () => clearTimeout(timer);
   }, [deadlineIso, enabled, flag]);
   return flag;
