@@ -356,6 +356,16 @@ export function TransferForm() {
   const scanning = draft.isScanning;
   const importingDrive = draft.isImportingDrive;
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // The submit error message reflects the file list *at submit time* — a
+  // detected virus, a "could not be scanned" verdict, a scan timeout,
+  // etc. It's actionable copy that tells the user to remove the offending
+  // file, and once they do the alert becomes stale advice pointing at
+  // nothing. Clear it on any change to the file set so the alert doesn't
+  // linger past the action it was pushing the user to take; a fresh
+  // submit will surface whatever is still wrong.
+  useEffect(() => {
+    setSubmitError((prev) => (prev ? null : prev));
+  }, [draft.files.length]);
 
   // Warn before any kind of departure while a draft has files or uploads
   // in flight. Two separate guards because the events don't overlap:
@@ -989,7 +999,17 @@ export function TransferForm() {
             </Tooltip>
           </div>
 
-          {/* The trade-off of confidential, stated where the user commits. */}
+          {/* All submit-time callouts grouped in one block above the button
+              so the reader picks them up at a single glance before deciding
+              to commit. Order: ERROR → WARNING; within warnings, the
+              confidential notice (a design choice the user made) reads
+              before the "not scanned" notice (a state of the current
+              files). Same order as the DownloadView header stack, for
+              consistency across the two ends of a transfer. */}
+          {submitError && (
+            <Alert type={VariantType.ERROR}>{submitError}</Alert>
+          )}
+
           {draft.confidential && hasFiles && (
             <Alert type={VariantType.WARNING}>
               {t(
@@ -997,6 +1017,18 @@ export function TransferForm() {
               )}
             </Alert>
           )}
+
+          {!draft.confidential &&
+            hasFiles &&
+            draft.files.some((f) =>
+              ["skipped", "too_large", "error"].includes(f.scanStatus ?? ""),
+            ) && (
+              <Alert type={VariantType.WARNING}>
+                {t(
+                  "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
+                )}
+              </Alert>
+            )}
 
           <Button
             type="submit"
@@ -1039,11 +1071,6 @@ export function TransferForm() {
                     "Your transfer will be created once the upload finishes. Keep this tab open.",
                   )}
             </p>
-          )}
-
-
-          {submitError && (
-            <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
         </section>
       </div>

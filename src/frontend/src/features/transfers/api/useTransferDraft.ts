@@ -509,17 +509,39 @@ export function useTransferDraft(): TransferDraftHandle {
       }
       try {
         const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
-        if (cancelled) return;
+        // Do NOT bail on ``cancelled`` here — this effect re-runs on every
+        // ``files`` change (each upload completion), so a strict cancel
+        // would drop the response of a poll started for file N whenever
+        // file N+1 finishes uploading during the round-trip. With three
+        // files completing in quick succession only the last poll's write
+        // would land, and all the intermediate badges would appear at once
+        // at the end. The mapping below reads ``filesRef.current`` (always
+        // fresh) and the ``state !== "done"`` guard skips any file that
+        // hasn't completed client-side yet, so applying an in-flight
+        // response is safe. ``cancelled`` still stops the *next* ticks
+        // (interval was cleared in the cleanup).
 
         const byBackendId = new Map(resp.files.map((f) => [f.id, f]));
         const next = filesRef.current.map((f) => {
           if (!f.backendId) return f;
           const server = byBackendId.get(f.backendId);
+          if (!server) return f;
+          // Skip scan-status propagation while this file is still uploading
+          // client-side. A row that hasn't completed upload is ``PENDING``
+          // server-side; letting that land on ``f.scanStatus`` here would
+          // pin ``scanStatus="pending"`` on a row that only completes its
+          // upload later, breaking the ``state==="done" &&
+          // scanStatus===undefined`` guard that re-arms the poller on the
+          // next transition to ``done``. Concurrent multi-uploads where a
+          // later file is ``too_large`` would then never have their verdict
+          // read at all. The client is authoritative for the upload phase;
+          // the server's row-state serialization is only meaningful once
+          // we've said ``state==="done"``.
+          if (f.state !== "done") return f;
           if (
-            !server ||
-            (server.scan_status === f.scanStatus &&
-              server.scan_error_kind === (f.scanErrorKind ?? "") &&
-              server.scan_submitted === f.scanSubmitted)
+            server.scan_status === f.scanStatus &&
+            server.scan_error_kind === (f.scanErrorKind ?? "") &&
+            server.scan_submitted === f.scanSubmitted
           )
             return f;
           return {
@@ -720,19 +742,32 @@ export function useTransferDraft(): TransferDraftHandle {
       }
 
       void (async () => {
-        const id =
-          draftIdRef.current ?? (await draftInitPromiseRef.current);
-        if (!id) {
+        try {
+          const id =
+            draftIdRef.current ?? (await draftInitPromiseRef.current);
+          if (!id) {
+            updateFile(draftFile.key, {
+              state: "error",
+              error: "Draft initialization failed",
+            });
+            return;
+          }
+          // Presence check after the await: user may have removed the file
+          // while the init was in flight.
+          if (!filesRef.current.some((f) => f.key === draftFile.key)) return;
+          await registerFile(draftFile, id);
+        } catch (err) {
+          // ``draftInitPromiseRef.current`` rejects ("Draft aborted during
+          // initialization") or ``registerFile`` throws (network hiccup on
+          // add-file, backend 4xx). Without this catch the ``void (async …)``
+          // would leave an unhandled promise rejection and the file would
+          // sit forever in ``registering``. Surface it on the row so the
+          // user sees why and can retry / remove.
           updateFile(draftFile.key, {
             state: "error",
-            error: "Draft initialization failed",
+            error: err instanceof Error ? err.message : String(err),
           });
-          return;
         }
-        // Presence check after the await: user may have removed the file
-        // while the init was in flight.
-        if (!filesRef.current.some((f) => f.key === draftFile.key)) return;
-        await registerFile(draftFile, id);
       })();
     },
     [registerFile, updateFile, writeFiles],
@@ -924,8 +959,14 @@ export function useTransferDraft(): TransferDraftHandle {
           confidential: isConfidential,
           ...(isConfidential ? {} : { encryption_key: fragment }),
         };
-        const scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
-        const driveDeadline = Date.now() + DRIVE_IMPORT_MAX_WAIT_MS;
+        // Deadlines are armed the first time each phase actually shows up in
+        // the finalize response, not at submit() start. Setting them here
+        // would make a slow Drive import eat into the scan window that
+        // hasn't even started yet — a 40 min import followed by a 5 min
+        // scan would trip the scan deadline immediately at the first
+        // ``scan_pending`` because the clock had been running since submit.
+        let scanDeadline: number | null = null;
+        let driveDeadline: number | null = null;
         let driveInterval = DRIVE_IMPORT_POLL_INITIAL_MS;
         let finalized: TransferDetail;
         for (;;) {
@@ -938,9 +979,16 @@ export function useTransferDraft(): TransferDraftHandle {
           );
           const reason = (resp as FinalizePendingResponse)?.reason;
           if (reason === "scan_pending" || reason === "drive_importing") {
+            if (reason === "scan_pending") {
+              if (scanDeadline === null) {
+                scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
+              }
+            } else if (driveDeadline === null) {
+              driveDeadline = Date.now() + DRIVE_IMPORT_MAX_WAIT_MS;
+            }
             const deadline =
               reason === "scan_pending" ? scanDeadline : driveDeadline;
-            if (Date.now() > deadline) {
+            if (Date.now() > (deadline as number)) {
               throw new Error("finalize_timeout");
             }
             let interval: number;

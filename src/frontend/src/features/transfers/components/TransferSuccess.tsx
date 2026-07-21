@@ -99,7 +99,7 @@ export function TransferSuccess({
           className="transfer-success__scan-alert"
         >
           {t(
-            "One or more files were not scanned for viruses. The recipient will see the same notice.",
+            "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
           )}
         </Alert>
       )}

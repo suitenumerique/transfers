@@ -1249,6 +1249,11 @@
     }
   }
 
+  &__scan-alert {
+    margin-bottom: var(--c--globals--spacings--md);
+    text-align: start;
+  }
+
   // Dotted underline hint on the encryption "link to share" body copy: the
   // whole sentence is the Tooltip trigger, so a discreet cue tells the
   // reader more is available on hover (no separate info icon that
@@ -1559,7 +1564,9 @@
     margin: var(--c--globals--spacings--md) 0;
   }
 
-  &__auto-archive-alert {
+  &__auto-archive-alert,
+  &__scan-alert,
+  &__encryption-error-alert {
     margin-bottom: var(--c--globals--spacings--md);
     text-align: start;
   }

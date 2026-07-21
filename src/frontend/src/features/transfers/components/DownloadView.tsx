@@ -21,6 +21,36 @@ interface DownloadViewProps {
   isOwner?: boolean;
 }
 
+// Small 16px spinner reused as the "Download all" button's icon while the
+// SW handshake runs. currentColor renders white on the brand button.
+function ButtonSpinner() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="file-item__ring file-item__ring--spin"
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke="currentColor"
+        strokeOpacity="0.35"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M12 3a9 9 0 0 1 9 9"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -71,7 +101,27 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     (a, f) => a + (f.plaintext_size ?? f.size),
     0,
   );
-  const expired = isExpired(transfer.expires_at);
+  // Expiration ticks over WHILE the tab is open, so re-check on a timer
+  // set to fire at the exact ``expires_at`` moment. Without this the
+  // component would keep the download buttons enabled indefinitely on a
+  // long-lived tab, letting the recipient click into an opaque backend
+  // 410. The security guarantee still comes from the backend
+  // (``_denied_access_response``); this is UX so the button state
+  // reflects reality without waiting for a click.
+  const [expired, setExpired] = useState(() => isExpired(transfer.expires_at));
+  useEffect(() => {
+    if (expired) return;
+    const msUntil = new Date(transfer.expires_at).getTime() - Date.now();
+    if (msUntil <= 0) {
+      setExpired(true);
+      return;
+    }
+    // setTimeout wraps around 2^31 ms — for anything further out we set a
+    // shorter timer and re-arm on the next render (the caller controls
+    // ``transfer.expires_at``, but user-facing values are typically < 30d).
+    const timer = setTimeout(() => setExpired(true), Math.min(msUntil, 2_000_000_000));
+    return () => clearTimeout(timer);
+  }, [transfer.expires_at, expired]);
   // Snapshot the original URL on first render, *before* the effect strips the
   // fragment. The "copy link" pill keeps this complete value so a forwarding
   // recipient still gets a working link, while the visible URL bar no longer
@@ -304,6 +354,24 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
 
       <hr className="download-view__divider" />
 
+      {/* All page-level callouts share this block so the reader takes them
+          in as a single glance. Order: ERROR → WARNING; within warnings,
+          most-actionable first (auto-archive can be fixed by not clicking
+          "Download all" carelessly; the scan-not-verified notice is
+          informational). Confidential transfers are muted on the scan
+          notice — the confidential badge in the meta line already covers
+          the "no scan by design" case. */}
+      {isEncrypted && encryptionState === "error" && (
+        <Alert
+          type={VariantType.ERROR}
+          className="download-view__encryption-error-alert"
+        >
+          {t(
+            "We couldn't set up decryption in your browser. Try a different browser or make sure yours is up to date.",
+          )}
+        </Alert>
+      )}
+
       {transfer.auto_archive_on_download && (
         <Alert
           type={VariantType.WARNING}
@@ -315,12 +383,6 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </Alert>
       )}
 
-      {/* Header notice for files the antivirus never verified — "too_large",
-          instance-wide "skipped", or a permanent "error". Confidential
-          transfers already carry a top-level notice about no scan (the key
-          never reached the backend), so don't stack a second one. Per-file
-          badges below still say it row-by-row, but the header makes it
-          impossible to miss on a multi-file transfer. */}
       {!transfer.confidential &&
         transfer.files.some((f) =>
           ["skipped", "too_large", "error"].includes(f.scan_status),
@@ -330,7 +392,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
             className="download-view__scan-alert"
           >
             {t(
-              "One or more files in this transfer were not scanned for viruses. Check the sender before opening them.",
+              "Some files in this transfer couldn't be scanned for viruses. Open them with caution.",
             )}
           </Alert>
         )}
@@ -403,13 +465,21 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                     color="neutral"
                     variant="tertiary"
                     icon={<Download />}
-                    disabled={!downloadable || encryptionState !== "ready"}
+                    disabled={
+                      !downloadable ||
+                      expired ||
+                      encryptionState !== "ready"
+                    }
                     onClick={() => triggerDownload(file)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
                     title={
-                      downloadable
-                        ? t("Download")
-                        : t("Available once the antivirus scan passes")
+                      expired
+                        ? t("This transfer has expired.")
+                        : !downloadable
+                          ? t("Available once the antivirus scan passes")
+                          : encryptionState === "ready"
+                            ? t("Download")
+                            : t("Preparing your download…")
                     }
                   />
                 }
@@ -456,24 +526,26 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           </div>
         </div>
       )}
-      {isEncrypted && encryptionState === "error" && (
-        <Alert type={VariantType.ERROR}>
-          {t(
-            "We couldn't set up the decryption helper in your browser. Try a different browser or check that service workers are enabled.",
-          )}
-        </Alert>
-      )}
-
       {downloadableFiles.length > 0 && (
         <Button
           color="brand"
-          icon={<Download />}
+          icon={
+            isEncrypted && encryptionState === "loading" ? (
+              <ButtonSpinner />
+            ) : (
+              <Download />
+            )
+          }
           fullWidth
           onClick={downloadAll}
-          disabled={encryptionState !== "ready"}
+          disabled={expired || encryptionState !== "ready"}
           className="download-view__download-all"
         >
-          {t("Download all")}
+          {expired
+            ? t("Transfer expired")
+            : isEncrypted && encryptionState === "loading"
+              ? t("Preparing your download…")
+              : t("Download all")}
         </Button>
       )}
     </div>

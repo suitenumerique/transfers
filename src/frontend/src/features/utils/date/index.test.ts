@@ -48,12 +48,17 @@ describe("formatSmartDate", () => {
     expect(formatSmartDate(inThreeHours, "en-US", t)).toBe("in 3 hours");
   });
 
-  it("within a minute → 'just now' (no useless seconds)", () => {
+  it("within a minute → 'just now' / 'in a moment' (no useless seconds)", () => {
     const thirtySecAgo = new Date(2026, 5, 17, 11, 59, 30).toISOString();
     const fortySecAhead = new Date(2026, 5, 17, 12, 0, 40).toISOString();
+    // Past → "just now" ("à l'instant" in fr).
     expect(formatSmartDate(thirtySecAgo, "fr-FR", t)).toBe("just now");
-    expect(formatSmartDate(fortySecAhead, "en-US", t)).toBe("just now");
-    // Just over a minute → a real distance, not "just now".
+    expect(formatSmartDate(thirtySecAgo, "en-US", t)).toBe("just now");
+    // Future → a distinct label so "Expire à l'instant" doesn't clash with
+    // the colloquial past meaning of "à l'instant".
+    expect(formatSmartDate(fortySecAhead, "en-US", t)).toBe("in a moment");
+    expect(formatSmartDate(fortySecAhead, "fr-FR", t)).toBe("in a moment");
+    // Just over a minute → a real distance, not the "moment" bucket.
     const seventySecAgo = new Date(2026, 5, 17, 11, 58, 50).toISOString();
     expect(formatSmartDate(seventySecAgo, "en-US", t)).not.toBe("just now");
   });
