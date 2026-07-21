@@ -760,8 +760,7 @@ export function TransferForm() {
                     {showScan && df.scanStatus === "too_large" && (
                       <Tooltip
                         content={t(
-                          "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
-                          { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+                          "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
                         )}
                         placement="top"
                       >

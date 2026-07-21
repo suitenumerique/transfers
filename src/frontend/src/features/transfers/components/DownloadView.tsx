@@ -315,6 +315,26 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </Alert>
       )}
 
+      {/* Header notice for files the antivirus never verified — "too_large",
+          instance-wide "skipped", or a permanent "error". Confidential
+          transfers already carry a top-level notice about no scan (the key
+          never reached the backend), so don't stack a second one. Per-file
+          badges below still say it row-by-row, but the header makes it
+          impossible to miss on a multi-file transfer. */}
+      {!transfer.confidential &&
+        transfer.files.some((f) =>
+          ["skipped", "too_large", "error"].includes(f.scan_status),
+        ) && (
+          <Alert
+            type={VariantType.WARNING}
+            className="download-view__scan-alert"
+          >
+            {t(
+              "One or more files in this transfer were not scanned for viruses. Check the sender before opening them.",
+            )}
+          </Alert>
+        )}
+
       {/* Email-mode transfers reach the recipient via the notification
           email itself — re-surfacing the URL here invites accidental
           forwarding (the link is single-channel by design). Keep the

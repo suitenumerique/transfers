@@ -52,11 +52,25 @@ class TestDecodeKey:
             encryption.decode_key(malformed)
 
 
+class TestTotalParts:
+    def test_empty_plaintext_still_ships_one_chunk(self):
+        # The wire format authenticates every chunk including the trailing
+        # empty one for zero-byte plaintext, matching the frontend's
+        # ``ciphertextSize(0, N) == CRYPTO_OVERHEAD_PER_CHUNK``.
+        assert encryption.total_parts(0, 1024) == 1
+
+    def test_exact_multiple(self):
+        assert encryption.total_parts(3 * 1024, 1024) == 3
+
+    def test_partial_last_chunk_rounds_up(self):
+        assert encryption.total_parts(3 * 1024 + 1, 1024) == 4
+
+
 class TestEncryptChunk:
     def test_layout_is_iv_ciphertext_tag(self):
         key = bytes(32)
         plaintext = b"hello world"
-        out = encryption.encrypt_chunk(key, plaintext, "file-1", 1)
+        out = encryption.encrypt_chunk(key, plaintext, "file-1", 1, 1)
         # 12-byte IV + ciphertext (== plaintext length) + 16-byte tag.
         assert (
             len(out) == encryption.IV_BYTES + len(plaintext) + encryption.GCM_TAG_BYTES
@@ -64,32 +78,45 @@ class TestEncryptChunk:
 
     def test_round_trips_with_matching_aad(self):
         # Decrypt exactly the way the recipient SW does: split off the IV,
-        # then AES-GCM decrypt the rest with AAD "fileId:partNumber".
+        # then AES-GCM decrypt the rest with AAD "fileId:partNumber:parts".
         key = bytes(range(32))
         plaintext = b"some confidential bytes"
-        file_id, part = "abc-123", 4
-        out = encryption.encrypt_chunk(key, plaintext, file_id, part)
+        file_id, part, parts = "abc-123", 4, 7
+        out = encryption.encrypt_chunk(key, plaintext, file_id, part, parts)
 
         iv = out[: encryption.IV_BYTES]
         body = out[encryption.IV_BYTES :]
-        aad = f"{file_id}:{part}".encode()
+        aad = f"{file_id}:{part}:{parts}".encode()
         assert AESGCM(key).decrypt(iv, body, aad) == plaintext
 
     def test_wrong_part_number_fails_authentication(self):
         from cryptography.exceptions import InvalidTag
 
         key = bytes(range(32))
-        out = encryption.encrypt_chunk(key, b"payload", "abc-123", 1)
+        out = encryption.encrypt_chunk(key, b"payload", "abc-123", 1, 3)
         iv = out[: encryption.IV_BYTES]
         body = out[encryption.IV_BYTES :]
         # AAD bound to part 1; verifying against part 2 must fail, which is
         # what stops a storage layer from reordering chunks.
         with pytest.raises(InvalidTag):
-            AESGCM(key).decrypt(iv, body, b"abc-123:2")
+            AESGCM(key).decrypt(iv, body, b"abc-123:2:3")
+
+    def test_wrong_parts_total_fails_authentication(self):
+        # A caller who tries to convince the scanner that only 2 chunks
+        # exist (to slip past a truncation check) must not authenticate
+        # against a chunk the sender bound to a 3-part total.
+        from cryptography.exceptions import InvalidTag
+
+        key = bytes(range(32))
+        out = encryption.encrypt_chunk(key, b"payload", "abc-123", 1, 3)
+        iv = out[: encryption.IV_BYTES]
+        body = out[encryption.IV_BYTES :]
+        with pytest.raises(InvalidTag):
+            AESGCM(key).decrypt(iv, body, b"abc-123:1:2")
 
     def test_fresh_iv_per_call(self):
         key = bytes(32)
-        a = encryption.encrypt_chunk(key, b"same", "f", 1)
-        b = encryption.encrypt_chunk(key, b"same", "f", 1)
+        a = encryption.encrypt_chunk(key, b"same", "f", 1, 1)
+        b = encryption.encrypt_chunk(key, b"same", "f", 1, 1)
         # Random IV each time ⇒ different ciphertext for identical input.
         assert a != b

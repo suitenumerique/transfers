@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Input, Tooltip } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -67,6 +67,17 @@ export function TransferSuccess({
   const scanned =
     transfer.files.length > 0 &&
     transfer.files.every((f) => f.scan_status === "clean");
+  // Complement: at least one file left as skipped / too_large / errored, so
+  // some of what we shipped was never actually scanned. Warn the sender up
+  // front — the per-file badges say it too, but on a multi-file transfer the
+  // header alert makes it impossible to miss. Confidential transfers skip
+  // this: the "no scan" outcome is expected there and the confidential
+  // banner already spells it out.
+  const someNotScanned =
+    !transfer.confidential &&
+    transfer.files.some((f) =>
+      ["skipped", "too_large", "error"].includes(f.scan_status),
+    );
 
   return (
     <div className="transfer-success" role="status">
@@ -81,6 +92,16 @@ export function TransferSuccess({
           <CheckmarkShield />
           {t("Files scanned, no virus found")}
         </p>
+      )}
+      {someNotScanned && (
+        <Alert
+          type={VariantType.WARNING}
+          className="transfer-success__scan-alert"
+        >
+          {t(
+            "One or more files were not scanned for viruses. The recipient will see the same notice.",
+          )}
+        </Alert>
       )}
       {isLink ? (
         downloadUrl ? (

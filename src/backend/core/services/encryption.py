@@ -11,9 +11,12 @@ Layout per crypto chunk, identical to the frontend:
 
     [ IV (12 bytes) | ciphertext (N bytes) | GCM tag (16 bytes) ]
 
-The AAD binds each chunk to ``f"{file_id}:{part_number}"`` (1-based part
-number), exactly as ``encryption.aadForChunk`` and the SW's ``decryptStream``
-do, so a tampered storage layer cannot swap or reorder chunks.
+The AAD binds each chunk to ``f"{file_id}:{part_number}:{parts}"`` — its
+1-based position AND the total, exactly as ``encryption.aadForChunk`` and
+the SW's ``decryptStream`` do. Position stops reordering; the total stops
+**trailing truncation** (dropping whole end chunks lands on a chunk boundary
+and would otherwise pass per-chunk authentication). The file-scanner service
+enforces the same binding when it decrypts submitted ciphertext.
 """
 
 import base64
@@ -54,16 +57,31 @@ def decode_key(fragment: str) -> bytes:
     return raw
 
 
+def total_parts(plaintext_size: int, chunk_size: int) -> int:
+    """Number of chunks the wire format emits for this plaintext.
+
+    Zero-byte plaintext still ships one authenticated (IV + tag only) chunk,
+    so the floor is 1 — matching ``ciphertextSize`` on the frontend and the
+    ``if buffer or plaintext_size == 0`` tail flush in the Drive-import
+    uploader. This value is bound into every chunk's AAD and sent to the
+    scanner so trailing truncation is detected.
+    """
+    if plaintext_size <= 0:
+        return 1
+    return -(-plaintext_size // chunk_size)
+
+
 def encrypt_chunk(
-    key: bytes, plaintext: bytes, file_id: str, part_number: int
+    key: bytes, plaintext: bytes, file_id: str, part_number: int, parts: int
 ) -> bytes:
     """Encrypt one plaintext chunk into ``IV || ciphertext || tag``.
 
     ``AESGCM.encrypt`` returns the ciphertext with the 16-byte tag already
     appended, matching WebCrypto's ``subtle.encrypt`` output, so we just
-    prepend a fresh random IV.
+    prepend a fresh random IV. ``parts`` is the total chunk count for this
+    file — it goes into the AAD to make trailing truncation detectable.
     """
     iv = os.urandom(IV_BYTES)
-    aad = f"{file_id}:{part_number}".encode()
+    aad = f"{file_id}:{part_number}:{parts}".encode()
     ct = AESGCM(key).encrypt(iv, plaintext, aad)
     return iv + ct

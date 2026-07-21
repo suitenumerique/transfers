@@ -1,5 +1,6 @@
 """Celery tasks for the transferts core app."""
 
+import json
 import logging
 import secrets
 from datetime import timedelta
@@ -22,6 +23,7 @@ from core.enums import (
 )
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
 from core.services import encryption, s3
+from core.services.scan_auth import mint_request_token
 from core.services.email import send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
 
@@ -240,11 +242,16 @@ def import_drive_file_task(transfer_file_id):
             total_plaintext = 0
             total_ciphertext = 0
             buffer = bytearray()
+            # Total chunk count, bound into every chunk's AAD so trailing
+            # truncation is detectable. Computed up front from the declared
+            # plaintext_size; the ``total_plaintext == tf.plaintext_size``
+            # check at the end guarantees we ship exactly this many parts.
+            expected_parts = encryption.total_parts(tf.plaintext_size, chunk_size)
 
             def _encrypt_and_upload(plaintext: bytes) -> None:
                 nonlocal part_number, total_plaintext, total_ciphertext
                 body = encryption.encrypt_chunk(
-                    aes_key, plaintext, str(tf.id), part_number
+                    aes_key, plaintext, str(tf.id), part_number, expected_parts
                 )
                 etag = s3.upload_part_bytes(
                     key=key,
@@ -379,6 +386,13 @@ def _scan_encryption_params(tf):
         "chunk_size": parent.encryption_chunk_size,
         # AAD prefix — must match what the browser bound each chunk to.
         "file_id": str(tf.id),
+        # Total chunks. Also bound into every AAD (as the ``:parts`` suffix)
+        # so the scanner detects trailing truncation: without it, dropping
+        # whole end chunks lands on a chunk boundary and the surviving
+        # chunks still authenticate.
+        "parts": encryption.total_parts(
+            tf.plaintext_size, parent.encryption_chunk_size
+        ),
     }
 
 
@@ -454,12 +468,22 @@ def submit_scan_task(self, transfer_file_id):
     if encryption_params:
         payload["encryption"] = encryption_params
 
+    # Serialise once: the JWT ``bh`` claim binds the SHA-256 of the exact
+    # bytes we POST, so `requests` must ship the same bytes (``data=``, not
+    # ``json=``, so it doesn't re-serialise and drift the hash).
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    scan_path = f"/api/{settings.API_VERSION}/scan-async"
+    token = mint_request_token("POST", scan_path, body)
     try:
         response = requests.post(
-            f"{settings.CLAMAV_SERVICE_URL}/v2/scan-async",
-            json=payload,
-            headers={"X-API-Key": settings.CLAMAV_API_KEY},
+            f"{settings.CLAMAV_SERVICE_URL}{scan_path}",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
             timeout=10,
+            allow_redirects=False,
         )
         response.raise_for_status()
     except requests.RequestException as exc:

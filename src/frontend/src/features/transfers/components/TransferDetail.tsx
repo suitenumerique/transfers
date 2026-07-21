@@ -5,7 +5,6 @@ import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasu
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
-import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile, transferBaseUrl } from "../api/useDownload";
@@ -48,7 +47,6 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
-  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
@@ -193,8 +191,7 @@ export function TransferDetail({
       return (
         <Tooltip
           content={t(
-            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
-            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+            "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
           )}
           placement="top"
         >

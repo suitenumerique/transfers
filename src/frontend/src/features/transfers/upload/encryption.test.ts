@@ -21,9 +21,10 @@ import {
   encryptChunk,
   generateTransferKey,
   importTransferKey,
+  totalParts,
 } from "./encryption";
 
-const AAD = aadForChunk("file-0", 1);
+const AAD = aadForChunk("file-0", 1, 1);
 
 describe("encryption", () => {
   it("encrypts and decrypts a chunk back to the original plaintext", async () => {
@@ -58,18 +59,33 @@ describe("encryption", () => {
   });
 
   it("rejects a chunk whose AAD does not match the encrypt-side binding", async () => {
-    // The chunk's tag was computed with the file-0/part-1 binding; an
-    // attacker who copies a valid chunk from another file or position
-    // sends a tag that no longer verifies against the recipient's AAD.
+    // The chunk's tag was computed with the file-A/part-1/parts-3 binding;
+    // an attacker who copies a valid chunk from another file, another
+    // position, or convinces the recipient the file has a different total
+    // (truncation) sends a tag that no longer verifies against the
+    // recipient's AAD.
     const { cryptoKey } = await generateTransferKey();
     const plain = new Uint8Array([1, 2, 3]);
-    const ct = await encryptChunk(cryptoKey, plain, aadForChunk("file-A", 1));
+    const ct = await encryptChunk(cryptoKey, plain, aadForChunk("file-A", 1, 3));
     await expect(
-      decryptChunk(cryptoKey, ct, aadForChunk("file-A", 2)),
+      decryptChunk(cryptoKey, ct, aadForChunk("file-A", 2, 3)),
     ).rejects.toBeDefined();
     await expect(
-      decryptChunk(cryptoKey, ct, aadForChunk("file-B", 1)),
+      decryptChunk(cryptoKey, ct, aadForChunk("file-B", 1, 3)),
     ).rejects.toBeDefined();
+    // Wrong total ⇒ truncation attempt ⇒ tag mismatch.
+    await expect(
+      decryptChunk(cryptoKey, ct, aadForChunk("file-A", 1, 2)),
+    ).rejects.toBeDefined();
+  });
+
+  it("totalParts matches the ciphertextSize chunk accounting", () => {
+    const chunk = 1024;
+    // Zero-byte plaintext still authenticates one chunk (IV + tag only),
+    // matching the ciphertextSize floor.
+    expect(totalParts(0, chunk)).toBe(1);
+    expect(totalParts(3 * chunk, chunk)).toBe(3);
+    expect(totalParts(3 * chunk + 1, chunk)).toBe(4);
   });
 
   it("imports an exported key fragment and decrypts what it encrypted", async () => {

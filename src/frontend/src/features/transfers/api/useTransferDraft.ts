@@ -13,6 +13,7 @@ import {
   ciphertextSize,
   encryptChunk,
   generateTransferKey,
+  totalParts,
 } from "../upload/encryption";
 import { MultipartUploader } from "../upload/MultipartUploader";
 
@@ -368,12 +369,17 @@ export function useTransferDraft(): TransferDraftHandle {
     // and always present here.
     const encryptionKey = encryptionKeyRef.current;
     if (!encryptionKey) return;
+    // Total chunks the wire format will emit — bound into every chunk's
+    // AAD (as ``:parts``) so the recipient SW and the file-scanner both
+    // detect trailing truncation. Must match ``ciphertextSize`` — same
+    // formula, same zero-plaintext floor.
+    const parts = totalParts(localFile.size, chunkSize);
     const transformChunk = async (blob: Blob, partNumber: number) => {
       const buf = await blob.arrayBuffer();
       const ct = await encryptChunk(
         encryptionKey,
         buf,
-        aadForChunk(backendId, partNumber),
+        aadForChunk(backendId, partNumber, parts),
       );
       // Cast: Blob's `BlobPart` widened to `Uint8Array<ArrayBuffer>`
       // in current lib.dom.d.ts; our ct is `Uint8Array<ArrayBufferLike>`

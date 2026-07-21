@@ -201,10 +201,14 @@ async function handleDownload(token, fileId) {
 function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
-  // Each chunk's AAD is `${fileId}:${partNumber}` and must match what the
-  // uploader bound the GCM tag to — see encryption.aadForChunk.
+  // Each chunk's AAD is `${fileId}:${partNumber}:${parts}` and must match
+  // what the uploader bound the GCM tag to — see encryption.aadForChunk.
+  // ``parts`` is computed locally from chunkSize + plaintextSize (same
+  // formula as ``totalParts`` on the frontend and ``total_parts`` in the
+  // backend) so no extra metadata has to travel through the download URL.
   const ciphertextChunkSize = chunkSize + OVERHEAD;
   const encoder = new TextEncoder();
+  const parts = plaintextSize <= 0 ? 1 : Math.ceil(plaintextSize / chunkSize);
   let pending = new Uint8Array(0);
   let plaintextRemaining = plaintextSize;
   let partNumber = 1;
@@ -224,7 +228,7 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
       ) {
         const ct = pending.subarray(0, ciphertextChunkSize);
         pending = pending.slice(ciphertextChunkSize);
-        const aad = encoder.encode(fileId + ":" + partNumber);
+        const aad = encoder.encode(fileId + ":" + partNumber + ":" + parts);
         const plain = await decryptOne(cryptoKey, ct, aad);
         controller.enqueue(plain);
         plaintextRemaining -= plain.length;
@@ -252,7 +256,7 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
         );
         return;
       }
-      const aad = encoder.encode(fileId + ":" + partNumber);
+      const aad = encoder.encode(fileId + ":" + partNumber + ":" + parts);
       const plain = await decryptOne(cryptoKey, pending, aad);
       if (plain.length > 0) controller.enqueue(plain);
       plaintextRemaining -= plain.length;

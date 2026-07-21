@@ -10,6 +10,7 @@ Sibling file ``test_api_transfers.py`` exercises the read-only / deactivate
 endpoints on the public Transfer surface.
 """
 
+import json
 import uuid as _uuid
 from unittest.mock import patch
 
@@ -891,6 +892,9 @@ class TestDraftEncryption:
                 side_effect=lambda fn: fn(),
             ),
             patch("core.tasks.s3.sign_scan_url", return_value="http://s3/signed"),
+            patch(
+                "core.tasks.mint_request_token", return_value="test-jwt-token"
+            ),
             patch("core.tasks.requests.post") as mock_post,
         ):
             mock_post.return_value.json.return_value = {"job_id": "j-1"}
@@ -902,13 +906,24 @@ class TestDraftEncryption:
 
         # What actually went on the wire.
         mock_post.assert_called_once()
-        body = mock_post.call_args.kwargs["json"]
+        # Body is now shipped as ``data=`` (raw bytes) so its SHA-256 matches the
+        # JWT's ``bh`` claim; deserialise to compare against the shape.
+        body = json.loads(mock_post.call_args.kwargs["data"])
         assert body["url"] == "http://s3/signed"
         assert body["encryption"] == {
             "key": VALID_KEY,
             "chunk_size": CHUNK,
             "file_id": initiate["transfer_file_id"],
+            # 1024-byte plaintext, 25 MiB chunk size ⇒ single chunk.
+            "parts": 1,
         }
+        # New auth: Bearer JWT instead of X-API-Key.
+        assert (
+            mock_post.call_args.kwargs["headers"]["Authorization"]
+            == "Bearer test-jwt-token"
+        )
+        # New endpoint: /api/v1.0/scan-async (was /v2/scan-async).
+        assert mock_post.call_args.args[0].endswith("/api/v1.0/scan-async")
 
         tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
         assert tf.scan_status == ScanStatus.PENDING
@@ -1450,6 +1465,10 @@ class TestSubmitScanTask:
         settings.SCAN_WEBHOOK_BASE_URL = "http://back"
         with (
             patch("core.tasks.s3.sign_scan_url", return_value="http://s3/signed"),
+            # JWT minting reads a settings-scoped Ed25519 key — bypass to keep
+            # the tests fixture-free. What matters here is what the task
+            # *sends*, not the token contents (covered in test_scan_auth).
+            patch("core.tasks.mint_request_token", return_value="test-jwt-token"),
             patch("core.tasks.requests.post") as mock_post,
         ):
             mock_post.return_value.json.return_value = {"job_id": "j-1"}
@@ -1469,14 +1488,24 @@ class TestSubmitScanTask:
         scanner_post = self._run_task(tf, settings)
 
         scanner_post.assert_called_once()
-        body = scanner_post.call_args.kwargs["json"]
+        body = json.loads(scanner_post.call_args.kwargs["data"])
         assert body["url"] == "http://s3/signed"
         assert body["encryption"] == {
             "key": VALID_KEY,
             "chunk_size": CHUNK,
             # AAD prefix — must match what the browser bound each chunk to.
             "file_id": str(tf.id),
+            # Total chunks — also bound into every AAD (as ``:parts``) so
+            # trailing truncation is detectable. 100-byte plaintext ⇒ 1.
+            "parts": 1,
         }
+        assert (
+            scanner_post.call_args.kwargs["headers"]["Authorization"]
+            == "Bearer test-jwt-token"
+        )
+        assert scanner_post.call_args.args[0] == (
+            "http://scanner/api/v1.0/scan-async"
+        )
 
     def test_defers_when_key_not_yet_known(self, user, settings):
         """Upload is done but the user hasn't hit Send, so no key has reached us.
@@ -1529,7 +1558,7 @@ class TestSubmitScanTask:
 
         # Scanned, but *with* the key — never as opaque bytes.
         scanner_post.assert_called_once()
-        body = scanner_post.call_args.kwargs["json"]
+        body = json.loads(scanner_post.call_args.kwargs["data"])
         assert body["encryption"]["key"] == VALID_KEY
         assert body["encryption"]["chunk_size"] == CHUNK
 
@@ -1607,6 +1636,9 @@ class TestScanEncryptionParams:
             "key": VALID_KEY,
             "chunk_size": CHUNK,
             "file_id": str(tf.id),
+            # Total chunks bound into every AAD; the fixture's plaintext
+            # fits in a single chunk.
+            "parts": 1,
         }
 
     def test_encrypted_without_key_refuses(self, user):

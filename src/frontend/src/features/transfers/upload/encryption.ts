@@ -72,19 +72,38 @@ export async function importTransferKey(fragment: string): Promise<CryptoKey> {
   );
 }
 
-// AAD binds a chunk to its (file, position) so a tampered storage cannot
-// swap chunks between files or reorder them inside a file: an attacker who
-// substitutes a valid chunk from a different position decrypts to garbage
-// (the GCM tag verification fails before any plaintext is yielded). Use
+// AAD binds a chunk to its (file, position, total) so a tampered storage
+// cannot swap chunks between files, reorder them inside a file, or drop
+// whole trailing chunks: an attacker who substitutes a valid chunk from a
+// different position — or truncates the object at a chunk boundary — sends
+// data whose GCM tag no longer verifies against the recipient's AAD. Use
 // ``aadForChunk`` to build the same byte sequence on encrypt and decrypt.
+// ``parts`` is bound in every chunk (not just the last) so the total is
+// authenticated regardless of which chunk gets checked first, and the
+// file-scanner service authenticates the same way.
 //
 // Return type is BufferSource because that's what crypto.subtle wants and
 // the same view-vs-ArrayBufferLike incompatibility documented on
 // ``asBufferSource`` applies — the cast is purely about TS lib.dom typings,
 // the bytes are real ArrayBuffer at runtime.
-export function aadForChunk(fileId: string, partNumber: number): BufferSource {
-  const bytes = new TextEncoder().encode(`${fileId}:${partNumber}`);
+export function aadForChunk(
+  fileId: string,
+  partNumber: number,
+  parts: number,
+): BufferSource {
+  const bytes = new TextEncoder().encode(`${fileId}:${partNumber}:${parts}`);
   return bytes as unknown as BufferSource;
+}
+
+// Number of chunks the wire format emits for a plaintext of this size.
+// Zero-byte plaintext still ships one authenticated (IV + tag only) chunk,
+// matching ``ciphertextSize(0, N) === CRYPTO_OVERHEAD_PER_CHUNK`` and the
+// backend's ``total_parts``. Used to compute the ``parts`` bound into every
+// chunk's AAD, and to fill the ``encryption.parts`` field sent to the
+// file-scanner.
+export function totalParts(plaintextSize: number, chunkSize: number): number {
+  if (plaintextSize <= 0) return 1;
+  return Math.ceil(plaintextSize / chunkSize);
 }
 
 export async function encryptChunk(
