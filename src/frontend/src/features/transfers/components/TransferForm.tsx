@@ -16,6 +16,8 @@ import {
   type DraftFile,
   type DrivePickedItem,
 } from "../api/useTransferDraft";
+import { hasUnscannedFiles } from "../utils/scanStatus";
+import { ButtonSpinner } from "./ButtonSpinner";
 import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
 import { FileItem } from "./FileItem";
@@ -52,36 +54,6 @@ function StorageGauge({
   );
 }
 
-// Small 16px spinner used as the submit button's `icon` while the form
-// waits for uploads to finish + finalize to return. Inherits currentColor
-// so it shows white on the filled brand button.
-function ButtonSpinner() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className="file-item__ring file-item__ring--spin"
-    >
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        stroke="currentColor"
-        strokeOpacity="0.35"
-        strokeWidth="2.5"
-      />
-      <path
-        d="M12 3a9 9 0 0 1 9 9"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 // Indeterminate spinner used while a Fichiers import runs server-side.
 // Plain CSS rotation — the SVG node itself is stable across draft
@@ -1020,9 +992,7 @@ export function TransferForm() {
 
           {!draft.confidential &&
             hasFiles &&
-            draft.files.some((f) =>
-              ["skipped", "too_large", "error"].includes(f.scanStatus ?? ""),
-            ) && (
+            hasUnscannedFiles(draft.files, (f) => f.scanStatus) && (
               <Alert type={VariantType.WARNING}>
                 {t(
                   "Some files couldn't be scanned for viruses. The recipient will see the same notice.",

@@ -5,7 +5,6 @@ import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Warning }
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
-import { isExpired } from "@/features/utils/date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
   ensureEncryptionServiceWorker,
@@ -13,6 +12,9 @@ import {
   streamingDownloadUrl,
   unregisterEncryptionKey,
 } from "../upload/encryptionServiceWorker";
+import { hasUnscannedFiles } from "../utils/scanStatus";
+import { useDeadlineFlag } from "../utils/useDeadlineFlag";
+import { ButtonSpinner } from "./ButtonSpinner";
 import { FileItem } from "./FileItem";
 
 interface DownloadViewProps {
@@ -21,35 +23,6 @@ interface DownloadViewProps {
   isOwner?: boolean;
 }
 
-// Small 16px spinner reused as the "Download all" button's icon while the
-// SW handshake runs. currentColor renders white on the brand button.
-function ButtonSpinner() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className="file-item__ring file-item__ring--spin"
-    >
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        stroke="currentColor"
-        strokeOpacity="0.35"
-        strokeWidth="2.5"
-      />
-      <path
-        d="M12 3a9 9 0 0 1 9 9"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
@@ -101,27 +74,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     (a, f) => a + (f.plaintext_size ?? f.size),
     0,
   );
-  // Expiration ticks over WHILE the tab is open, so re-check on a timer
-  // set to fire at the exact ``expires_at`` moment. Without this the
-  // component would keep the download buttons enabled indefinitely on a
-  // long-lived tab, letting the recipient click into an opaque backend
-  // 410. The security guarantee still comes from the backend
-  // (``_denied_access_response``); this is UX so the button state
-  // reflects reality without waiting for a click.
-  const [expired, setExpired] = useState(() => isExpired(transfer.expires_at));
-  useEffect(() => {
-    if (expired) return;
-    const msUntil = new Date(transfer.expires_at).getTime() - Date.now();
-    if (msUntil <= 0) {
-      setExpired(true);
-      return;
-    }
-    // setTimeout wraps around 2^31 ms — for anything further out we set a
-    // shorter timer and re-arm on the next render (the caller controls
-    // ``transfer.expires_at``, but user-facing values are typically < 30d).
-    const timer = setTimeout(() => setExpired(true), Math.min(msUntil, 2_000_000_000));
-    return () => clearTimeout(timer);
-  }, [transfer.expires_at, expired]);
+  const expired = useDeadlineFlag(transfer.expires_at);
   // Snapshot the original URL on first render, *before* the effect strips the
   // fragment. The "copy link" pill keeps this complete value so a forwarding
   // recipient still gets a working link, while the visible URL bar no longer
@@ -384,9 +337,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       )}
 
       {!transfer.confidential &&
-        transfer.files.some((f) =>
-          ["skipped", "too_large", "error"].includes(f.scan_status),
-        ) && (
+        hasUnscannedFiles(transfer.files, (f) => f.scan_status) && (
           <Alert
             type={VariantType.WARNING}
             className="download-view__scan-alert"

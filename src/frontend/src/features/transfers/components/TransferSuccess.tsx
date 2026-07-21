@@ -5,6 +5,7 @@ import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as L
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { transferBaseUrl } from "../api/useDownload";
+import { hasUnscannedFiles } from "../utils/scanStatus";
 
 function daysUntil(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
@@ -75,9 +76,7 @@ export function TransferSuccess({
   // banner already spells it out.
   const someNotScanned =
     !transfer.confidential &&
-    transfer.files.some((f) =>
-      ["skipped", "too_large", "error"].includes(f.scan_status),
-    );
+    hasUnscannedFiles(transfer.files, (f) => f.scan_status);
 
   return (
     <div className="transfer-success" role="status">

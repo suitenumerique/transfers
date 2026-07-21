@@ -6,12 +6,12 @@ import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
-import { isExpired } from "@/features/utils/date";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
+import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
@@ -119,24 +119,9 @@ export function TransferDetail({
   // row is honestly still ACTIVE in the DB (the agent can still deactivate
   // it, copy the link, etc.), we just want to surface a subtle "expiration
   // pending" cue instead of letting the header read "Expires 2 minutes
-  // ago" as if nothing were happening. Re-render exactly when the deadline
-  // passes so the badge appears without a manual refresh.
-  const [expirationPending, setExpirationPending] = useState(
-    () => isActive && isExpired(transfer.expires_at),
-  );
-  useEffect(() => {
-    if (expirationPending || !isActive) return;
-    const msUntil = new Date(transfer.expires_at).getTime() - Date.now();
-    if (msUntil <= 0) {
-      setExpirationPending(true);
-      return;
-    }
-    const timer = setTimeout(
-      () => setExpirationPending(true),
-      Math.min(msUntil, 2_000_000_000),
-    );
-    return () => clearTimeout(timer);
-  }, [transfer.expires_at, isActive, expirationPending]);
+  // ago" as if nothing were happening. Gated on ``isActive`` so a
+  // deactivated transfer never re-arms its timer.
+  const expirationPending = useDeadlineFlag(transfer.expires_at, isActive);
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(

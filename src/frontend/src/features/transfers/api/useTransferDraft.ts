@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
 import type {
@@ -459,6 +459,24 @@ export function useTransferDraft(): TransferDraftHandle {
   // Verdicts land asynchronously (webhook → scan_status), so poll to show them
   // per file. Only for scans actually in flight: before Send nothing is
   // scanning, and polling then would spin forever and trip a bogus timeout.
+  // Compress the fields the poll depends on into a stable string so the
+  // effect below re-runs only when one of them actually changes. Chunk
+  // upload progress updates ``loaded`` many times per second and would
+  // otherwise re-arm the interval + fire an immediate poll on every
+  // progress tick; ``filesRef.current`` inside the effect still reads
+  // the fresh file list when we need to apply the response.
+  const scanSignal = useMemo(
+    () =>
+      files
+        .map(
+          (f) =>
+            `${f.backendId ?? ""}:${f.state}:${f.scanStatus ?? ""}:` +
+            `${f.scanErrorKind ?? ""}:${f.scanSubmitted ?? ""}`,
+        )
+        .join("|"),
+    [files],
+  );
+
   useEffect(() => {
     const needsScan =
       // Poll at least once after an upload lands, to learn the file's scan
@@ -569,7 +587,13 @@ export function useTransferDraft(): TransferDraftHandle {
       cancelled = true;
       window.clearInterval(handle);
     };
-  }, [files, writeFiles, scanTimedOut, isScanning]);
+    // ``scanSignal`` is the compressed scan-relevant slice of ``files`` — see
+    // the useMemo above. Depending on it (and not on ``files``) means the
+    // interval isn't torn down and re-armed on every chunk-progress update.
+    // ``files`` itself is intentionally NOT listed: ``filesRef.current``
+    // inside ``tick`` reads the fresh list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanSignal, writeFiles, scanTimedOut, isScanning]);
 
   // Re-arm scanning after the poller gave up. Re-submitting is the point: by
   // the time we time out, the backend's submit task has already exhausted its
@@ -1002,10 +1026,16 @@ export function useTransferDraft(): TransferDraftHandle {
               // hadn't bumped it before completing on a small file), so
               // fill in the final value here so the ring doesn't get stuck
               // at 0 % throughout the scan phase.
+              // Also flip ``state`` to ``"done"`` here: the import phase is
+              // over (backend moved past ``_process_drive_imports``), and
+              // leaving the row at ``"importing"`` would keep it invisible
+              // to the scan poller's ``state === "done"`` guard so the scan
+              // verdict for a Drive-imported file would never surface on
+              // its badge.
               writeFiles(
                 filesRef.current.map((f) =>
                   f.sourceUrl && f.state === "importing"
-                    ? { ...f, loaded: f.total }
+                    ? { ...f, state: "done", loaded: f.total }
                     : f,
                 ),
               );
