@@ -70,6 +70,46 @@ Schedule is defined in `src/backend/transferts/celery_app.py`.
 | `sweep_orphan_s3_storage_task` | daily (86400 s) | Safety net — should report 0; non-zero signals a leak in a per-row path |
 | `send_recipient_invitations_task` | on-demand | Triggered by `finalize` (email mode) and `resend` |
 
+## End-to-end encryption
+
+Senders can opt into client-side AES-256-GCM encryption by ticking the
+"End-to-end encryption" checkbox on the transfer form. When enabled:
+
+- A 256-bit key is generated in the sender's browser and embedded in
+  the download URL fragment (after `#`). Browsers never transmit
+  fragments, so the key never reaches the backend.
+- Each upload chunk is encrypted in the browser before being PUT to S3
+  via the existing presigned multipart flow. The backend stores
+  ciphertext only — `TransferFile.size` is the on-S3 size,
+  `TransferFile.plaintext_size` tracks the pre-encryption size for UI
+  display.
+- The recipient's browser registers a Service Worker (`/sw.js`) that
+  intercepts the download URL, fetches the ciphertext, decrypts it
+  chunk-by-chunk, and streams plaintext straight to the native
+  download manager. Nothing transits through a Django worker; nothing
+  buffers in RAM.
+- Antivirus scanning is bypassed (we cannot scan what we cannot read).
+  Files land as `scan_status=skipped` and recipients see no scan
+  badge.
+
+Two operational caveats:
+
+- **Email mode + E2E**: the link we email out contains the key in its
+  fragment, so every SMTP relay and mailbox provider on the way to the
+  recipient sees it. The frontend warns the sender. For strict E2E,
+  use link mode and hand the URL off via a side channel.
+- **CORS on the S3 bucket**: the recipient's Service Worker fetches
+  the presigned S3 URL cross-origin. The bucket must accept `GET`
+  from the frontend's origin — see
+  [`docs/S3.md`](docs/S3.md#cors-on-the-bucket-required-for-e2e). Non-E2E
+  transfers don't need this (the browser follows a 302 redirect, which
+  isn't CORS-gated).
+
+The key is stored locally on the sender's device (`localStorage`,
+keyed by transfer id) so the owner can rebuild the working link from
+their dashboard. Clearing browser data drops that copy — the transfer
+remains downloadable for anyone still holding the link.
+
 ## Reverse proxy and `X-Forwarded-For`
 
 The audit log records the client IP. It is read from `X-Forwarded-For`

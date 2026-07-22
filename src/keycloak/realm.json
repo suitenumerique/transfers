@@ -18,14 +18,18 @@
       "secret": "transferts-dev-secret",
       "redirectUris": [
         "http://localhost:8980/*",
-        "http://localhost:8981/*"
+        "http://localhost:8981/*",
+        "http://localhost:8900/*",
+        "http://localhost:8901/*"
       ],
       "webOrigins": [
         "http://localhost:8980",
-        "http://localhost:8981"
+        "http://localhost:8981",
+        "http://localhost:8900",
+        "http://localhost:8901"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "http://localhost:8980/*##http://localhost:8981/*"
+        "post.logout.redirect.uris": "http://localhost:8980/*##http://localhost:8981/*##http://localhost:8900/*##http://localhost:8901/*"
       }
     }
   ],

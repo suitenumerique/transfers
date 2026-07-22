@@ -149,7 +149,13 @@ class Base(Configuration):
         environ_prefix=None,
     )
     TRANSFER_CHUNK_SIZE = values.PositiveIntegerValue(
-        25 * 1024 * 1024,  # 25 MiB
+        # 25 MiB — one S3 multipart part == one AES-GCM chunk. Well above
+        # S3's 5 MiB minimum, and inside the file-scanner's 50 MiB default
+        # ``ENCRYPTION_MAX_CHUNK_SIZE`` (the scanner buffers a whole chunk
+        # in memory to authenticate it, so the ceiling is a shared memory
+        # budget across concurrent scans). Bump both this and the scanner
+        # cap together if you raise it.
+        25 * 1024 * 1024,
         environ_name="TRANSFER_CHUNK_SIZE",
         environ_prefix=None,
     )
@@ -195,9 +201,33 @@ class Base(Configuration):
     CLAMAV_SERVICE_URL = values.Value(
         "", environ_name="CLAMAV_SERVICE_URL", environ_prefix=None
     )
-    # API key presented to the file-scanner as the X-API-Key header.
-    CLAMAV_API_KEY = values.Value(
-        "", environ_name="CLAMAV_API_KEY", environ_prefix=None
+    # EdDSA (Ed25519) private key we use to mint request-bound JWTs for the
+    # file-scanner, as unpadded URL-safe base64 (43 chars). The scanner
+    # accepts calls only from issuers listed in its ``JWT_ISSUER_KEYS``, so
+    # its config must hold the matching public key under the ``iss`` value
+    # ``SCAN_JWT_ISSUER`` — mint the pair with the scanner's
+    # ``deploy/scripts/new-issuer.py``. Empty ⇒ we cannot submit scans.
+    SCAN_JWT_PRIVATE_KEY = values.Value(
+        "", environ_name="SCAN_JWT_PRIVATE_KEY", environ_prefix=None
+    )
+    # ``iss`` claim on every scan-submit JWT — identifies this app in the
+    # scanner's logs and its ``api_client`` metric. Must match the caller
+    # name registered on the scanner side (``JWT_ISSUER_KEYS``).
+    SCAN_JWT_ISSUER = values.Value(
+        "transferts", environ_name="SCAN_JWT_ISSUER", environ_prefix=None
+    )
+    # ``aud`` claim on every scan-submit JWT. Must match the scanner's
+    # configured ``JWT_AUDIENCE`` (default ``file-scanner``).
+    SCAN_JWT_AUDIENCE = values.Value(
+        "file-scanner", environ_name="SCAN_JWT_AUDIENCE", environ_prefix=None
+    )
+    # TTL (seconds) on each scan-submit JWT. Kept short: the token binds a
+    # single request (method + URL + body hash), so a 5-min lifetime is
+    # already generous. Bumping this weakens the compromise-window guarantee.
+    SCAN_JWT_TTL = values.PositiveIntegerValue(
+        300,  # 5 min
+        environ_name="SCAN_JWT_TTL",
+        environ_prefix=None,
     )
     # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
     # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
@@ -612,7 +642,7 @@ class Base(Configuration):
                 name
                 for name in (
                     "CLAMAV_SERVICE_URL",
-                    "CLAMAV_API_KEY",
+                    "SCAN_JWT_PRIVATE_KEY",
                     "SCAN_WEBHOOK_BASE_URL",
                 )
                 if not getattr(cls, name)
@@ -646,18 +676,17 @@ class Development(Base):
 
     ALLOWED_HOSTS = ["*"]
     CORS_ALLOW_ALL_ORIGINS = True
-    CSRF_TRUSTED_ORIGINS = ["http://localhost:8980", "http://localhost:8981"]
+    CSRF_TRUSTED_ORIGINS = values.ListValue(
+        default=[
+            "http://localhost:8980",
+            "http://localhost:8981",
+        ],
+        environ_name="CSRF_TRUSTED_ORIGINS",
+        environ_prefix=None,
+    )
     DEBUG = True
 
     SESSION_COOKIE_NAME = "transferts_sessionid"
-
-    # Dev-only switch: mount a GET endpoint that hands back a session
-    # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined
-    # only in Development so production can't even read the flag from an
-    # attacker-controlled env.
-    DEV_AUTH_BYPASS = values.BooleanValue(
-        default=False, environ_name="DEV_AUTH_BYPASS", environ_prefix=None
-    )
 
     USE_SWAGGER = True
     SESSION_CACHE_ALIAS = "session"

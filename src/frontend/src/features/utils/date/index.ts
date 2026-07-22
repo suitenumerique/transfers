@@ -24,12 +24,14 @@ export function formatFullDateTime(iso: string, lang: string): string {
   return format(new Date(iso), "PPPp", { locale: localeFor(lang) });
 }
 
-// Under a minute we say "just now" rather than a precise "46 seconds ago",
-// which carries no useful information — same convention as most tools.
+// Under a minute we say "just now" (past) or "in a moment" (future)
+// rather than a precise "46 seconds ago", which carries no useful
+// information — same convention as most tools.
 const JUST_NOW_MS = 60_000;
 
 // Smart, human-friendly label:
-//   - within a minute → "just now" ("À l'instant")
+//   - within a minute in the past → "just now" ("à l'instant")
+//   - within a minute in the future → "in a moment" ("dans un instant")
 //   - same day → exact distance in hours/minutes ("il y a 3 heures")
 //   - yesterday / tomorrow → the word + the time ("hier à 14:30")
 //   - ≥ 2 calendar days away → a calendar-day count ("il y a 2 jours",
@@ -50,8 +52,12 @@ export function formatSmartDate(
   // All labels stay lowercase so they read correctly both standalone (the
   // activity log) and embedded mid-sentence ("Expire demain à 11:12") — and
   // they stay consistent with date-fns' lowercase "il y a 3 heures".
-  if (Math.abs(now.getTime() - date.getTime()) < JUST_NOW_MS) {
-    return t("just now");
+  const delta = date.getTime() - now.getTime();
+  if (Math.abs(delta) < JUST_NOW_MS) {
+    // "à l'instant" reads as past; a future timestamp within a minute needs
+    // its own label so "Expire à l'instant" doesn't collide with the
+    // colloquial meaning of an event that just happened.
+    return delta < 0 ? t("just now") : t("in a moment");
   }
   if (isToday(date)) {
     return formatDistanceToNowStrict(date, { addSuffix: true, locale });

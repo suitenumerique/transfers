@@ -1,12 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
-import { isExpired } from "@/features/utils/date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
+import {
+  ensureEncryptionServiceWorker,
+  registerEncryptionKey,
+  streamingDownloadUrl,
+  unregisterEncryptionKey,
+} from "../upload/encryptionServiceWorker";
+import { hasUnscannedFiles } from "../utils/scanStatus";
+import { useDeadlineFlag } from "../utils/useDeadlineFlag";
+import { ButtonSpinner } from "./ButtonSpinner";
 import { FileItem } from "./FileItem";
 
 interface DownloadViewProps {
@@ -15,14 +23,160 @@ interface DownloadViewProps {
   isOwner?: boolean;
 }
 
+
 export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  // Every finalized transfer is encrypted; ``encryption_chunk_size`` is only
+  // null for legacy plaintext transfers, which skip the SW decrypt path.
+  const isEncrypted = transfer.encryption_chunk_size != null;
+  // Snapshot the fragment once, at mount, before the effect below strips it
+  // from the visible URL. Reading window.location.hash again after a rerun
+  // (a new ``transfer.files`` reference is enough) would see it already
+  // stripped and wrongly fall back to the paste screen.
+  const keyFragmentRef = useRef<string>(
+    typeof window !== "undefined"
+      ? window.location.hash.replace(/^#/, "")
+      : "",
+  );
+  // The key we hand the SW. Non-confidential transfers get it from the
+  // backend (``encryption_key``); confidential transfers get it from the URL
+  // fragment or, if that's missing, from the recipient pasting it.
+  const autoKey = !transfer.confidential
+    ? transfer.encryption_key || null
+    : keyFragmentRef.current || null;
 
-  const totalSize = transfer.files.reduce((a, f) => a + f.size, 0);
-  const expired = isExpired(transfer.expires_at);
-  const downloadUrl =
-    typeof window !== "undefined" ? window.location.href : "";
+  // Decryption plumbing state: register the key with the SW before enabling
+  // downloads. `ready` (go), `loading` (SW handshake), `need-key`
+  // (confidential + no key yet, show the paste box), `error` (SW/registration
+  // failed). Resolved synchronously here so the effect only does async work.
+  type EncryptionState = "loading" | "ready" | "need-key" | "error";
+  const [encryptionState, setEncryptionState] = useState<EncryptionState>(() => {
+    if (!isEncrypted) return "ready";
+    if (typeof window === "undefined") return "loading";
+    if (!autoKey) return "need-key";
+    return "loading";
+  });
+  const [pastedKey, setPastedKey] = useState("");
+  const [pasteError, setPasteError] = useState(false);
+  // Tracks whether the SW currently holds this transfer's key, so the unmount
+  // cleanup only unregisters when there's something to drop (set by both the
+  // auto-effect and the paste handler).
+  const registeredRef = useRef(false);
+  // A stale attempt (cleaned up mid-handshake) must not unregister the key a
+  // newer one has since registered under the same token.
+  const registerAttemptRef = useRef(0);
+  // Flipped to false in the unmount cleanup below so async paste handlers can
+  // tell "still on the page" from "resolved after the user navigated away".
+  const mountedRef = useRef(true);
+
+  const totalSize = transfer.files.reduce(
+    (a, f) => a + (f.plaintext_size ?? f.size),
+    0,
+  );
+  const expired = useDeadlineFlag(transfer.expires_at);
+  // Snapshot the original URL on first render, *before* the effect strips the
+  // fragment. The "copy link" pill keeps this complete value so a forwarding
+  // recipient still gets a working link, while the visible URL bar no longer
+  // leaks the key.
+  const initialUrlRef = useRef<string>(
+    typeof window !== "undefined" ? window.location.href : "",
+  );
+  const downloadUrl = initialUrlRef.current;
+
+  // Hand a key to the SW and flip to `ready`. Shared by the auto-effect
+  // (backend key / URL fragment) and the paste box. A malformed key (wrong
+  // length/base64) throws inside registerEncryptionKey → surfaces as an error the
+  // caller maps to its state.
+  const registerKey = async (keyStr: string): Promise<boolean> => {
+    const chunkSize = transfer.encryption_chunk_size;
+    if (!chunkSize) return false;
+    const sw = await ensureEncryptionServiceWorker();
+    if (!sw) return false;
+    await registerEncryptionKey(sw, token, keyStr, transfer.files, chunkSize);
+    registeredRef.current = true;
+    return true;
+  };
+
+  useEffect(() => {
+    if (!isEncrypted || !autoKey) return;
+    // Confidential + fragment in URL: strip it from the visible URL (shoulder
+    // surfing, history, copy-from-address-bar). The page keeps it in memory.
+    // Non-confidential has no fragment to strip. Preserve the query string.
+    if (transfer.confidential) {
+      try {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
+      } catch {
+        // replaceState can throw under exotic sandboxing; the URL stays as-is.
+      }
+    }
+    const attempt = ++registerAttemptRef.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ok = await registerKey(autoKey);
+        if (cancelled) {
+          // Cleanup already ran while the handshake was in flight — drop the
+          // key we just registered so it doesn't linger in the SW. Skip if a
+          // newer attempt superseded us: its key is the one now under this
+          // token, and unregistering would break its decryption.
+          if (ok && registerAttemptRef.current === attempt) {
+            unregisterEncryptionKey(token);
+          }
+          return;
+        }
+        setEncryptionState(ok ? "ready" : "error");
+      } catch {
+        if (!cancelled) setEncryptionState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEncrypted, autoKey, transfer.confidential, transfer.encryption_chunk_size, transfer.files, token]);
+
+  // Drop the key from the SW registry on unmount (covers both the auto path
+  // and a pasted key). The SW outlives the page and could be reused for
+  // another transfer in the same tab, so stale keys are needless retention.
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (registeredRef.current) unregisterEncryptionKey(token);
+    };
+  }, [token]);
+
+  const submitPastedKey = async () => {
+    const key = pastedKey.trim();
+    if (!key) return;
+    setPasteError(false);
+    setEncryptionState("loading");
+    const attempt = ++registerAttemptRef.current;
+    try {
+      const ok = await registerKey(key);
+      if (!mountedRef.current) {
+        // The recipient navigated away mid-registration. Drop the key we
+        // just parked in the SW so it doesn't outlive the page. Mirrors
+        // the auto-key cleanup path; skip if a newer attempt overwrote us.
+        if (ok && registerAttemptRef.current === attempt) {
+          unregisterEncryptionKey(token);
+          registeredRef.current = false;
+        }
+        return;
+      }
+      setEncryptionState(ok ? "ready" : "need-key");
+      if (!ok) setPasteError(true);
+    } catch {
+      if (!mountedRef.current) return;
+      // Malformed key (bad base64 / wrong length). A valid-length but wrong
+      // key registers fine and instead fails at download time.
+      setEncryptionState("need-key");
+      setPasteError(true);
+    }
+  };
 
   const copyLink = async () => {
     if (!downloadUrl) return;
@@ -50,15 +204,38 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   const downloadableFiles = transfer.files.filter((f) =>
     isDownloadable(f.scan_status),
   );
+  // Encrypted and legacy-plaintext paths both go through an iframe rather
+  // than an anchor click. For plaintext the reason is gesture throttling for
+  // multi-file downloads. For encrypted the iframe also avoids a Firefox
+  // race: an anchor click triggers a top-level navigation the SW sometimes
+  // doesn't intercept on the first click; sub-frame requests don't hit that
+  // path and the Content-Disposition header still triggers a download.
+  const triggerDownload = (file: (typeof transfer.files)[number]) => {
+    if (isEncrypted) {
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = streamingDownloadUrl(token, file.id, file.filename);
+      document.body.appendChild(iframe);
+      setTimeout(() => iframe.remove(), 5000);
+    } else {
+      downloadFile(token, file.id);
+    }
+  };
   const downloadAll = () => {
     downloadableFiles.forEach((file, i) => {
-      setTimeout(() => downloadFileInIframe(token, file.id), i * 800);
+      setTimeout(() => {
+        if (isEncrypted) {
+          triggerDownload(file);
+        } else {
+          downloadFileInIframe(token, file.id);
+        }
+      }, i * 800);
     });
   };
 
-  // Recipients only ever see transfers whose files are all clean — the scan is
-  // a hard gate at creation, so infected/pending never reach here. "skipped"
-  // (scanning disabled on the instance) shows no badge.
+  // Infected / pending never reach a recipient (the scan gates creation). What
+  // does reach them is files never scanned at all — say so: "clean" is a claim
+  // we can only make when we actually looked.
   const scanBadge = (status: ScanStatus) => {
     if (status === "clean") {
       return (
@@ -69,16 +246,20 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </Tooltip>
       );
     }
-    if (status === "too_large") {
+    if (status === "too_large" || status === "skipped") {
+      const reason =
+        status === "too_large"
+          ? t("This file was not scanned for viruses because it is too large.")
+          : transfer.confidential
+            ? t(
+                "This transfer is confidential, so it could not be scanned for viruses: the decryption key never reached our servers.",
+              )
+            : t("This file was not scanned for viruses.");
       return (
-        <Tooltip
-          content={t(
-            "This file was not scanned for viruses because it is too large.",
-          )}
-          placement="top"
-        >
+        <Tooltip content={reason} placement="top">
           <span className="file-item__scan file-item__scan--warning">
             <Warning />
+            {t("Not scanned")}
           </span>
         </Tooltip>
       );
@@ -106,9 +287,43 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         <span>{t("{{count}} file", { count: transfer.files.length })}</span>
         <span className="download-view__meta-sep">·</span>
         <span>{formatFileSize(totalSize)}</span>
+        {transfer.confidential && (
+          <>
+            <span className="download-view__meta-sep">·</span>
+            <Tooltip
+              content={t(
+                "Confidential transfer. Only your browser can decrypt it, using a key we never received.",
+              )}
+              placement="top"
+            >
+              <span className="download-view__meta-item download-view__meta-item--encryption">
+                <Lock />
+                {t("Confidential")}
+              </span>
+            </Tooltip>
+          </>
+        )}
       </div>
 
       <hr className="download-view__divider" />
+
+      {/* All page-level callouts share this block so the reader takes them
+          in as a single glance. Order: ERROR → WARNING; within warnings,
+          most-actionable first (auto-archive can be fixed by not clicking
+          "Download all" carelessly; the scan-not-verified notice is
+          informational). Confidential transfers are muted on the scan
+          notice — the confidential badge in the meta line already covers
+          the "no scan by design" case. */}
+      {isEncrypted && encryptionState === "error" && (
+        <Alert
+          type={VariantType.ERROR}
+          className="download-view__encryption-error-alert"
+        >
+          {t(
+            "We couldn't set up decryption in your browser. Try a different browser or make sure yours is up to date.",
+          )}
+        </Alert>
+      )}
 
       {transfer.auto_archive_on_download && (
         <Alert
@@ -120,6 +335,18 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
             : t("Single-use link. Deactivates after full download.")}
         </Alert>
       )}
+
+      {!transfer.confidential &&
+        hasUnscannedFiles(transfer.files, (f) => f.scan_status) && (
+          <Alert
+            type={VariantType.WARNING}
+            className="download-view__scan-alert"
+          >
+            {t(
+              "Some files in this transfer couldn't be scanned for viruses. Open them with caution.",
+            )}
+          </Alert>
+        )}
 
       {/* Email-mode transfers reach the recipient via the notification
           email itself — re-surfacing the URL here invites accidental
@@ -162,26 +389,48 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                 key={file.id}
                 icon={<Doc />}
                 name={file.filename}
-                size={formatFileSize(file.size)}
+                size={formatFileSize(file.plaintext_size ?? file.size)}
                 state={
                   file.scan_status === "infected" ||
                   file.scan_status === "error"
                     ? "error"
                     : "done"
                 }
-                extras={scanBadge(file.scan_status)}
+                extras={
+                  <>
+                    {transfer.confidential && (
+                      <Tooltip
+                        content={t("Confidential file")}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--encrypted">
+                          <Lock />
+                        </span>
+                      </Tooltip>
+                    )}
+                    {scanBadge(file.scan_status)}
+                  </>
+                }
                 action={
                   <Button
                     color="neutral"
                     variant="tertiary"
                     icon={<Download />}
-                    disabled={!downloadable}
-                    onClick={() => downloadFile(token, file.id)}
+                    disabled={
+                      !downloadable ||
+                      expired ||
+                      encryptionState !== "ready"
+                    }
+                    onClick={() => triggerDownload(file)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
                     title={
-                      downloadable
-                        ? t("Download")
-                        : t("Available once the antivirus scan passes")
+                      expired
+                        ? t("This transfer has expired.")
+                        : !downloadable
+                          ? t("Available once the antivirus scan passes")
+                          : encryptionState === "ready"
+                            ? t("Download")
+                            : t("Preparing your download…")
                     }
                   />
                 }
@@ -191,15 +440,63 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         </ul>
       )}
 
+      {isEncrypted && encryptionState === "need-key" && (
+        <div className="download-view__key-box">
+          <Alert type={VariantType.INFO}>
+            {t(
+              "This transfer is confidential. Enter the decryption key the sender shared with you separately to unlock the files.",
+            )}
+          </Alert>
+          <div className="download-view__key-input">
+            <Input
+              label={t("Decryption key")}
+              value={pastedKey}
+              onChange={(e) => {
+                setPastedKey(e.currentTarget.value);
+                setPasteError(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitPastedKey();
+              }}
+              variant="classic"
+              fullWidth
+              state={pasteError ? "error" : "default"}
+              text={
+                pasteError
+                  ? t("That key didn't work. Check it and try again.")
+                  : undefined
+              }
+            />
+            <Button
+              color="brand"
+              onClick={() => void submitPastedKey()}
+              disabled={!pastedKey.trim()}
+            >
+              {t("Unlock")}
+            </Button>
+          </div>
+        </div>
+      )}
       {downloadableFiles.length > 0 && (
         <Button
           color="brand"
-          icon={<Download />}
+          icon={
+            isEncrypted && encryptionState === "loading" ? (
+              <ButtonSpinner />
+            ) : (
+              <Download />
+            )
+          }
           fullWidth
           onClick={downloadAll}
+          disabled={expired || encryptionState !== "ready"}
           className="download-view__download-all"
         >
-          {t("Download all")}
+          {expired
+            ? t("Transfer expired")
+            : isEncrypted && encryptionState === "loading"
+              ? t("Preparing your download…")
+              : t("Download all")}
         </Button>
       )}
     </div>

@@ -62,9 +62,7 @@ class TestRemoveFileBestEffort:
             {"Error": {"Code": "InternalError", "Message": "transient"}},
             "AbortMultipartUpload",
         )
-        with patch.object(
-            live_s3_bucket, "abort_multipart_upload", side_effect=forced
-        ):
+        with patch.object(live_s3_bucket, "abort_multipart_upload", side_effect=forced):
             resp = authenticated_client.post(
                 f"{DRAFTS_URL}{partial_mpu_file['draft_id']}/remove-file/",
                 {"transfer_file_id": partial_mpu_file["transfer_file_id"]},

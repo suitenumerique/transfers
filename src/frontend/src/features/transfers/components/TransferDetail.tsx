@@ -3,15 +3,15 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
-import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
-import { downloadFile } from "../api/useDownload";
+import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
+import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
@@ -48,7 +48,6 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
-  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const resendTransfer = useResendTransfer();
@@ -94,12 +93,35 @@ export function TransferDetail({
   };
   const isRetrying = resendTransfer.isPending || isAwaitingRetry;
 
-  const downloadUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
+  // encryption: the working link only ever existed on the success screen post-
+  // finalize (via the navigation hash). We don't persist it anywhere, so
+  // the detail page can never reconstruct it. For non-encrypted the bare token
+  // is enough — same URL the recipient receives.
+  const baseUrl = transferBaseUrl(transfer.public_token);
+  // Confidential transfers can't be reconstructed here — the key lived only
+  // on the success screen. Normal transfers get a bare, working link.
+  const downloadUrl = transfer.confidential ? "" : baseUrl;
+  // Every finalized transfer is encrypted; null chunk size = legacy plaintext.
+  // Encrypted files need the recipient SW to decrypt, which this detail page
+  // doesn't run — so per-file download is disabled and the sender uses the
+  // link instead.
+  const isEncrypted = transfer.encryption_chunk_size != null;
   const isPublicLink = transfer.sharing_mode === "link";
-  const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
+  // For encryption, ``size`` is the ciphertext sitting in S3. The user-facing
+  // total should be the plaintext bytes they'll eventually save to disk.
+  const totalSize = transfer.files.reduce(
+    (sum, f) => sum + (f.plaintext_size ?? f.size),
+    0,
+  );
   const isActive = transfer.status === "active";
+  // ``expires_at`` has passed but the hourly
+  // ``deactivate_expired_transfers_task`` beat hasn't caught up yet — the
+  // row is honestly still ACTIVE in the DB (the agent can still deactivate
+  // it, copy the link, etc.), we just want to surface a subtle "expiration
+  // pending" cue instead of letting the header read "Expires 2 minutes
+  // ago" as if nothing were happening. Gated on ``isActive`` so a
+  // deactivated transfer never re-arms its timer.
+  const expirationPending = useDeadlineFlag(transfer.expires_at, isActive);
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(
@@ -145,6 +167,10 @@ export function TransferDetail({
 
   const handleDownload = (fileId: string) => {
     if (!transfer.public_token) return;
+    // Encrypted files need the recipient SW to decrypt, which this page
+    // doesn't run — the button is disabled below. Only legacy plaintext
+    // transfers use the plain backend redirect.
+    if (isEncrypted) return;
     downloadFile(transfer.public_token, fileId);
   };
 
@@ -174,8 +200,7 @@ export function TransferDetail({
       return (
         <Tooltip
           content={t(
-            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
-            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+            "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
           )}
           placement="top"
         >
@@ -194,8 +219,10 @@ export function TransferDetail({
         <h1 className="transfer-detail__title">
           {transfer.title || t("Untitled")}
         </h1>
-        {transfer.status !== "active" && (
+        {transfer.status !== "active" ? (
           <TransferStatusBadge status={transfer.status} />
+        ) : (
+          expirationPending && <TransferStatusBadge status="expiring" />
         )}
       </header>
 
@@ -221,6 +248,22 @@ export function TransferDetail({
             </span>
           </>
         )}
+        {transfer.confidential && (
+          <>
+            <span className="transfer-detail__meta-sep">·</span>
+            <Tooltip
+              content={t(
+                "This transfer is confidential. The decryption key was only available when you created it; we never received it and don't keep it.",
+              )}
+              placement="top"
+            >
+              <span className="transfer-detail__meta-item transfer-detail__meta-item--encryption">
+                <Lock />
+                {t("Confidential")}
+              </span>
+            </Tooltip>
+          </>
+        )}
       </div>
 
       {downloadUrl && (
@@ -235,7 +278,7 @@ export function TransferDetail({
             onFocus={(e) => e.currentTarget.select()}
           />
           {/* Link stays visible on deactivated transfers for reference,
-              but copying is disabled — the URL no longer resolves. */}
+              but copying is disabled, the URL no longer resolves. */}
           <Button
             size="small"
             color="neutral"
@@ -317,23 +360,48 @@ export function TransferDetail({
               key={file.id}
               icon={<Doc />}
               name={file.filename}
-              size={formatFileSize(file.size)}
+              size={formatFileSize(file.plaintext_size ?? file.size)}
               state={
                 file.scan_status === "infected" ||
                 file.scan_status === "error"
                   ? "error"
                   : "done"
               }
-              extras={scanBadge(file.scan_status)}
+              extras={
+                <>
+                  {transfer.confidential && (
+                    <Tooltip
+                      content={t("Confidential file")}
+                      placement="top"
+                    >
+                      <span className="file-item__scan file-item__scan--encrypted">
+                        <Lock />
+                      </span>
+                    </Tooltip>
+                  )}
+                  {scanBadge(file.scan_status)}
+                </>
+              }
               action={
                 <Button
                   color="neutral"
                   variant="tertiary"
                   icon={<Download />}
                   onClick={() => handleDownload(file.id)}
-                  disabled={!isActive || !transfer.public_token || !downloadable}
+                  disabled={
+                    !isActive ||
+                    !transfer.public_token ||
+                    !downloadable ||
+                    isEncrypted
+                  }
                   aria-label={t("Download {{name}}", { name: file.filename })}
-                  title={t("Download")}
+                  title={
+                    isEncrypted
+                      ? t(
+                          "Open the download link to get this file — it decrypts in your browser.",
+                        )
+                      : t("Download")
+                  }
                 />
               }
             />
@@ -343,7 +411,12 @@ export function TransferDetail({
 
       {isActive && (
         <div className="transfer-detail__actions">
-          {isPublicLink ? (
+          {isPublicLink && downloadUrl ? (
+            // encryption link-mode transfers have no downloadUrl on this page (the
+            // working link only existed on the success screen, with the key
+            // fragment). The button would be visible but its onClick would
+            // no-op — hide it entirely so the UI stops promising an action
+            // it can't deliver.
             <Button
               color="brand"
               icon={copied ? <Checkmark /> : <Copy />}

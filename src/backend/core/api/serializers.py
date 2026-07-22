@@ -1,5 +1,7 @@
 """Client serializers for the transferts core app."""
 
+import re
+
 from django.conf import settings
 
 from drf_spectacular.utils import extend_schema_field
@@ -7,6 +9,31 @@ from rest_framework import serializers
 
 from core import models
 from core.enums import SharingMode
+from core.services import encryption
+
+# URL-safe base64 alphabet, no padding required. The frontend ships exactly
+# 43 chars for a 256-bit key, but accept the padded 44-char form too so a
+# client that fails to strip "=" still works. The field's ``max_length``
+# bounds the overall length; this bounds the alphabet.
+_ENCRYPTION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+
+# Per-chunk overhead the browser's AES-GCM helper prepends (IV) and appends
+# (GCM tag) to every encrypted chunk. The frontend's encryption module and
+# the recipient Service Worker share this constant; the value must stay in
+# sync across all three.
+CRYPTO_OVERHEAD_PER_CHUNK = 12 + 16
+
+
+def _expected_ciphertext_size(plaintext_size: int, chunk_size: int) -> int:
+    """Total ciphertext bytes that will land in S3 for a given plaintext +
+    chunk size, mirroring the browser's encryption layout. Used to verify
+    the client-declared ``size`` matches what its plaintext + chunk params
+    imply.
+    """
+    if plaintext_size <= 0:
+        return CRYPTO_OVERHEAD_PER_CHUNK
+    chunks = -(-plaintext_size // chunk_size)  # ceiling division
+    return plaintext_size + chunks * CRYPTO_OVERHEAD_PER_CHUNK
 
 
 class AbilitiesModelSerializer(serializers.ModelSerializer):
@@ -86,6 +113,7 @@ class TransferFileSerializer(serializers.ModelSerializer):
             "id",
             "filename",
             "size",
+            "plaintext_size",
             "mime_type",
             "created_at",
             "scan_status",
@@ -142,6 +170,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
+            "confidential",
         ]
         read_only_fields = fields
 
@@ -169,6 +198,8 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "auto_archive_on_download",
             "pending_deletion_at",
             "deactivation_reason",
+            "confidential",
+            "encryption_chunk_size",
         ]
         read_only_fields = fields
 
@@ -181,22 +212,36 @@ class DraftAddFileSerializer(serializers.Serializer):
     draft is born as a side-effect of the first ``add-file`` call, and
     every subsequent drop passes back ``draft_id`` to bind to the same
     draft. Transfer-level metadata (title, sharing_mode, recipients,
-    expires_in_days, sensitive) is set only at finalize time, and populates
+    expires_in_days) is set only at finalize time, and populates
     the freshly-created ``Transfer`` there — see ``TransferFinalizeSerializer``.
 
     Two attach modes coexist: browser-side multipart upload (no
     ``source_url``), and server-side Drive import (``source_url`` set to a
-    public permalink — the backend fetches the bytes via a celery task, no
-    multipart ceremony exposed to the client).
+    public permalink). Drive bytes are fetched and encrypted at finalize,
+    not here, because encryption needs the key and the key only reaches
+    us at finalize (in non-confidential mode).
 
     Per-file size is checked here; cumulative limits (file count, total
     draft size) live in the viewset because they depend on what the target
     draft already holds.
+
+    Every transfer is encrypted client-side, so ``size`` is always the
+    ciphertext size that lands in S3 and ``plaintext_size`` (the file's
+    pre-encryption size, needed by the recipient SW for ``Content-Length``)
+    is always required. The chunk size used to encrypt is
+    ``settings.TRANSFER_CHUNK_SIZE`` (also returned in ``/api/v1.0/config/``);
+    the client never negotiates it, so it can't disagree with the recipient
+    SW about decryption boundaries. ``size`` is cross-checked against
+    ``plaintext_size`` + that chunk size so a malformed caller is rejected.
     """
 
     draft_id = serializers.UUIDField(required=False, allow_null=True)
     filename = serializers.CharField(max_length=255, required=True)
+    # ``size`` is the ciphertext size that lands in S3 (plaintext + per-chunk
+    # GCM overhead). The frontend computes the expansion before declaring;
+    # the head_object check at complete-upload validates against it as-is.
     size = serializers.IntegerField(min_value=1, required=True)
+    plaintext_size = serializers.IntegerField(min_value=1, required=True)
     mime_type = serializers.CharField(
         max_length=255, required=False, allow_blank=True, default=""
     )
@@ -212,6 +257,28 @@ class DraftAddFileSerializer(serializers.Serializer):
             )
         return value
 
+    def validate(self, attrs):
+        # Cross-check the declared ciphertext ``size`` against the canonical
+        # chunk size the recipient SW will use to peel chunks. The chunk size
+        # is server-side (settings.TRANSFER_CHUNK_SIZE, echoed on /config/)
+        # so the client builds size from the same value; a mismatch here
+        # means a buggy or malicious caller.
+        expected_ciphertext = _expected_ciphertext_size(
+            attrs["plaintext_size"], settings.TRANSFER_CHUNK_SIZE
+        )
+        if attrs["size"] != expected_ciphertext:
+            raise serializers.ValidationError(
+                {
+                    "size": (
+                        f"size ({attrs['size']}) does not match the "
+                        f"expected ciphertext size ({expected_ciphertext}) "
+                        f"for plaintext_size={attrs['plaintext_size']} at "
+                        f"chunk size {settings.TRANSFER_CHUNK_SIZE}."
+                    )
+                }
+            )
+        return attrs
+
 
 class DraftFileStateSerializer(serializers.ModelSerializer):
     """Lightweight projection of a draft's file rows for the polling
@@ -219,6 +286,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
     per-file progress for server-side Drive imports."""
 
     state = serializers.SerializerMethodField()
+    scan_submitted = serializers.SerializerMethodField()
 
     class Meta:
         model = models.TransferFile
@@ -231,6 +299,7 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
             "source_url",
             "scan_status",
             "scan_error_kind",
+            "scan_submitted",
         ]
         read_only_fields = fields
 
@@ -240,6 +309,12 @@ class DraftFileStateSerializer(serializers.ModelSerializer):
         if obj.source_url:
             return "importing"
         return "uploading"
+
+    def get_scan_submitted(self, obj) -> bool:
+        """Whether a scan is actually in flight. PENDING alone is ambiguous: a
+        file sits PENDING with no scan running until finalize supplies the key.
+        """
+        return obj.scan_submitted_at is not None
 
 
 class DraftDetailSerializer(serializers.ModelSerializer):
@@ -295,6 +370,34 @@ class DraftFinalizeSerializer(serializers.Serializer):
     # delete + status DEACTIVATED) once every file has been downloaded at
     # least once.
     auto_archive_on_download = serializers.BooleanField(required=False, default=False)
+    # Confidential transfers keep the decryption key out of our infra: the
+    # recipient supplies it from the URL fragment (link) or by pasting it
+    # (email / bare link). Non-confidential transfers post ``encryption_key``
+    # here so the backend can store it and serve it to recipients (and, for
+    # Drive imports, encrypt the fetched bytes server-side at finalize).
+    confidential = serializers.BooleanField(required=False, default=False)
+    encryption_key = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=64
+    )
+
+    def validate_encryption_key(self, value):
+        # base64url key material only, and it must decode to a full AES-256
+        # key — reject any other alphabet or wrong size so a malformed value
+        # can't be stored and later served to a recipient as an un-decryptable
+        # key.
+        if not value:
+            return value
+        if not _ENCRYPTION_KEY_RE.match(value):
+            raise serializers.ValidationError(
+                "Must be URL-safe base64 (A-Z, a-z, 0-9, '-', '_'; '=' padding optional)."
+            )
+        try:
+            encryption.decode_key(value)
+        except ValueError as err:
+            raise serializers.ValidationError(
+                "Must decode to a 32-byte AES-256 key."
+            ) from err
+        return value
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -306,6 +409,20 @@ class DraftFinalizeSerializer(serializers.Serializer):
         if mode == SharingMode.LINK and recipients:
             raise serializers.ValidationError(
                 {"recipients": "Recipients are not allowed in link mode."}
+            )
+        # The key travels to us only for non-confidential transfers. In
+        # confidential mode it must never reach the backend, so reject a
+        # posted key outright; in normal mode it's required so the backend
+        # can serve it to recipients.
+        confidential = attrs.get("confidential", False)
+        key = attrs.get("encryption_key", "")
+        if confidential and key:
+            raise serializers.ValidationError(
+                {"encryption_key": "A confidential transfer must not send the key."}
+            )
+        if not confidential and not key:
+            raise serializers.ValidationError(
+                {"encryption_key": "Required for a non-confidential transfer."}
             )
         return attrs
 
@@ -343,7 +460,14 @@ class DraftCompleteUploadSerializer(serializers.Serializer):
 class DownloadTransferFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.TransferFile
-        fields = ["id", "filename", "size", "mime_type", "scan_status"]
+        fields = [
+            "id",
+            "filename",
+            "size",
+            "plaintext_size",
+            "mime_type",
+            "scan_status",
+        ]
         read_only_fields = fields
 
 
@@ -351,6 +475,13 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
     """Serializer for the public download page.
 
     Only files whose multipart upload has been completed are exposed.
+
+    ``encryption_key`` is served here for non-confidential transfers so the
+    recipient's Service Worker can decrypt transparently. This endpoint is
+    ``AllowAny`` by design: the public token IS the capability, and a
+    non-confidential transfer means "anyone with the link may read". For
+    confidential transfers the column is empty (the key never reached us),
+    so the recipient must supply it from the URL fragment or by pasting.
     """
 
     files = serializers.SerializerMethodField()
@@ -368,6 +499,9 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "is_owner",
             "sharing_mode",
             "auto_archive_on_download",
+            "confidential",
+            "encryption_chunk_size",
+            "encryption_key",
         ]
         read_only_fields = fields
 

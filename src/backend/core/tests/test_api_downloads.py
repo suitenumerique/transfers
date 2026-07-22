@@ -72,8 +72,7 @@ class TestDownloadTransferView:
         )
         assert response.status_code == 200
         assert (
-            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
-            == 0
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count() == 0
         )
 
     def test_authenticated_non_owner_view_logs_link_opened_event(
@@ -81,9 +80,7 @@ class TestDownloadTransferView:
     ):
         # A registered user who isn't the owner is still a recipient — log it.
         api_client.force_authenticate(user=UserFactory())
-        response = api_client.get(
-            f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/"
-        )
+        response = api_client.get(f"{DOWNLOADS_URL}/{transfer_with_file.public_token}/")
         assert response.status_code == 200
         assert_single_event(transfer_with_file.id, TransferEventType.LINK_OPENED)
 
@@ -134,8 +131,7 @@ class TestDownloadFileView:
         assert response.status_code == 302
         # Owner self-download → no audit event.
         assert (
-            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count()
-            == 0
+            TransferEvent.objects.filter(transfer_id=transfer_with_file.id).count() == 0
         )
 
     @patch("core.api.viewsets.download.sign_download_url")
@@ -151,3 +147,24 @@ class TestDownloadFileView:
         )
         assert response.status_code == 302
         assert_single_event(transfer_with_file.id, TransferEventType.FILE_DOWNLOADED)
+
+    @patch("core.api.viewsets.download.sign_download_url")
+    def test_download_file_as_json(self, mock_sign, api_client, transfer_with_file):
+        # ``?as=json`` returns the presigned URL as data instead of a 302.
+        # The encryption Service Worker uses this to fetch S3 anonymously and
+        # avoid cross-origin redirect quirks with credentials.
+        t = transfer_with_file
+        tf = t.files.first()
+        mock_sign.return_value = "https://s3.example.com/signed-get-url"
+
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/?as=json"
+        )
+        assert response.status_code == 200
+        assert response.data == {"url": "https://s3.example.com/signed-get-url"}
+        # The presigned URL is short-lived and single-recipient — it must never
+        # be cached by a proxy or the browser.
+        assert response["Cache-Control"] == "no-store"
+        # Same audit semantics as the 302 path — FILE_DOWNLOADED is
+        # recorded as soon as the URL is handed out.
+        assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED)

@@ -165,9 +165,18 @@ def partial_mpu_file(authenticated_client, live_s3_bucket):
     The most common shape under test: a user dropped a file, started
     uploading, hasn't finished — now something cancels.
     """
+    # Every file is encrypted, so add-file needs a plaintext_size and a
+    # ciphertext ``size``. These leak tests upload raw bytes (no real
+    # crypto), so the declared ciphertext size must equal the bytes we push:
+    # one chunk of (S3_MIN_PART_SIZE - 28) plaintext expands to exactly
+    # S3_MIN_PART_SIZE ciphertext.
     resp = authenticated_client.post(
         "/api/v1.0/drafts/add-file/",
-        {"filename": "x.bin", "size": S3_MIN_PART_SIZE},
+        {
+            "filename": "x.bin",
+            "plaintext_size": S3_MIN_PART_SIZE - 28,
+            "size": S3_MIN_PART_SIZE,
+        },
         format="json",
     )
     assert resp.status_code == 201, resp.data
@@ -189,7 +198,11 @@ def completed_file(authenticated_client, live_s3_bucket):
     """
     resp = authenticated_client.post(
         "/api/v1.0/drafts/add-file/",
-        {"filename": "y.bin", "size": S3_MIN_PART_SIZE},
+        {
+            "filename": "y.bin",
+            "plaintext_size": S3_MIN_PART_SIZE - 28,
+            "size": S3_MIN_PART_SIZE,
+        },
         format="json",
     )
     assert resp.status_code == 201, resp.data

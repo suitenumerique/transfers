@@ -49,6 +49,12 @@ def send_recipient_invitation(transfer, recipient):
 
     Multipart message — HTML body matching the design mock plus a
     plain-text fallback for clients that strip HTML or filter on text.
+
+    The email carries only the download link, never the decryption key.
+    A non-confidential transfer's key is served by the backend at
+    download time; a confidential transfer's key never reaches us (the
+    sender delivers it out of band). So no fragment or key is ever
+    appended to the URL here.
     """
     base_url = _public_base_url()
     sender_name = (

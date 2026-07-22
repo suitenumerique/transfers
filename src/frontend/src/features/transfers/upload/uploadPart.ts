@@ -41,9 +41,9 @@ export function uploadPart({
     // Bridge the caller's AbortSignal to xhr.abort() *and* clean the
     // listener up the moment this part's XHR finishes. Without explicit
     // removal the abort listener accumulates on the shared signal for
-    // every part of the upload and keeps each XHR (and its 25 MiB blob
-    // reference) alive — a 760-part / 19 GB upload was pinning tens of
-    // gigabytes of RAM until we started removing the listener on load.
+    // every part of the upload and keeps each XHR (and its chunk-sized blob
+    // reference) alive — a large multipart upload was pinning gigabytes of
+    // RAM until we started removing the listener on load.
     const onAbort = () => xhr.abort();
     const cleanup = () => {
       if (signal) signal.removeEventListener("abort", onAbort);

@@ -251,10 +251,45 @@ class Transfer(BaseModel):
         "through every recipient (whether their delivery succeeded or not). "
         "The frontend polls this to know when to leave the 'sending…' state.",
     )
+    # Every finalized transfer is AES-GCM encrypted client-side; the bytes
+    # in S3 are always ciphertext. ``encryption_chunk_size`` being set is
+    # what marks a row as encrypted — legacy rows created before the
+    # encrypt-everything refactor keep it null and are served as plaintext.
+    encryption_chunk_size = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Plaintext bytes per crypto chunk; ciphertext part on S3 "
+        "is this + 28 bytes (12-byte IV + 16-byte GCM tag). Null only for "
+        "legacy transfers created before encryption was mandatory.",
+    )
+    # Confidential transfers keep the decryption key out of our infra
+    # entirely: ``encryption_key`` stays empty and the recipient supplies
+    # the key from the URL fragment (link) or by pasting it (email / bare
+    # link). Non-confidential transfers store the key here so the download
+    # API can serve it and the recipient decrypts transparently.
+    confidential = models.BooleanField(default=False)
+    encryption_key = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="URL-safe base64 of the AES-256 key (the same 43-char "
+        "string used as the URL fragment). Populated only for "
+        "non-confidential encrypted transfers; empty for confidential ones "
+        "(key never reaches us) and legacy plaintext transfers.",
+    )
 
     class Meta:
         db_table = "core_transfer"
         ordering = ["-created_at"]
+        constraints = [
+            CheckConstraint(
+                # A confidential transfer's key never reaches us, so the column
+                # must stay empty. The finalize serializer already rejects a
+                # posted key; this makes it a database-level invariant too.
+                condition=Q(confidential=False) | Q(encryption_key=""),
+                name="transfer_confidential_has_no_key",
+            ),
+        ]
 
     def __str__(self):
         return self.title or f"Transfer {self.id}"
@@ -271,7 +306,10 @@ class Transfer(BaseModel):
 
     @property
     def is_deactivated(self) -> bool:
-        return self.status in (TransferStatus.DEACTIVATED, TransferStatus.PENDING_FILE_DELETION)
+        return self.status in (
+            TransferStatus.DEACTIVATED,
+            TransferStatus.PENDING_FILE_DELETION,
+        )
 
     @property
     def is_accessible(self) -> bool:
@@ -279,6 +317,13 @@ class Transfer(BaseModel):
         # ``TransferDraft`` and never promote to Transfer until finalize.
         # So accessibility only depends on status + expiry.
         return self.status == TransferStatus.ACTIVE and not self.is_expired
+
+    @property
+    def is_encrypted(self) -> bool:
+        # Client-side encryption is mandatory for every transfer created
+        # since the encrypt-everything refactor. Legacy rows predate it and
+        # carry a null chunk size — those are plaintext.
+        return self.encryption_chunk_size is not None
 
     def deactivate(self, reason: DeactivationReason) -> bool:
         """Transition ``ACTIVE → PENDING_FILE_DELETION`` with the given reason.
@@ -303,7 +348,8 @@ class Transfer(BaseModel):
         ).update(
             status=TransferStatus.PENDING_FILE_DELETION,
             deactivation_reason=reason,
-            pending_deletion_at=now + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS),
+            pending_deletion_at=now
+            + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS),
             updated_at=now,
         )
         if updated:
@@ -366,6 +412,22 @@ class TransferDraft(BaseModel):
         on_delete=models.CASCADE,
         related_name="drafts",
     )
+    # Set on the first add-file call and copied to the Transfer at finalize.
+    # Every draft is encrypted (the client encrypts before upload), so this
+    # is always populated for new drafts. Whether the transfer ends up
+    # confidential is decided only at finalize, so the draft holds no
+    # ``confidential`` flag: the same ciphertext serves either outcome.
+    encryption_chunk_size = models.PositiveIntegerField(null=True, blank=True)
+    encryption_key = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="URL-safe base64 of the AES-256 key, mirrored here at "
+        "finalize so the Drive-import worker can encrypt server-fetched "
+        "bytes without receiving the key through Celery kwargs. Populated "
+        "only for non-confidential transfers; empty for confidential ones "
+        "(key never reaches us). Dropped with the draft.",
+    )
 
     class Meta:
         db_table = "core_transfer_draft"
@@ -399,7 +461,16 @@ class TransferFile(BaseModel):
         blank=True,
     )
     filename = models.CharField(max_length=255)
+    # Size of the bytes that land in S3. For encryption transfers this is the
+    # ciphertext size (plaintext + chunk_count * 28-byte GCM overhead); the
+    # plaintext size for UI display lives in ``plaintext_size``.
     size = models.PositiveBigIntegerField()
+    plaintext_size = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Decoded file size before encryption. Null when the parent "
+        "transfer is not encrypted — UIs should fall back to ``size``.",
+    )
     mime_type = models.CharField(max_length=255, blank=True, default="")
     s3_key = models.CharField(max_length=512)
 
@@ -424,6 +495,29 @@ class TransferFile(BaseModel):
         "import completes for audit — the bytes live in our S3 like any "
         "other file once ``upload_completed_at`` is set.",
     )
+    import_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set the moment finalize enqueues a server-side Drive "
+        "import, before the task creates the S3 multipart upload. Gates the "
+        "finalize poll so a concurrent re-post can't enqueue the import "
+        "twice.",
+    )
+    import_failed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when a server-side Drive import fails. The finalize "
+        "poll surfaces this to the user (who removes the file and retries) "
+        "instead of the import silently dropping the row.",
+    )
+    bytes_imported = models.PositiveBigIntegerField(
+        default=0,
+        help_text="Plaintext bytes streamed into S3 so far by "
+        "``import_drive_file_task``. Bumped after each S3 part upload; the "
+        "finalize 202 poll exposes it so the frontend can render a "
+        "progress bar rather than an opaque spinner. Stays 0 for browser "
+        "uploads (client-side already knows its own progress).",
+    )
 
     scan_status = models.CharField(
         max_length=10,
@@ -441,6 +535,13 @@ class TransferFile(BaseModel):
         help_text="Set only when scan_status is ERROR. 'transient' = an "
         "infrastructure failure that a retry may clear; 'file' = the file "
         "itself can't be scanned, so the user must remove it.",
+    )
+    scan_submitted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when the file was handed to the scanner. Distinguishes "
+        "'PENDING, scan running' from 'PENDING, key not yet supplied', and keeps "
+        "the finalize poll loop from re-submitting a scan already in flight.",
     )
     scan_job_id = models.CharField(
         max_length=64,
@@ -470,6 +571,18 @@ class TransferFile(BaseModel):
                     | Q(transfer__isnull=True, draft__isnull=False)
                 ),
                 name="transferfile_exactly_one_parent",
+            ),
+        ]
+        indexes = [
+            # Feeds reap_stale_pending_scans_task's periodic sweep for
+            # scans whose webhook never came back. PENDING is the only
+            # status the reaper considers, so a partial index keeps it
+            # small (drops as files clear) and avoids scanning the full
+            # table on every tick.
+            models.Index(
+                fields=["scan_submitted_at"],
+                condition=Q(scan_status=ScanStatus.PENDING),
+                name="transferfile_pending_scan_idx",
             ),
         ]
 

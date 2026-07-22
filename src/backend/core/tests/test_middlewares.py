@@ -32,9 +32,7 @@ def test_single_xff_entry_replaces_remote_addr():
 def test_multiple_xff_entries_takes_rightmost():
     # The leftmost entry is whatever the client sent (potentially spoofed);
     # the rightmost is the IP appended by our trusted edge proxy.
-    request = RequestFactory().get(
-        "/", HTTP_X_FORWARDED_FOR="10.0.0.171, 203.0.113.10"
-    )
+    request = RequestFactory().get("/", HTTP_X_FORWARDED_FOR="10.0.0.171, 203.0.113.10")
     request.META["REMOTE_ADDR"] = "127.0.0.1"
     _run(request)
     assert request.META["REMOTE_ADDR"] == "203.0.113.10"
