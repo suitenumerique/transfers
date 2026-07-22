@@ -1,12 +1,15 @@
-"""API ViewSet for Transfer (authenticated agent, read-only + deactivate).
+"""API ViewSet for Transfer (authenticated agent, read + deactivate + purge).
 
 All the draft / upload lifecycle lives on ``TransferDraftViewSet``. Once a
 draft is finalized, the resulting ``Transfer`` row is immutable except for
 ``deactivate`` (which closes the link immediately and schedules the S3
 purge via ``pending_deletion_at`` — the sweep task handles the final
-transition to DEACTIVATED). Listing / retrieving / inspecting events
-happen here; mutation beyond deactivate does not exist.
+transition to DEACTIVATED) and a subsequent hard-delete (irreversible,
+allowed only once the row has reached DEACTIVATED so no S3 bytes end up
+orphaned by the operation).
 """
+
+import logging
 
 from django.db.models import Count, Exists, OuterRef, Sum
 
@@ -14,6 +17,8 @@ import rest_framework as drf
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+
+logger = logging.getLogger(__name__)
 
 from core import models
 from core.api.permissions import IsAuthenticated
@@ -35,6 +40,7 @@ from core.enums import (
 class TransferViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """Read-only view over finalized transfers plus the ``deactivate`` transition.
@@ -96,6 +102,41 @@ class TransferViewSet(
             .prefetch_related("files", "recipients")
             .order_by("-created_at")
         )
+
+    def perform_destroy(self, instance):
+        """Hard-delete a fully-deactivated transfer.
+
+        Only ``DEACTIVATED`` rows are eligible: ``ACTIVE`` still has a live
+        link, and ``PENDING_FILE_DELETION`` still owns S3 objects that the
+        purge task would orphan if we drop the ``TransferFile`` rows
+        listing their keys. The owner-only gate is enforced upstream by
+        ``get_queryset``.
+
+        FK cascade carries off ``TransferFile`` and ``TransferRecipient``.
+        ``TransferEvent``, deliberately not FK-constrained (see its
+        docstring), stays behind — its audit trail (who sent, who
+        downloaded, when) outlives the Transfer row on purpose. The delete
+        leaves no DB trace of who did what; log it at INFO on the server
+        so the operator can prove which agent purged which row after the
+        row is gone.
+        """
+        if instance.status != TransferStatus.DEACTIVATED:
+            raise drf.exceptions.ValidationError(
+                {
+                    "status": (
+                        "Only fully-deactivated transfers can be purged. "
+                        "Deactivate the transfer first and wait for the S3 "
+                        "cleanup to complete."
+                    )
+                }
+            )
+        logger.info(
+            "Transfer %s hard-deleted by user %s (owner %s)",
+            instance.id,
+            self.request.user.id,
+            instance.owner_id,
+        )
+        instance.delete()
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])

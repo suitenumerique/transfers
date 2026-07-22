@@ -7,9 +7,11 @@ import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
+import { useNavigate } from "@tanstack/react-router";
 import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
+import { useHardDeleteTransfer } from "../api/useHardDeleteTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { FileItem } from "./FileItem";
@@ -50,6 +52,8 @@ export function TransferDetail({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
+  const hardDeleteTransfer = useHardDeleteTransfer();
+  const navigate = useNavigate();
   const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
   const [recipientsOpen, setRecipientsOpen] = useState(true);
@@ -64,6 +68,7 @@ export function TransferDetail({
   // before the task has even re-run.
   const seenCompletionRef = useRef<string | null>(null);
   const deactivateModal = useModal();
+  const hardDeleteModal = useModal();
   const events = useTransferEvents(transfer.id);
 
   // Refresh the parent's useTransfer query every 2s while a retry is in
@@ -177,6 +182,18 @@ export function TransferDetail({
   const handleDeactivateConfirm = () => {
     deactivateModal.close();
     deactivateTransfer.mutate(transfer.id);
+  };
+
+  const handleHardDeleteConfirm = () => {
+    hardDeleteModal.close();
+    // Nav away as soon as the row is gone so the user doesn't sit on a
+    // stale detail view. The list-cache invalidation in the mutation's
+    // ``onSuccess`` covers the destination.
+    hardDeleteTransfer.mutate(transfer.id, {
+      onSuccess: () => {
+        void navigate({ to: "/" });
+      },
+    });
   };
 
   // Sender-side mirror of the recipient's antivirus badge. The recap shows
@@ -451,6 +468,23 @@ export function TransferDetail({
         </div>
       )}
 
+      {/* Terminal-state actions: once the row is fully DEACTIVATED (S3
+          already purged) the agent can hard-delete the metadata + audit
+          trail. Refused by the backend before that (would strand S3
+          keys), so the button hides on the transitional
+          PENDING_FILE_DELETION state. */}
+      {transfer.status === "deactivated" && (
+        <div className="transfer-detail__actions">
+          <Button
+            color="error"
+            onClick={hardDeleteModal.open}
+            disabled={hardDeleteTransfer.isPending}
+          >
+            {t("Delete permanently")}
+          </Button>
+        </div>
+      )}
+
       <section className="transfer-detail__history">
         <h2 className="transfer-detail__history-title">{t("History")}</h2>
         {events.isLoading ? (
@@ -528,6 +562,35 @@ export function TransferDetail({
         }
       >
         {t("This link will no longer work and files will be deleted.")}
+      </Modal>
+
+      <Modal
+        size={ModalSize.SMALL}
+        isOpen={hardDeleteModal.isOpen}
+        onClose={hardDeleteModal.close}
+        title={t("Delete permanently")}
+        rightActions={
+          <>
+            <Button
+              color="neutral"
+              variant="secondary"
+              onClick={hardDeleteModal.close}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              color="error"
+              onClick={handleHardDeleteConfirm}
+              disabled={hardDeleteTransfer.isPending}
+            >
+              {t("Delete permanently")}
+            </Button>
+          </>
+        }
+      >
+        {t(
+          "This is irreversible. The transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
+        )}
       </Modal>
     </div>
   );

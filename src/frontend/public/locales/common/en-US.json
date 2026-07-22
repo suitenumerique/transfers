@@ -99,6 +99,8 @@
   "Previous": "Previous",
   "Recipient": "Recipient",
   "Deactivate": "Deactivate",
+  "Delete permanently": "Delete permanently",
+  "This is irreversible. The transfer's file list and recipients will be permanently removed. The activity log is kept for audit.": "This is irreversible. The transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
   "Revoke": "Deactivate",
   "Sending...": "Sending...",
   "Your transfer will be created once the upload finishes. Keep this tab open.": "Your transfer will be created once the upload finishes. Keep this tab open.",

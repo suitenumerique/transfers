@@ -313,6 +313,105 @@ class TestTransferDeactivate:
 
 
 @pytest.mark.django_db
+class TestTransferHardDelete:
+    """DELETE /api/v1.0/transfers/<id>/ — hard-delete a fully-deactivated
+    transfer (row + FK-cascaded files + recipients). ``TransferEvent`` is
+    deliberately not FK-linked so its audit trail survives. Guarded by
+    ``status == DEACTIVATED`` so we never orphan S3 bytes."""
+
+    def _deactivated(self, owner):
+        """Build a Transfer + one file + one recipient + a couple of events
+        already in the terminal DEACTIVATED state — the state the hard-
+        delete is designed for."""
+        transfer = TransferFactory(
+            owner=owner, status=TransferStatus.DEACTIVATED
+        )
+        TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
+        transfer.recipients.create(email="r@example.org")
+        TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.TRANSFER_CREATED,
+            actor_type=ActorType.AGENT,
+        )
+        TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.TRANSFER_DEACTIVATED_MANUALLY,
+            actor_type=ActorType.AGENT,
+        )
+        return transfer
+
+    def test_unauthenticated(self, api_client, transfer):
+        response = api_client.delete(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 401
+
+    def test_purges_transfer_and_fk_children_but_keeps_events(
+        self, authenticated_client, user
+    ):
+        """Nominal path: the DEACTIVATED transfer row + FK-cascaded files +
+        recipients are gone; the events survive because ``transfer_id`` is
+        a plain UUIDField (not a FK), matching the class docstring's
+        "survive Transfer deletion" contract.
+        """
+        from core.models import Transfer, TransferFile, TransferRecipient
+
+        transfer = self._deactivated(user)
+        pre_event_ids = list(
+            TransferEvent.objects.filter(transfer_id=transfer.id).values_list(
+                "id", flat=True
+            )
+        )
+        assert len(pre_event_ids) == 2  # sanity: fixture created two events
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 204
+        assert not Transfer.objects.filter(id=transfer.id).exists()
+        # FK cascade for files + recipients:
+        assert not TransferFile.objects.filter(transfer_id=transfer.id).exists()
+        assert not TransferRecipient.objects.filter(
+            transfer_id=transfer.id
+        ).exists()
+        # Events stay behind, un-touched, on the audit trail.
+        assert (
+            TransferEvent.objects.filter(id__in=pre_event_ids).count()
+            == len(pre_event_ids)
+        )
+
+    def test_refuses_active_transfer(self, authenticated_client, user):
+        """Active transfer still has a live link — refuse; deactivate first."""
+        transfer = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 400
+        assert "status" in response.data
+        transfer.refresh_from_db()
+        # Row must be intact.
+        assert transfer.status == TransferStatus.ACTIVE
+
+    def test_refuses_pending_file_deletion(self, authenticated_client, user):
+        """S3 objects still exist while the row is PENDING_FILE_DELETION —
+        deleting the ``TransferFile`` rows now would strand their keys so
+        the orphan sweep couldn't reclaim them."""
+        transfer = TransferFactory(
+            owner=user, status=TransferStatus.PENDING_FILE_DELETION
+        )
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 400
+        transfer.refresh_from_db()
+        assert transfer.status == TransferStatus.PENDING_FILE_DELETION
+
+    def test_rejects_other_user(self, authenticated_client):
+        """A non-owner sees the same 404 as if the row didn't exist — the
+        owner filter lives in ``get_queryset`` and gates every action."""
+        other_transfer = TransferFactory(status=TransferStatus.DEACTIVATED)
+        response = authenticated_client.delete(f"{API_URL}{other_transfer.id}/")
+        assert response.status_code == 404
+
+
+@pytest.mark.django_db
 class TestTransferEvents:
     def test_unauthenticated(self, api_client, transfer):
         response = api_client.get(f"{API_URL}{transfer.id}/events/")

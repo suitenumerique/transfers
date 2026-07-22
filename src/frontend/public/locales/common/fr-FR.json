@@ -120,6 +120,8 @@
   "Email not sent": "Courriel non envoyé",
   "Sent by email": "Envoyé par courriel",
   "Deactivate": "Désactiver",
+  "Delete permanently": "Supprimer définitivement",
+  "This is irreversible. The transfer's file list and recipients will be permanently removed. The activity log is kept for audit.": "Cette action est irréversible. La liste des fichiers et les destinataires seront définitivement supprimés. Le journal d'activité est conservé pour audit.",
   "Revoke": "Désactiver",
   "Sending...": "Envoi en cours…",
   "Your transfer will be created once the upload finishes. Keep this tab open.": "Votre transfert sera créé à la fin de l'envoi. Ne fermez pas cet onglet.",
