@@ -5,8 +5,11 @@ import { apiFetch } from "@/features/api/client";
 // but ``DEACTIVATED`` rows (there's a live link on ACTIVE, and dropping the
 // TransferFile rows while PENDING_FILE_DELETION would strand their S3
 // keys), so a 400 here means the caller shouldn't have offered the button.
-// On success the row and its history are gone — invalidate the list and
-// the per-transfer query so the UI drops any cached view.
+// On success the ``Transfer`` row and its FK-linked children (files,
+// recipients) are gone, so any detail view or list entry pointing at this
+// id becomes unavailable — invalidate both queries so the UI drops the
+// cached view. Retained ``TransferEvent`` audit records live on
+// separately by design; the Transfer detail is what disappears here.
 export function useHardDeleteTransfer() {
   const queryClient = useQueryClient();
 

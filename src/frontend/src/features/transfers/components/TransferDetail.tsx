@@ -469,9 +469,9 @@ export function TransferDetail({
       )}
 
       {/* Terminal-state actions: once the row is fully DEACTIVATED (S3
-          already purged) the agent can hard-delete the metadata + audit
-          trail. Refused by the backend before that (would strand S3
-          keys), so the button hides on the transitional
+          already purged) the agent can hard-delete the transfer's file
+          list and recipients. Refused by the backend before that (would
+          strand S3 keys), so the button hides on the transitional
           PENDING_FILE_DELETION state. */}
       {transfer.status === "deactivated" && (
         <div className="transfer-detail__actions">

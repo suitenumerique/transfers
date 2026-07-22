@@ -115,10 +115,11 @@ class TransferViewSet(
         FK cascade carries off ``TransferFile`` and ``TransferRecipient``.
         ``TransferEvent``, deliberately not FK-constrained (see its
         docstring), stays behind — its audit trail (who sent, who
-        downloaded, when) outlives the Transfer row on purpose. The delete
-        leaves no DB trace of who did what; log it at INFO on the server
-        so the operator can prove which agent purged which row after the
-        row is gone.
+        downloaded, when) outlives the Transfer row on purpose. We log at
+        INFO *after* the delete succeeds so a failure doesn't leave a
+        misleading success record, and without user identifiers — actor
+        attribution needs the privacy-reviewed audit pipeline, not an
+        infra log line.
         """
         if instance.status != TransferStatus.DEACTIVATED:
             raise drf.exceptions.ValidationError(
@@ -130,13 +131,9 @@ class TransferViewSet(
                     )
                 }
             )
-        logger.info(
-            "Transfer %s hard-deleted by user %s (owner %s)",
-            instance.id,
-            self.request.user.id,
-            instance.owner_id,
-        )
+        transfer_id = instance.id
         instance.delete()
+        logger.info("Transfer %s hard-deleted", transfer_id)
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])
