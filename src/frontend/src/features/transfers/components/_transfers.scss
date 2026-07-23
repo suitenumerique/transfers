@@ -122,6 +122,12 @@
 }
 
 
+// Modal error alert (portaled outside `.transfer-detail`, so scoped at the
+// root here). Breathes it apart from the "irreversible" copy that follows.
+.transfer-detail__hard-delete-error {
+  margin-bottom: var(--c--globals--spacings--sm);
+}
+
 // Transfer Detail
 .transfer-detail {
   display: flex;

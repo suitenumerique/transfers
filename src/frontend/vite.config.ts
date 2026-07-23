@@ -33,6 +33,19 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        // Vite 8's default sass compiler no longer forwards Node's module
+        // resolver into ``@use`` — importing ``@gouvfr-lasuite/ui-kit/style``
+        // and the other npm-scoped SCSS packages fails silently to an empty
+        // CSS blob, leaving the whole app unstyled. Adding ``node_modules``
+        // to sass ``loadPaths`` restores the pre-8 behaviour so bare
+        // specifiers resolve.
+        loadPaths: [path.resolve(__dirname, "./node_modules")],
+      },
+    },
+  },
   // App env vars are read via `import.meta.env.NEXT_PUBLIC_*`. envPrefix
   // tells Vite which env vars to expose to client code at build time.
   envPrefix: "NEXT_PUBLIC_",

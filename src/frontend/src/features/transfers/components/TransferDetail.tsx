@@ -1,15 +1,18 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
+import { useNavigate } from "@tanstack/react-router";
 import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
+import { useHardDeleteTransfer } from "../api/useHardDeleteTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { FileItem } from "./FileItem";
@@ -50,6 +53,8 @@ export function TransferDetail({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
+  const hardDeleteTransfer = useHardDeleteTransfer();
+  const navigate = useNavigate();
   const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
   const [recipientsOpen, setRecipientsOpen] = useState(true);
@@ -64,6 +69,7 @@ export function TransferDetail({
   // before the task has even re-run.
   const seenCompletionRef = useRef<string | null>(null);
   const deactivateModal = useModal();
+  const hardDeleteModal = useModal();
   const events = useTransferEvents(transfer.id);
 
   // Refresh the parent's useTransfer query every 2s while a retry is in
@@ -177,6 +183,45 @@ export function TransferDetail({
   const handleDeactivateConfirm = () => {
     deactivateModal.close();
     deactivateTransfer.mutate(transfer.id);
+  };
+
+  const handleHardDeleteConfirm = () => {
+    // Close the modal + nav away ONLY on success. On failure (the
+    // backend refuses ACTIVE for defense-in-depth, and the S3 wipe on
+    // PENDING_FILE_DELETION can fail transiently — "try again in a
+    // moment" per the viewset), leaving the modal open lets the user
+    // see the error message and retry from the same click. The confirm
+    // button already disables via ``isPending`` so no double-fire.
+    hardDeleteTransfer.mutate(transfer.id, {
+      onSuccess: () => {
+        hardDeleteModal.close();
+        void navigate({ to: "/" });
+      },
+    });
+  };
+
+  const closeHardDeleteModal = () => {
+    // Clear a lingering error state so re-opening the modal (or the
+    // ``Cancel`` after a failed attempt) starts from a clean slate
+    // instead of surfacing the previous attempt's message.
+    hardDeleteTransfer.reset();
+    hardDeleteModal.close();
+  };
+
+  const hardDeleteErrorMessage = (): string | null => {
+    if (!hardDeleteTransfer.isError) return null;
+    // DRF ValidationError body is ``{field: ["message"]}``; grab the
+    // first message we find so the user sees the backend's own copy
+    // ("Deactivate it first…" / "Try again in a moment.") instead of
+    // a generic "Bad Request".
+    const err = hardDeleteTransfer.error;
+    if (err instanceof ApiError && err.body && typeof err.body === "object") {
+      for (const val of Object.values(err.body as Record<string, unknown>)) {
+        if (typeof val === "string") return val;
+        if (Array.isArray(val) && typeof val[0] === "string") return val[0];
+      }
+    }
+    return err instanceof Error ? err.message : t("Something went wrong. Please try again.");
   };
 
   // Sender-side mirror of the recipient's antivirus badge. The recap shows
@@ -451,6 +496,25 @@ export function TransferDetail({
         </div>
       )}
 
+      {/* Hard-delete: hidden on ``ACTIVE`` so an agent doesn't silently
+          kill a live link — they have to click Deactivate first, which
+          makes the "the link is going away" step explicit. On
+          ``PENDING_FILE_DELETION`` (grace window running) and
+          ``DEACTIVATED`` (S3 already purged) the button is safe:
+          the backend wipes any remaining S3 bytes before dropping the
+          row so the periodic sweep never sees orphaned keys. */}
+      {transfer.status !== "active" && (
+        <div className="transfer-detail__actions">
+          <Button
+            color="error"
+            onClick={hardDeleteModal.open}
+            disabled={hardDeleteTransfer.isPending}
+          >
+            {t("Delete permanently")}
+          </Button>
+        </div>
+      )}
+
       <section className="transfer-detail__history">
         <h2 className="transfer-detail__history-title">{t("History")}</h2>
         {events.isLoading ? (
@@ -528,6 +592,43 @@ export function TransferDetail({
         }
       >
         {t("This link will no longer work and files will be deleted.")}
+      </Modal>
+
+      <Modal
+        size={ModalSize.SMALL}
+        isOpen={hardDeleteModal.isOpen}
+        onClose={closeHardDeleteModal}
+        title={t("Delete permanently")}
+        rightActions={
+          <>
+            <Button
+              color="neutral"
+              variant="secondary"
+              onClick={closeHardDeleteModal}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              color="error"
+              onClick={handleHardDeleteConfirm}
+              disabled={hardDeleteTransfer.isPending}
+            >
+              {t("Delete permanently")}
+            </Button>
+          </>
+        }
+      >
+        {hardDeleteTransfer.isError && (
+          <Alert
+            type={VariantType.ERROR}
+            className="transfer-detail__hard-delete-error"
+          >
+            {hardDeleteErrorMessage()}
+          </Alert>
+        )}
+        {t(
+          "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
+        )}
       </Modal>
     </div>
   );

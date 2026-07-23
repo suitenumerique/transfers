@@ -1,5 +1,6 @@
 {
   "A virus was detected. This transfer was blocked and not sent.": "A virus was detected. This transfer was blocked and not sent.",
+  "Something went wrong. Please try again.": "Something went wrong. Please try again.",
   "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.": "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
   "A file could not be scanned and was blocked. Remove it to send the transfer.": "A file could not be scanned and was blocked. Remove it to send the transfer.",
   "The antivirus scan could not complete. Retry the scan, then send again.": "The antivirus scan could not complete. Retry the scan, then send again.",
@@ -99,6 +100,8 @@
   "Previous": "Previous",
   "Recipient": "Recipient",
   "Deactivate": "Deactivate",
+  "Delete permanently": "Delete permanently",
+  "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.": "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
   "Revoke": "Deactivate",
   "Sending...": "Sending...",
   "Your transfer will be created once the upload finishes. Keep this tab open.": "Your transfer will be created once the upload finishes. Keep this tab open.",
