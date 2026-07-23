@@ -104,13 +104,31 @@ class TransferViewSet(
         )
 
     def perform_destroy(self, instance):
-        """Hard-delete a fully-deactivated transfer.
+        """Hard-delete a transfer past its ACTIVE phase.
 
-        Only ``DEACTIVATED`` rows are eligible: ``ACTIVE`` still has a live
-        link, and ``PENDING_FILE_DELETION`` still owns S3 objects that the
-        purge task would orphan if we drop the ``TransferFile`` rows
-        listing their keys. The owner-only gate is enforced upstream by
-        ``get_queryset``.
+        Two eligible states:
+
+        * ``PENDING_FILE_DELETION`` — link is already closed but S3
+          objects still exist, waiting for the grace window to elapse.
+          Skip the grace and wipe now, then drop the row. Otherwise the
+          purge task would try to reclaim keys whose ``TransferFile``
+          rows we've already deleted and log a spurious "failed to
+          purge" against a Transfer row that no longer exists.
+        * ``DEACTIVATED`` — S3 was already wiped by the periodic sweep.
+          Just drop the row.
+
+        ``ACTIVE`` is refused: the link is live and killing it silently
+        would surprise the recipient. The agent must click Deactivate
+        first — that's the explicit "the link is going away" step. The
+        frontend hides the button on ACTIVE; this backend guard is
+        defense in depth for anyone crafting a raw DELETE.
+
+        Owner-only gating rides on ``get_queryset``.
+
+        S3 wipe is best-effort — if any object fails to delete, we
+        refuse the destroy (returning 400 rather than silently orphaning
+        bytes the periodic sweep can no longer reclaim). The user can
+        retry after transient S3 hiccups clear.
 
         FK cascade carries off ``TransferFile`` and ``TransferRecipient``.
         ``TransferEvent``, deliberately not FK-constrained (see its
@@ -121,16 +139,27 @@ class TransferViewSet(
         attribution needs the privacy-reviewed audit pipeline, not an
         infra log line.
         """
-        if instance.status != TransferStatus.DEACTIVATED:
+        if instance.status == TransferStatus.ACTIVE:
             raise drf.exceptions.ValidationError(
                 {
                     "status": (
-                        "Only fully-deactivated transfers can be purged. "
-                        "Deactivate the transfer first and wait for the S3 "
-                        "cleanup to complete."
+                        "An active transfer cannot be hard-deleted. "
+                        "Deactivate it first, then delete."
                     )
                 }
             )
+        # PENDING_FILE_DELETION still owns bytes — wipe them before the
+        # row goes so the periodic sweep never finds orphan keys.
+        if instance.status == TransferStatus.PENDING_FILE_DELETION:
+            if not instance.delete_s3_objects():
+                raise drf.exceptions.ValidationError(
+                    {
+                        "s3": (
+                            "Some files could not be deleted from storage. "
+                            "Try again in a moment."
+                        )
+                    }
+                )
         transfer_id = instance.id
         instance.delete()
         logger.info("Transfer %s hard-deleted", transfer_id)

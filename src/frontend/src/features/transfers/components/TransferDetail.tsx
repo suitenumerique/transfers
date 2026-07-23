@@ -468,12 +468,14 @@ export function TransferDetail({
         </div>
       )}
 
-      {/* Terminal-state actions: once the row is fully DEACTIVATED (S3
-          already purged) the agent can hard-delete the transfer's file
-          list and recipients. Refused by the backend before that (would
-          strand S3 keys), so the button hides on the transitional
-          PENDING_FILE_DELETION state. */}
-      {transfer.status === "deactivated" && (
+      {/* Hard-delete: hidden on ``ACTIVE`` so an agent doesn't silently
+          kill a live link — they have to click Deactivate first, which
+          makes the "the link is going away" step explicit. On
+          ``PENDING_FILE_DELETION`` (grace window running) and
+          ``DEACTIVATED`` (S3 already purged) the button is safe:
+          the backend wipes any remaining S3 bytes before dropping the
+          row so the periodic sweep never sees orphaned keys. */}
+      {transfer.status !== "active" && (
         <div className="transfer-detail__actions">
           <Button
             color="error"
@@ -589,7 +591,7 @@ export function TransferDetail({
         }
       >
         {t(
-          "This is irreversible. The transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
+          "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
         )}
       </Modal>
     </div>
