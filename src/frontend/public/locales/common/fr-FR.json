@@ -1,5 +1,6 @@
 {
   "A virus was detected. This transfer was blocked and not sent.": "Un virus a été détecté. Ce transfert a été bloqué et n'a pas été envoyé.",
+  "Something went wrong. Please try again.": "Une erreur est survenue. Veuillez réessayer.",
   "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.": "Un virus a été détecté dans ce fichier. Le transfert est bloqué. Retirez ce fichier pour envoyer les autres.",
   "A file could not be scanned and was blocked. Remove it to send the transfer.": "Un fichier n'a pas pu être analysé et a été bloqué. Retirez-le pour envoyer le transfert.",
   "The antivirus scan could not complete. Retry the scan, then send again.": "L'analyse antivirus n'a pas pu aboutir. Relancez l'analyse, puis renvoyez.",

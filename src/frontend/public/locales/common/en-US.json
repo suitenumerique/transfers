@@ -1,5 +1,6 @@
 {
   "A virus was detected. This transfer was blocked and not sent.": "A virus was detected. This transfer was blocked and not sent.",
+  "Something went wrong. Please try again.": "Something went wrong. Please try again.",
   "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.": "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
   "A file could not be scanned and was blocked. Remove it to send the transfer.": "A file could not be scanned and was blocked. Remove it to send the transfer.",
   "The antivirus scan could not complete. Retry the scan, then send again.": "The antivirus scan could not complete. Retry the scan, then send again.",

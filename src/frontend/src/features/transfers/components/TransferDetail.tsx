@@ -1,10 +1,11 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { useNavigate } from "@tanstack/react-router";
@@ -185,15 +186,42 @@ export function TransferDetail({
   };
 
   const handleHardDeleteConfirm = () => {
-    hardDeleteModal.close();
-    // Nav away as soon as the row is gone so the user doesn't sit on a
-    // stale detail view. The list-cache invalidation in the mutation's
-    // ``onSuccess`` covers the destination.
+    // Close the modal + nav away ONLY on success. On failure (the
+    // backend refuses ACTIVE for defense-in-depth, and the S3 wipe on
+    // PENDING_FILE_DELETION can fail transiently — "try again in a
+    // moment" per the viewset), leaving the modal open lets the user
+    // see the error message and retry from the same click. The confirm
+    // button already disables via ``isPending`` so no double-fire.
     hardDeleteTransfer.mutate(transfer.id, {
       onSuccess: () => {
+        hardDeleteModal.close();
         void navigate({ to: "/" });
       },
     });
+  };
+
+  const closeHardDeleteModal = () => {
+    // Clear a lingering error state so re-opening the modal (or the
+    // ``Cancel`` after a failed attempt) starts from a clean slate
+    // instead of surfacing the previous attempt's message.
+    hardDeleteTransfer.reset();
+    hardDeleteModal.close();
+  };
+
+  const hardDeleteErrorMessage = (): string | null => {
+    if (!hardDeleteTransfer.isError) return null;
+    // DRF ValidationError body is ``{field: ["message"]}``; grab the
+    // first message we find so the user sees the backend's own copy
+    // ("Deactivate it first…" / "Try again in a moment.") instead of
+    // a generic "Bad Request".
+    const err = hardDeleteTransfer.error;
+    if (err instanceof ApiError && err.body && typeof err.body === "object") {
+      for (const val of Object.values(err.body as Record<string, unknown>)) {
+        if (typeof val === "string") return val;
+        if (Array.isArray(val) && typeof val[0] === "string") return val[0];
+      }
+    }
+    return err instanceof Error ? err.message : t("Something went wrong. Please try again.");
   };
 
   // Sender-side mirror of the recipient's antivirus badge. The recap shows
@@ -569,14 +597,14 @@ export function TransferDetail({
       <Modal
         size={ModalSize.SMALL}
         isOpen={hardDeleteModal.isOpen}
-        onClose={hardDeleteModal.close}
+        onClose={closeHardDeleteModal}
         title={t("Delete permanently")}
         rightActions={
           <>
             <Button
               color="neutral"
               variant="secondary"
-              onClick={hardDeleteModal.close}
+              onClick={closeHardDeleteModal}
             >
               {t("Cancel")}
             </Button>
@@ -590,6 +618,14 @@ export function TransferDetail({
           </>
         }
       >
+        {hardDeleteTransfer.isError && (
+          <Alert
+            type={VariantType.ERROR}
+            className="transfer-detail__hard-delete-error"
+          >
+            {hardDeleteErrorMessage()}
+          </Alert>
+        )}
         {t(
           "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
         )}

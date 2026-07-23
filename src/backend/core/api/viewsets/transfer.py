@@ -140,6 +140,14 @@ class TransferViewSet(
         infra log line.
         """
         if instance.status == TransferStatus.ACTIVE:
+            # The frontend hides this button on ACTIVE, so reaching here is
+            # either a raw DELETE (curl / script) or a UI regression. Log
+            # it at WARNING so ops can spot the pattern; no id/user in the
+            # message — actor attribution belongs in the audit pipeline
+            # (mirrors the post-delete INFO log's rationale).
+            logger.warning(
+                "Refused hard-delete on an ACTIVE transfer (frontend guard bypassed)"
+            )
             raise drf.exceptions.ValidationError(
                 {
                     "status": (
