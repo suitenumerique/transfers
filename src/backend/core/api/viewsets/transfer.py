@@ -140,13 +140,14 @@ class TransferViewSet(
         infra log line.
         """
         if instance.status == TransferStatus.ACTIVE:
-            # The frontend hides this button on ACTIVE, so reaching here is
-            # either a raw DELETE (curl / script) or a UI regression. Log
-            # it at WARNING so ops can spot the pattern; no id/user in the
-            # message — actor attribution belongs in the audit pipeline
-            # (mirrors the post-delete INFO log's rationale).
-            logger.warning(
-                "Refused hard-delete on an ACTIVE transfer (frontend guard bypassed)"
+            # Expected defensive rejection: the frontend hides the button on
+            # ACTIVE, so reaching here means a raw DELETE (curl / script /
+            # ops probe). Log at INFO — the guard fired as designed, this
+            # is not a pattern that needs investigation. Include the
+            # transfer id for correlation; no user identifier here (actor
+            # attribution stays in the audit pipeline).
+            logger.info(
+                "Refused hard-delete of ACTIVE transfer %s", instance.id
             )
             raise drf.exceptions.ValidationError(
                 {
@@ -160,6 +161,14 @@ class TransferViewSet(
         # row goes so the periodic sweep never finds orphan keys.
         if instance.status == TransferStatus.PENDING_FILE_DELETION:
             if not instance.delete_s3_objects():
+                # Storage failure (S3 hiccup, credentials rot, bucket
+                # policy change) — WARNING so ops sees the rate. The
+                # user retries; we refuse rather than orphan bytes the
+                # sweep can no longer reclaim.
+                logger.warning(
+                    "Refused hard-delete of transfer %s: S3 cleanup failed",
+                    instance.id,
+                )
                 raise drf.exceptions.ValidationError(
                     {
                         "s3": (
