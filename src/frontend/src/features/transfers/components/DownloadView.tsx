@@ -310,10 +310,11 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       {/* All page-level callouts share this block so the reader takes them
           in as a single glance. Order: ERROR → WARNING; within warnings,
           most-actionable first (auto-archive can be fixed by not clicking
-          "Download all" carelessly; the scan-not-verified notice is
-          informational). Confidential transfers are muted on the scan
-          notice — the confidential badge in the meta line already covers
-          the "no scan by design" case. */}
+          "Download all" carelessly; the confidential / scan-not-verified
+          notices are informational). Confidential and the generic
+          "some files not scanned" alerts are mutually exclusive —
+          confidential means no scan by design, so its dedicated banner
+          already covers the "no scan" outcome for every file. */}
       {isEncrypted && encryptionState === "error" && (
         <Alert
           type={VariantType.ERROR}
@@ -333,6 +334,17 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
           {isOwner
             ? t("Single-use link. Deactivates after full download by another user.")
             : t("Single-use link. Deactivates after full download.")}
+        </Alert>
+      )}
+
+      {transfer.confidential && transfer.files.length > 0 && (
+        <Alert
+          type={VariantType.WARNING}
+          className="download-view__scan-alert"
+        >
+          {t(
+            "This transfer is confidential, so it couldn't be scanned for viruses: the decryption key never reached our servers. Open the files with caution.",
+          )}
         </Alert>
       )}
 

@@ -332,12 +332,18 @@ export function TransferForm() {
   // detected virus, a "could not be scanned" verdict, a scan timeout,
   // etc. It's actionable copy that tells the user to remove the offending
   // file, and once they do the alert becomes stale advice pointing at
-  // nothing. Clear it on any change to the file set so the alert doesn't
-  // linger past the action it was pushing the user to take; a fresh
-  // submit will surface whatever is still wrong.
+  // nothing. Clear on any change to the file set OR to a file's
+  // scan_status: the transient "scan could not complete" banner would
+  // otherwise linger after the background retry succeeds and every file
+  // has flipped to ``clean``, still telling the user to retry a scan
+  // that already resolved. Depending on a composite of the scan
+  // statuses catches both remove/add and error→clean transitions.
+  const scanStatusSignature = draft.files
+    .map((f) => f.scanStatus ?? "")
+    .join(",");
   useEffect(() => {
     setSubmitError((prev) => (prev ? null : prev));
-  }, [draft.files.length]);
+  }, [draft.files.length, scanStatusSignature]);
 
   // Warn before any kind of departure while a draft has files or uploads
   // in flight. Two separate guards because the events don't overlap:
