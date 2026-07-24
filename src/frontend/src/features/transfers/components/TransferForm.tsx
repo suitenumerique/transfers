@@ -328,22 +328,52 @@ export function TransferForm() {
   const scanning = draft.isScanning;
   const importingDrive = draft.isImportingDrive;
   const [submitError, setSubmitError] = useState<string | null>(null);
-  // The submit error message reflects the file list *at submit time* — a
-  // detected virus, a "could not be scanned" verdict, a scan timeout,
-  // etc. It's actionable copy that tells the user to remove the offending
-  // file, and once they do the alert becomes stale advice pointing at
-  // nothing. Clear on any change to the file set OR to a file's
-  // scan_status: the transient "scan could not complete" banner would
-  // otherwise linger after the background retry succeeds and every file
-  // has flipped to ``clean``, still telling the user to retry a scan
-  // that already resolved. Depending on a composite of the scan
-  // statuses catches both remove/add and error→clean transitions.
+  // Tag the source so auto-clear only fires on scan-origin banners. A
+  // ``drive_import_failed`` / ``finalize_timeout`` / catch-all message
+  // must survive a scan-status transition (its underlying condition is
+  // unrelated), otherwise a background scan retry landing between the
+  // failure and the user's next action would silently drop actionable
+  // copy.
+  const [submitErrorSource, setSubmitErrorSource] = useState<
+    "scan" | "other" | null
+  >(null);
+  const showScanError = (msg: string) => {
+    setSubmitError(msg);
+    setSubmitErrorSource("scan");
+  };
+  const showOtherError = (msg: string) => {
+    setSubmitError(msg);
+    setSubmitErrorSource("other");
+  };
+  const clearSubmitError = () => {
+    setSubmitError(null);
+    setSubmitErrorSource(null);
+  };
+  // Auto-clear only *scan-origin* banners, only when the blocking scan
+  // state has resolved: no file is currently ``error`` (transient scanner
+  // failure that the retry loop is expected to unstick) or ``infected``
+  // (virus verdict that keeps the transfer blocked until the file is
+  // removed). If any file is still blocked the banner's advice remains
+  // accurate; if all have flipped clean/skipped/too_large it's stale,
+  // clear it. Deps: file-count (add/remove) + status signature (webhook
+  // land) + the source itself (a fresh scan error should re-arm the
+  // effect even without a status change).
   const scanStatusSignature = draft.files
     .map((f) => f.scanStatus ?? "")
     .join(",");
+  const anyScanBlocking = draft.files.some(
+    (f) => f.scanStatus === "error" || f.scanStatus === "infected",
+  );
   useEffect(() => {
-    setSubmitError((prev) => (prev ? null : prev));
-  }, [draft.files.length, scanStatusSignature]);
+    if (submitErrorSource !== "scan") return;
+    if (anyScanBlocking) return;
+    clearSubmitError();
+  }, [
+    draft.files.length,
+    scanStatusSignature,
+    submitErrorSource,
+    anyScanBlocking,
+  ]);
 
   // Warn before any kind of departure while a draft has files or uploads
   // in flight. Two separate guards because the events don't overlap:
@@ -402,7 +432,7 @@ export function TransferForm() {
       return;
     }
 
-    setSubmitError(null);
+    clearSubmitError();
     // Snapshot the fragment before submit() runs `resetLocal` and clears it.
     // Read the synchronous ref rather than draft.keyFragment: if the user
     // clicks Send before the render triggered by the fragment's arrival has
@@ -450,7 +480,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_blocked"
       ) {
-        setSubmitError(
+        showScanError(
           t("A virus was detected. This transfer was blocked and not sent."),
         );
         return;
@@ -459,7 +489,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_file_error"
       ) {
-        setSubmitError(
+        showScanError(
           t(
             "A file could not be scanned and was blocked. Remove it to send the transfer.",
           ),
@@ -470,7 +500,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_error"
       ) {
-        setSubmitError(
+        showScanError(
           t(
             "The antivirus scan could not complete. Retry the scan, then send again.",
           ),
@@ -478,7 +508,7 @@ export function TransferForm() {
         return;
       }
       if (err instanceof Error && err.message === "scan_timeout") {
-        setSubmitError(
+        showScanError(
           t("The antivirus scan is taking too long. Please try again."),
         );
         return;
@@ -487,7 +517,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "drive_import_failed"
       ) {
-        setSubmitError(
+        showOtherError(
           t(
             "A file couldn't be imported from Drive. Remove it and try again.",
           ),
@@ -495,7 +525,7 @@ export function TransferForm() {
         return;
       }
       if (err instanceof Error && err.message === "finalize_timeout") {
-        setSubmitError(
+        showOtherError(
           t("The transfer is taking too long to finalize. Please try again."),
         );
         return;
@@ -505,7 +535,7 @@ export function TransferForm() {
       // this keeps a finalize-side failure from silently re-enabling the button
       // with no feedback.
       console.error("Transfer submission failed:", err);
-      setSubmitError(
+      showOtherError(
         t("An error occurred while sending the transfer. Please try again."),
       );
     }
