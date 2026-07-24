@@ -15,6 +15,7 @@ import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useHardDeleteTransfer } from "../api/useHardDeleteTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
+import { hasUnscannedFiles } from "../utils/scanStatus";
 import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
@@ -310,6 +311,35 @@ export function TransferDetail({
           </>
         )}
       </div>
+
+      {/* Page-level callouts — mirror TransferForm/TransferSuccess so the
+          sender sees the same warnings on the recap view they saw before
+          send. Confidential and "some files not scanned" are mutually
+          exclusive: a confidential transfer bypasses the scan by design,
+          and its banner already covers the "no scan" outcome. Strings
+          reused from TransferForm to avoid a second translation surface. */}
+      {transfer.confidential && transfer.files.length > 0 && (
+        <Alert
+          type={VariantType.WARNING}
+          className="transfer-detail__scan-alert"
+        >
+          {t(
+            "This transfer won't be scanned for viruses: the decryption key never reaches our servers, so we can't inspect the files.",
+          )}
+        </Alert>
+      )}
+
+      {!transfer.confidential &&
+        hasUnscannedFiles(transfer.files, (f) => f.scan_status) && (
+          <Alert
+            type={VariantType.WARNING}
+            className="transfer-detail__scan-alert"
+          >
+            {t(
+              "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
+            )}
+          </Alert>
+        )}
 
       {downloadUrl && (
         <div className="transfer-detail__link-box">
