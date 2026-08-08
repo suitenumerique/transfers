@@ -627,7 +627,7 @@ export function TransferDetail({
           </Alert>
         )}
         {t(
-          "This is irreversible. Any remaining files will be deleted from storage, and the transfer's file list and recipients will be permanently removed. The activity log is kept for audit.",
+          "This is irreversible. Permanently deletes this transfer and its recipients. The activity log is kept for audit.",
         )}
       </Modal>
     </div>

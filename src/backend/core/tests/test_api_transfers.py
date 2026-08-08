@@ -447,7 +447,12 @@ class TestTransferHardDelete:
         response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
 
         assert response.status_code == 400
-        assert "s3" in response.data
+        # The user-facing message is deliberately generic — see the
+        # viewset's docstring: PENDING_FILE_DELETION is invisible in the
+        # UI ("Deactivated" badge), so "storage" wording would leak the
+        # internal state and contradict the deactivate confirm copy.
+        assert "detail" in response.data
+        assert "storage" not in str(response.data).lower()
         assert Transfer.objects.filter(id=transfer.id).exists()
         assert TransferFile.objects.filter(transfer_id=transfer.id).exists()
 
