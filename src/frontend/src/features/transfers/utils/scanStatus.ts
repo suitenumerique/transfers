@@ -24,3 +24,31 @@ export function hasUnscannedFiles<T>(
     NOT_SCAN_VERIFIED.includes((statusOf(f) ?? "") as ScanStatus),
   );
 }
+
+// Returns true when a scan-origin submit-error banner should still be
+// considered "in progress" and therefore preserved. Three signals count
+// as blocking:
+//   - the client-side scan poller gave up (``scanTimedOut``): the
+//     ``scan_timeout`` banner tells the user to Retry Scan; the file's
+//     scan_status is still ``pending`` at that point, so a status-only
+//     predicate would clear the banner immediately after the submit
+//     that raised it. ``retryScan`` flips this back to ``false`` and
+//     re-arms polling — that's when we want the banner to clear.
+//   - any file with ``scan_status === "error"``: a transient scanner
+//     failure the retry loop is expected to unstick; the banner's
+//     "Retry the scan" advice remains accurate until the retry lands.
+//   - any file with ``scan_status === "infected"``: a virus verdict
+//     blocks the transfer until the file is removed; the banner tells
+//     the user to remove it, still true as long as the file is there.
+// Consumed by the ``submitError`` auto-clear effect in TransferForm.
+export function isScanBlocking<T>(
+  files: readonly T[],
+  statusOf: (file: T) => ScanStatus | undefined,
+  scanTimedOut: boolean,
+): boolean {
+  if (scanTimedOut) return true;
+  return files.some((f) => {
+    const s = statusOf(f);
+    return s === "error" || s === "infected";
+  });
+}

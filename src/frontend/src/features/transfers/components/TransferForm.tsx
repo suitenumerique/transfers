@@ -16,7 +16,7 @@ import {
   type DraftFile,
   type DrivePickedItem,
 } from "../api/useTransferDraft";
-import { hasUnscannedFiles } from "../utils/scanStatus";
+import { hasUnscannedFiles, isScanBlocking } from "../utils/scanStatus";
 import { ButtonSpinner } from "./ButtonSpinner";
 import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
@@ -350,19 +350,24 @@ export function TransferForm() {
     setSubmitErrorSource(null);
   };
   // Auto-clear only *scan-origin* banners, only when the blocking scan
-  // state has resolved: no file is currently ``error`` (transient scanner
-  // failure that the retry loop is expected to unstick) or ``infected``
-  // (virus verdict that keeps the transfer blocked until the file is
-  // removed). If any file is still blocked the banner's advice remains
-  // accurate; if all have flipped clean/skipped/too_large it's stale,
-  // clear it. Deps: file-count (add/remove) + status signature (webhook
-  // land) + the source itself (a fresh scan error should re-arm the
-  // effect even without a status change).
+  // state has resolved. ``isScanBlocking`` captures the three signals
+  // that keep the banner's advice accurate: the client-side scan poller
+  // gave up (``scanTimedOut``, the ``scan_timeout`` banner's own
+  // condition — files are still ``pending`` so a status-only check
+  // would clear the banner instantly after the submit that raised it),
+  // any file in ``error`` (retry loop expected to unstick), or any
+  // file ``infected`` (blocks until removed). ``retryScan`` flips
+  // ``scanTimedOut`` back to false and the effect clears then. Deps:
+  // file-count (add/remove) + status signature (webhook land) +
+  // ``scanTimedOut`` (retry) + the source itself (a fresh scan error
+  // should re-arm the effect even without a status change).
   const scanStatusSignature = draft.files
     .map((f) => f.scanStatus ?? "")
     .join(",");
-  const anyScanBlocking = draft.files.some(
-    (f) => f.scanStatus === "error" || f.scanStatus === "infected",
+  const anyScanBlocking = isScanBlocking(
+    draft.files,
+    (f) => f.scanStatus,
+    draft.scanTimedOut,
   );
   useEffect(() => {
     if (submitErrorSource !== "scan") return;
