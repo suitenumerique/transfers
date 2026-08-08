@@ -164,15 +164,21 @@ class TransferViewSet(
                 # Storage failure (S3 hiccup, credentials rot, bucket
                 # policy change) — WARNING so ops sees the rate. The
                 # user retries; we refuse rather than orphan bytes the
-                # sweep can no longer reclaim.
+                # sweep can no longer reclaim. The user-facing message
+                # stays generic on purpose: PENDING_FILE_DELETION is
+                # rendered as "Deactivated" in the UI (the grace window
+                # is invisible) and the deactivate confirm already
+                # promised "files will be deleted" — mentioning "some
+                # files could not be deleted from storage" here would
+                # contradict that promise and confuse the user.
                 logger.warning(
                     "Refused hard-delete of transfer %s: S3 cleanup failed",
                     instance.id,
                 )
                 raise drf.exceptions.ValidationError(
                     {
-                        "s3": (
-                            "Some files could not be deleted from storage. "
+                        "detail": (
+                            "This transfer can't be deleted right now. "
                             "Try again in a moment."
                         )
                     }
