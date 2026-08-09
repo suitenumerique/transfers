@@ -447,12 +447,22 @@ class TestTransferHardDelete:
         response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
 
         assert response.status_code == 400
-        # The user-facing message is deliberately generic — see the
-        # viewset's docstring: PENDING_FILE_DELETION is invisible in the
-        # UI ("Deactivated" badge), so "storage" wording would leak the
-        # internal state and contradict the deactivate confirm copy.
-        assert "detail" in response.data
-        assert "storage" not in str(response.data).lower()
+        # Pin the exact user-facing copy — PENDING_FILE_DELETION is
+        # invisible in the UI ("Deactivated" badge), so this branch has
+        # to (a) return the generic retryable message the modal shows
+        # and (b) never leak an internal term. A "detail" key alone
+        # would let a regression to "Some files could not be deleted
+        # from storage." pass silently — that copy still fits the shape
+        # but contradicts the deactivate confirm's "files will be
+        # deleted" promise.
+        expected = "This transfer can't be deleted right now. Try again in a moment."
+        detail = response.data["detail"]
+        assert (detail[0] if isinstance(detail, list) else detail) == expected
+        body = str(response.data).lower()
+        for banned in ("storage", "s3", "pending_file_deletion"):
+            assert banned not in body, (
+                f"Response leaks internal term {banned!r}: {response.data!r}"
+            )
         assert Transfer.objects.filter(id=transfer.id).exists()
         assert TransferFile.objects.filter(transfer_id=transfer.id).exists()
 
