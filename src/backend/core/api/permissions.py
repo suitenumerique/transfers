@@ -1,9 +1,17 @@
 """Permission handlers for the transferts core app."""
 
-from rest_framework import permissions
-from rest_framework.exceptions import PermissionDenied
+from rest_framework import permissions, status
+from rest_framework.exceptions import APIException, PermissionDenied
 
-from core.entitlements import get_entitlements_backend
+from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
+
+
+class EntitlementsUnavailable(APIException):
+    """503 raised when the entitlements service cannot be reached to decide."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Access could not be verified. Please try again shortly."
+    default_code = "entitlements_unavailable"
 
 
 class IsAuthenticated(permissions.BasePermission):
@@ -14,20 +22,23 @@ class IsAuthenticated(permissions.BasePermission):
 
 
 def enforce_upload_entitlement(user):
-    """Raise ``PermissionDenied`` unless the user may access the app (upload gate).
+    """Gate a draft upload action on ``can_access`` from the entitlements backend.
 
-    Draft upload endpoints call ``get_entitlements_backend().can_access`` so
-    the check stays aligned with login and ``GET /entitlements/``. Use this
-    helper (or :class:`DraftUploadEntitlementPermission`) rather than
-    duplicating backend lookups in view code.
+    Mirrors the login check so a mid-session revocation stops uploads within
+    the cache window. A reachable-but-denying backend yields 403 (carrying the
+    ``reason``); an unreachable one yields 503 so the client can retry rather
+    than read the outage as a permanent denial.
     """
     if not user.is_authenticated:
         raise PermissionDenied("Authentication required.")
-    payload = get_entitlements_backend().can_access(user)
+    try:
+        payload = get_entitlements_backend().can_access(user)
+    except EntitlementsUnavailableError as exc:
+        raise EntitlementsUnavailable() from exc
     if payload.get("result") is True:
         return
     detail = {"detail": "You do not have permission to upload files."}
-    reason = payload.get("reason") or payload.get("message")
+    reason = payload.get("reason")
     if reason:
         detail["reason"] = reason
     raise PermissionDenied(detail=detail)
@@ -36,7 +47,9 @@ def enforce_upload_entitlement(user):
 class DraftUploadEntitlementPermission(permissions.BasePermission):
     """Require ``can_access`` before draft actions that perform multipart upload work."""
 
-    _UPLOAD_ACTIONS = frozenset({"add_file", "sign_part", "complete_upload"})
+    _UPLOAD_ACTIONS = frozenset(
+        {"add_file", "sign_part", "complete_upload", "finalize"}
+    )
 
     def has_permission(self, request, view):
         if getattr(view, "action", None) not in self._UPLOAD_ACTIONS:

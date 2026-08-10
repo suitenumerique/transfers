@@ -9,8 +9,13 @@ from lasuite.oidc_login.backends import (
     OIDCAuthenticationBackend as LaSuiteOIDCAuthenticationBackend,
 )
 
-from core.authentication import OIDC_ACCESS_DENIED_SESSION_KEY, UserCannotAccessApp
-from core.entitlements import get_entitlements_backend
+from core.authentication import (
+    LOGIN_ERROR_ACCESS_DENIED,
+    LOGIN_ERROR_UNAVAILABLE,
+    OIDC_ACCESS_DENIED_SESSION_KEY,
+    UserCannotAccessApp,
+)
+from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
 from core.models import DuplicateEmailError, User
 
 logger = logging.getLogger(__name__)
@@ -23,64 +28,53 @@ class OIDCAuthenticationBackend(LaSuiteOIDCAuthenticationBackend):
     """
 
     def authenticate(self, request, **kwargs):
-        """Authenticate via OIDC and map entitlement denials to login failure."""
+        """Authenticate via OIDC and map entitlement outcomes to login failure.
+
+        A denial and an unreachable entitlements service both fail the login,
+        but carry different reasons so the callback can tell the user which
+        happened (offer excludes the service vs. try again shortly).
+        """
         try:
             return super().authenticate(request, **kwargs)
         except UserCannotAccessApp as exc:
             logger.info("User denied app access: %s", exc)
-            request.session[OIDC_ACCESS_DENIED_SESSION_KEY] = True
-            request.session.modified = True
-            return None
+            return self._fail_login(request, LOGIN_ERROR_ACCESS_DENIED)
+        except EntitlementsUnavailableError:
+            logger.warning("Entitlements service unavailable during login")
+            return self._fail_login(request, LOGIN_ERROR_UNAVAILABLE)
+
+    @staticmethod
+    def _fail_login(request, reason):
+        """Record why the login failed and signal failure (None) to the OIDC flow."""
+        request.session[OIDC_ACCESS_DENIED_SESSION_KEY] = reason
+        request.session.modified = True
 
     def get_or_create_user(self, access_token, id_token, payload):
-        """Return a User based on userinfo. Create a new user if no match is found."""
-        _user_created = False
-        user_info = self.get_userinfo(access_token, id_token, payload)
+        """Resolve the user from userinfo, then gate on app entitlements.
 
-        if not self.verify_claims(user_info):
-            raise SuspiciousOperation("Claims verification failed")
+        Identity handling (match, create, disabled-account and claims checks)
+        stays in the base backend; this override only adds the entitlements
+        gate. When the base declines (no match and ``OIDC_CREATE_USER`` off) it
+        returns ``None`` and the login fails cleanly, without ever running the
+        gate on a null user.
+        """
+        user = super().get_or_create_user(access_token, id_token, payload)
+        if user is None:
+            return None
 
-        sub = user_info["sub"]
-        if not sub:
-            raise SuspiciousOperation(
-                "User info contained no recognizable user identification"
-            )
-
-        email = user_info.get("email")
-
-        claims = {
-            self.OIDC_USER_SUB_FIELD: sub,
-            "email": email,
-        }
-        claims.update(**self.get_extra_claims(user_info))
-
-        user = self.get_existing_user(sub, email)
-
-        if user:
-            if not user.is_active:
-                raise SuspiciousOperation("User account is disabled")
-            self.update_user_if_needed(user, claims)
-        elif self.get_settings("OIDC_CREATE_USER", True):
-            user = self.create_user(claims)
-            _user_created = True
-        else:
-            raise SuspiciousOperation(
-                "User not found and OIDC user creation is disabled."
-            )
-
-        entitlement_backend = get_entitlements_backend()
-        result = entitlement_backend.can_access(user)
+        result = get_entitlements_backend().can_access(user)
         if not result["result"]:
             raise UserCannotAccessApp(
-                result.get("message", "User does not have access to the app")
+                result.get("reason") or "User does not have access to the app"
             )
         return user
 
     def get_extra_claims(self, user_info):
         """Get extra claims from user info."""
         claims_to_store = {
-            claim: user_info.get(claim)
+            claim: value
             for claim in getattr(settings, "OIDC_STORE_CLAIMS", [])
+            if (value := user_info.get(claim)) is not None
         }
         return {
             "full_name": self.compute_full_name(user_info),

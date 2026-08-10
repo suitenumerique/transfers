@@ -12,13 +12,11 @@ from core.api.viewsets.transfer import TransferViewSet
 from core.api.viewsets.user import UserViewSet
 from core.api.viewsets.webhook import ScanResultWebhookView
 from core.authentication.urls import urlpatterns as oidc_urls
-from core.api.viewsets.entitlements import EntitlementsViewset
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="users")
 router.register("drafts", TransferDraftViewSet, basename="drafts")
 router.register("transfers", TransferViewSet, basename="transfers")
-router.register("entitlements", EntitlementsViewset, basename="entitlements")
 
 urlpatterns = [
     path(

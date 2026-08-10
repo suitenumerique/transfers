@@ -1,6 +1,7 @@
 """DeployCenter Entitlements Backend."""
 
 import logging
+import time
 
 from django.core.cache import cache
 
@@ -11,8 +12,11 @@ from core.entitlements.backends.base import EntitlementsBackend
 
 logger = logging.getLogger(__name__)
 
-ENTITLEMENTS_CACHE_TIMEOUT = 60
 ENTITLEMENTS_CACHE_KEY_PREFIX = "entitlements:user:"
+# Serve a cached answer up to this long when DeployCenter is unreachable. Kept
+# above SESSION_COOKIE_AGE so a logged-in user's access is never re-decided
+# against a down service mid-session.
+DEFAULT_STALE_TIMEOUT = 24 * 60 * 60
 
 
 class DeployCenterEntitlementsBackend(EntitlementsBackend):
@@ -25,6 +29,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         service_id,
         api_key,
         cache_timeout=10,
+        stale_timeout=DEFAULT_STALE_TIMEOUT,
         oidc_claims=None,
         claim_defaults=None,
     ):
@@ -32,6 +37,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         self.service_id = service_id
         self.api_key = api_key
         self.cache_timeout = cache_timeout
+        self.stale_timeout = stale_timeout
         self.oidc_claims = oidc_claims or []
         self.claim_defaults = claim_defaults or {}
 
@@ -91,35 +97,53 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
             self.base_url,
             params=params,
             headers={"X-Service-Auth": f"Bearer {self.api_key}"},
-            timeout=10,
+            timeout=(2, 5),
         )
         response.raise_for_status()
         return response.json()
 
     def get_entitlements(self, user):
-        """Get entitlements for a user, cached."""
-        cache_key = f"{ENTITLEMENTS_CACHE_KEY_PREFIX}{user.id}"
-        entitlements = cache.get(cache_key)
-        if entitlements:
-            return entitlements
-        try:
-            entitlements = self.fetch_entitlements(user)
-        except requests.RequestException:
-            logger.exception("Failed to fetch entitlements for user %s", user.id)
-            raise
-        cache.set(cache_key, entitlements, timeout=self.cache_timeout)
-        return entitlements
+        """Return DeployCenter entitlements for a user, cached, stale-if-error.
 
-    def get_context(self, user):
-        """Get context for a user."""
-        attributes_whitelist = ["organization", "operator", "potentialOperators"]
-        entitlements = self.get_entitlements(user)
-        context = {}
-        for attribute in attributes_whitelist:
-            context[attribute] = entitlements.get(attribute)
-        return context
+        The per-user cache entry keeps the last payload and the time it was
+        fetched. A value younger than ``cache_timeout`` is served as-is; an
+        older one triggers a refetch, and if DeployCenter is unreachable the
+        previous payload is served (up to ``stale_timeout``) so an outage does
+        not lock users out. Only when nothing is cached does an outage surface
+        as ``EntitlementsUnavailableError`` — the caller then fails closed.
+        """
+        cache_key = f"{ENTITLEMENTS_CACHE_KEY_PREFIX}{user.id}"
+        entry = cache.get(cache_key)
+
+        if entry and time.time() - entry["fetched_at"] < self.cache_timeout:
+            return entry["payload"]
+
+        try:
+            payload = self.fetch_entitlements(user)
+        except requests.RequestException as exc:
+            if entry is not None:
+                logger.warning(
+                    "DeployCenter unreachable, serving stale entitlements "
+                    "for user %s",
+                    user.id,
+                )
+                return entry["payload"]
+            logger.exception("Failed to fetch entitlements for user %s", user.id)
+            raise EntitlementsUnavailableError(
+                "DeployCenter entitlements request failed."
+            ) from exc
+
+        cache.set(
+            cache_key,
+            {"payload": payload, "fetched_at": time.time()},
+            timeout=self.stale_timeout,
+        )
+        return payload
 
     def can_access(self, user):
         """Check if a user can access the app."""
-        entitlements = self.get_entitlements(user)
-        return {"result": entitlements.get("entitlements", {}).get("can_access", False)}
+        entitlements = self.get_entitlements(user).get("entitlements", {})
+        return {
+            "result": entitlements.get("can_access", False),
+            "reason": entitlements.get("can_access_reason"),
+        }

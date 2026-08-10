@@ -11,7 +11,3 @@ class EntitlementsBackend(ABC):
         """
         Check if a user can access app.
         """
-
-    def get_context(self, user):  # pylint: disable=unused-argument
-        """Get context for a user."""
-        return {}

@@ -22,11 +22,8 @@ class DevAuthClaimsMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         user = getattr(request, "user", None)
         if user is not None and getattr(user, "is_authenticated", False):
-            if not hasattr(user, "claims"):
+            if not user.claims:
                 claims: Any = request.session.get(_DEV_CLAIMS_SESSION_KEY, {})
-                if isinstance(claims, dict):
-                    setattr(user, "claims", claims)
-                else:
-                    setattr(user, "claims", {})
+                user.claims = claims if isinstance(claims, dict) else {}
         return self.get_response(request)
 

@@ -667,16 +667,11 @@ class Development(Base):
     CSRF_TRUSTED_ORIGINS = ["http://localhost:8980", "http://localhost:8981"]
     DEBUG = True
 
-    # OIDC (mozilla-django-oidc / lasuite) stores ``state`` / nonce under
-    # ``request.session["oidc_states"]``. With ``SESSION_ENGINE=cache`` and
-    # Redis, concurrent ``/authenticate/`` requests or cache quirks can drop
-    # or overwrite that payload before Keycloak redirects back — leading to
-    # ``SuspiciousOperation: OIDC callback state not found in session``. DB
-    # sessions avoid that class of failures in local dev.
+    # The dev Redis container has no volume, so a restart drops every session
+    # (including the OIDC ``state`` mid-login). DB sessions survive it.
     SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
     SESSION_COOKIE_NAME = "transferts_sessionid"
-    SESSION_COOKIE_SAMESITE = "Lax"
 
     # Dev-only switch: mount a GET endpoint that hands back a session
     # cookie for an arbitrary email, bypassing ProConnect OIDC. Defined
@@ -729,7 +724,9 @@ class Development(Base):
         self.INSTALLED_APPS += ["django_extensions", "drf_spectacular_sidecar"]
         if getattr(self, "DEV_AUTH_BYPASS", False):
             auth_mw = "django.contrib.auth.middleware.AuthenticationMiddleware"
-            dev_claims_mw = "core.authentication.dev_claims_middleware.DevAuthClaimsMiddleware"
+            dev_claims_mw = (
+                "core.authentication.dev_claims_middleware.DevAuthClaimsMiddleware"
+            )
             if dev_claims_mw not in self.MIDDLEWARE:
                 try:
                     idx = self.MIDDLEWARE.index(auth_mw)

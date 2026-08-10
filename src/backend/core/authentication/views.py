@@ -8,19 +8,25 @@ from core.authentication import OIDC_ACCESS_DENIED_SESSION_KEY
 
 
 class OIDCAuthenticationCallbackView(LaSuiteOIDCAuthenticationCallbackView):
-    """OIDC callback that routes entitlement denials to the error page."""
+    """OIDC callback that routes entitlement outcomes to the error page.
+
+    A generic OIDC failure (cancelled login, stale state) falls through to the
+    default failure URL with no ``reason``; the error page then shows a neutral
+    message rather than claiming the service is not in the user's offer.
+    """
 
     @property
     def failure_url(self):
-        if self.request.session.pop(OIDC_ACCESS_DENIED_SESSION_KEY, False):
-            return self._access_denied_redirect_url()
+        reason = self.request.session.pop(OIDC_ACCESS_DENIED_SESSION_KEY, None)
+        if reason:
+            return self._error_redirect_url(reason)
         return super().failure_url
 
-    def _access_denied_redirect_url(self):
-        failure_url = self.get_settings("LOGIN_REDIRECT_URL_FAILURE", "/")
+    def _error_redirect_url(self, reason):
+        base = self.get_settings("LOGIN_REDIRECT_URL_FAILURE", "/")
         login_redirect = self.get_settings("LOGIN_REDIRECT_URL", "/")
-        # Misconfigured or stale env may set failure URL to the app root — keep
-        # entitlement denials on the dedicated error page.
-        if failure_url.rstrip("/") == login_redirect.rstrip("/"):
-            return f"{failure_url.rstrip('/')}/errors"
-        return failure_url
+        # Misconfigured or stale env may set the failure URL to the app root —
+        # keep entitlement outcomes on the dedicated error page.
+        if base.rstrip("/") == login_redirect.rstrip("/"):
+            base = f"{base.rstrip('/')}/errors"
+        return f"{base.rstrip('/')}?reason={reason}"
