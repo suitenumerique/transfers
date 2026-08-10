@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0005_transferfile_scan_fields'),
+        ('core', '0006_transfer_confidential_transfer_encryption_chunk_size_and_more'),
     ]
 
     operations = [
