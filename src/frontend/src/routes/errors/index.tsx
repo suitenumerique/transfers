@@ -27,7 +27,10 @@ const DEFAULT_CONTENT: ErrorContent = {
 
 const ErrorsPage = () => {
   const { reason } = Route.useSearch();
-  const content = (reason && CONTENT_BY_REASON[reason]) || DEFAULT_CONTENT;
+  const content =
+    reason && Object.prototype.hasOwnProperty.call(CONTENT_BY_REASON, reason)
+      ? CONTENT_BY_REASON[reason]
+      : DEFAULT_CONTENT;
   return (
     <ErrorPageLayout>
       <Error title={content.title} message={content.message} />

@@ -1,9 +1,13 @@
 """Permission handlers for the transferts core app."""
 
+import logging
+
 from rest_framework import permissions, status
 from rest_framework.exceptions import APIException, PermissionDenied
 
 from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
+
+logger = logging.getLogger(__name__)
 
 
 class EntitlementsUnavailable(APIException):
@@ -34,9 +38,11 @@ def enforce_upload_entitlement(user):
     try:
         payload = get_entitlements_backend().can_access(user)
     except EntitlementsUnavailableError as exc:
+        logger.warning("Entitlements service unavailable for the upload gate")
         raise EntitlementsUnavailable() from exc
     if payload.get("result") is True:
         return
+    logger.info("Upload denied by entitlements")
     detail = {"detail": "You do not have permission to upload files."}
     reason = payload.get("reason")
     if reason:

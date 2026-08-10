@@ -114,6 +114,12 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
         """
         cache_key = f"{ENTITLEMENTS_CACHE_KEY_PREFIX}{user.id}"
         entry = cache.get(cache_key)
+        # Ignore entries that don't match the current schema (e.g. left over
+        # from a previous version) so we never read a missing field.
+        if not (
+            isinstance(entry, dict) and "fetched_at" in entry and "payload" in entry
+        ):
+            entry = None
 
         if entry and time.time() - entry["fetched_at"] < self.cache_timeout:
             return entry["payload"]
@@ -122,13 +128,11 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
             payload = self.fetch_entitlements(user)
         except requests.RequestException as exc:
             if entry is not None:
-                logger.warning(
-                    "DeployCenter unreachable, serving stale entitlements "
-                    "for user %s",
-                    user.id,
-                )
+                logger.warning("DeployCenter unreachable, serving stale entitlements")
                 return entry["payload"]
-            logger.exception("Failed to fetch entitlements for user %s", user.id)
+            logger.warning(
+                "DeployCenter entitlements fetch failed: %s", type(exc).__name__
+            )
             raise EntitlementsUnavailableError(
                 "DeployCenter entitlements request failed."
             ) from exc

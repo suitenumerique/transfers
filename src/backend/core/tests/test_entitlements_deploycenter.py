@@ -4,12 +4,17 @@ Test the DeployCenter entitlements backend.
 
 import urllib.parse
 
+from django.core.cache import cache
+
 import pytest
 import requests
 import responses
 
 from core.entitlements import EntitlementsUnavailableError
-from core.entitlements.backends.deploycenter import DeployCenterEntitlementsBackend
+from core.entitlements.backends.deploycenter import (
+    ENTITLEMENTS_CACHE_KEY_PREFIX,
+    DeployCenterEntitlementsBackend,
+)
 from core.factories import UserFactory
 
 pytestmark = pytest.mark.django_db
@@ -90,6 +95,23 @@ def test_entitlements_are_cached_per_user():
     assert backend.can_access(user) == {"result": True, "reason": None}
     assert backend.can_access(user) == {"result": True, "reason": None}
 
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_legacy_cache_entry_is_ignored():
+    """An entry from a previous cache schema is treated as a miss, not read blindly."""
+    _answer(True)
+    user = UserFactory()
+    user.claims = {"siret": "12345678901234"}
+    # Pre-upgrade entries stored the raw entitlements dict, without fetched_at.
+    cache.set(
+        f"{ENTITLEMENTS_CACHE_KEY_PREFIX}{user.id}",
+        {"entitlements": {"can_access": True}},
+    )
+
+    assert _backend().can_access(user) == {"result": True, "reason": None}
+    # The legacy entry was ignored and a fresh fetch happened.
     assert len(responses.calls) == 1
 
 
