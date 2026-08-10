@@ -7,7 +7,6 @@ vs. the check could not run).
 import types
 from unittest import mock
 
-from django.contrib.auth.models import AnonymousUser
 from django.test import override_settings
 
 import pytest
@@ -22,10 +21,6 @@ from core.authentication import (
     UserCannotAccessApp,
 )
 from core.authentication.backends import OIDCAuthenticationBackend
-from core.authentication.dev_claims_middleware import (
-    _DEV_CLAIMS_SESSION_KEY,
-    DevAuthClaimsMiddleware,
-)
 from core.authentication.views import OIDCAuthenticationCallbackView
 from core.entitlements import EntitlementsUnavailableError
 from core.factories import UserFactory
@@ -190,40 +185,3 @@ def test_failure_url_forces_errors_path_when_misconfigured():
     )
 
     assert view.failure_url == "http://localhost:8980/errors?reason=access_denied"
-
-
-# --- Dev claims middleware hydrates request.user.claims -----------------------
-
-
-def test_dev_claims_middleware_hydrates_from_session():
-    """An authenticated user with no claims picks them up from the session."""
-    user = UserFactory(claims={})
-    request = types.SimpleNamespace(
-        user=user, session={_DEV_CLAIMS_SESSION_KEY: {"siret": "21140001500015"}}
-    )
-    middleware = DevAuthClaimsMiddleware(lambda req: "response")
-
-    assert middleware(request) == "response"
-    assert user.claims == {"siret": "21140001500015"}
-
-
-def test_dev_claims_middleware_leaves_existing_claims():
-    """Claims already on the user are never overwritten."""
-    user = UserFactory(claims={"siret": "real"})
-    request = types.SimpleNamespace(
-        user=user, session={_DEV_CLAIMS_SESSION_KEY: {"siret": "other"}}
-    )
-    middleware = DevAuthClaimsMiddleware(lambda req: "response")
-
-    middleware(request)
-    assert user.claims == {"siret": "real"}
-
-
-def test_dev_claims_middleware_ignores_anonymous():
-    """An anonymous request passes straight through."""
-    request = types.SimpleNamespace(
-        user=AnonymousUser(), session={_DEV_CLAIMS_SESSION_KEY: {"siret": "x"}}
-    )
-    middleware = DevAuthClaimsMiddleware(lambda req: "response")
-
-    assert middleware(request) == "response"
