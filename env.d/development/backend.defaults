@@ -70,10 +70,17 @@ OIDC_RP_SCOPES="openid email profile"
 OIDC_USERINFO_FULLNAME_FIELDS=given_name,family_name
 
 LOGIN_REDIRECT_URL=http://localhost:8980
-LOGIN_REDIRECT_URL_FAILURE=http://localhost:8980
+LOGIN_REDIRECT_URL_FAILURE=http://localhost:8980/errors
 LOGOUT_REDIRECT_URL=http://localhost:8980
 
 OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:8980,http://localhost:8981
+
+# OIDC userinfo claim names persisted on ``User.claims`` (JSON). Use the same
+# names as in ``ENTITLEMENTS_BACKEND_PARAMETERS`` → ``oidc_claims`` when using
+# DeployCenter (e.g. ``["siret"]``). Keycloak must expose those claims in userinfo.
+# If DeployCenter still requires ``siret`` but OIDC does not send it, add
+# ``"claim_defaults": {"siret": "..."}`` inside ENTITLEMENTS_BACKEND_PARAMETERS.
+OIDC_STORE_CLAIMS=[]
 
 # Drive integration — leave blank to hide the "Attach from Drive" button.
 # Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)

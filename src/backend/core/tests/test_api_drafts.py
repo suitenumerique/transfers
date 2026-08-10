@@ -12,7 +12,7 @@ endpoints on the public Transfer surface.
 
 import json
 import uuid as _uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -2135,6 +2135,102 @@ class TestImportDriveFileTask:
         assert tf.import_failed_at is not None
         mock_create.assert_not_called()
         mock_abort.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestDraftUploadEntitlement:
+    """Draft multipart endpoints require ``can_access`` from the entitlements backend."""
+
+    @pytest.fixture(autouse=True)
+    def _deny_access(self, settings):
+        settings.ENTITLEMENTS_BACKEND = (
+            "core.entitlements.backends.static.StaticEntitlementsBackend"
+        )
+        settings.ENTITLEMENTS_BACKEND_PARAMETERS = {
+            "entitlements": {
+                "can_access": {"result": False, "reason": "access_denied"},
+            },
+        }
+
+    @staticmethod
+    def _draft_with_pending_file(user):
+        draft = TransferDraftFactory(owner=user)
+        transfer_file = TransferFileFactory(
+            draft=draft,
+            transfer=None,
+            filename="a.bin",
+            size=100,
+            upload_id="mpu-test",
+            upload_completed_at=None,
+        )
+        return draft, transfer_file
+
+    def test_add_file_returns_403_when_can_access_false(self, authenticated_client):
+        resp = authenticated_client.post(
+            ADD_FILE_URL,
+            {"filename": "a.bin", "size": 100},
+            format="json",
+        )
+        assert resp.status_code == 403, resp.data
+        assert "access_denied" in str(resp.data)
+
+    def test_sign_part_returns_403_when_can_access_false(
+        self, authenticated_client, user
+    ):
+        draft, transfer_file = self._draft_with_pending_file(user)
+        resp = authenticated_client.post(
+            f"{DRAFTS_URL}{draft.id}/sign-part/",
+            {
+                "transfer_file_id": str(transfer_file.id),
+                "part_number": 1,
+            },
+            format="json",
+        )
+        assert resp.status_code == 403, resp.data
+
+    def test_complete_upload_returns_403_when_can_access_false(
+        self, authenticated_client, user
+    ):
+        draft, transfer_file = self._draft_with_pending_file(user)
+        resp = authenticated_client.post(
+            f"{DRAFTS_URL}{draft.id}/complete-upload/",
+            {
+                "transfer_file_id": str(transfer_file.id),
+                "parts": [{"PartNumber": 1, "ETag": '"etag-1"'}],
+            },
+            format="json",
+        )
+        assert resp.status_code == 403, resp.data
+
+    def test_finalize_returns_403_when_can_access_false(
+        self, authenticated_client, user
+    ):
+        """Entitlement revoked mid-flow must not let an existing draft go out."""
+        draft, _ = self._draft_with_pending_file(user)
+        resp = authenticated_client.post(
+            f"{DRAFTS_URL}{draft.id}/finalize/",
+            {},
+            format="json",
+        )
+        assert resp.status_code == 403, resp.data
+
+    def test_add_file_returns_503_when_entitlements_unavailable(
+        self, authenticated_client
+    ):
+        """An unreachable entitlements backend yields 503, not a 403 denial."""
+        from core.entitlements import EntitlementsUnavailableError
+
+        backend = Mock()
+        backend.can_access.side_effect = EntitlementsUnavailableError("down")
+        with patch(
+            "core.api.permissions.get_entitlements_backend", return_value=backend
+        ):
+            resp = authenticated_client.post(
+                ADD_FILE_URL,
+                {"filename": "a.bin", "size": 100},
+                format="json",
+            )
+        assert resp.status_code == 503, resp.data
 
 
 @pytest.mark.django_db

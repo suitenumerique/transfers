@@ -1,0 +1,62 @@
+// Error page content — header comes from UIKit MainLayout (same as the
+// unauthenticated home page). Center the message like .home-landing.
+.error-page {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 120px);
+  padding:
+    var(--c--globals--spacings--xl)
+    var(--c--globals--spacings--md);
+}
+
+.service-error {
+  max-width: 420px;
+  text-align: center;
+
+  &__title {
+    margin: 0 0 var(--c--globals--spacings--3xs);
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 700;
+    line-height: 1.43;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
+
+  &__message {
+    max-width: 228px;
+    margin: 0 auto;
+    font-size: var(--c--globals--font--sizes--xs);
+    font-weight: 400;
+    line-height: 1.33;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__illustration {
+    display: block;
+    margin: 0 auto var(--c--globals--spacings--3xs);
+  }
+
+  &__support {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    padding-top: 20px;
+    font-size: var(--c--globals--font--sizes--xs);
+    font-weight: 500;
+    line-height: 1.33;
+    color: var(--c--contextuals--content--semantic--brand--tertiary);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+
+    > svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+  }
+}
