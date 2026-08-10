@@ -34,7 +34,10 @@ class TestTransferModel:
         assert not active.is_expired
 
     def test_is_deactivated(self):
-        for status in (TransferStatus.DEACTIVATED, TransferStatus.PENDING_FILE_DELETION):
+        for status in (
+            TransferStatus.DEACTIVATED,
+            TransferStatus.PENDING_FILE_DELETION,
+        ):
             transfer = TransferFactory(status=status)
             assert transfer.is_deactivated
             assert not transfer.is_accessible

@@ -18,6 +18,15 @@
 		# same-origin we never send a Referer cross-origin, so the token can't
 		# leak to the LaGaufre origins via the Referer header.
 		Referrer-Policy "same-origin"
+		# same-origin-allow-popups, not same-origin: we keep window.opener
+		# alive for popups we open (Drive picker OAuth). Tabs opened by a
+		# cross-origin page still see opener=null when they navigate here,
+		# isolating our browsing context group from any malicious opener.
+		Cross-Origin-Opener-Policy "same-origin-allow-popups"
+		# Lock down browser APIs we never use, so an XSS can't escalate into
+		# the recipient's microphone, camera, geolocation, payment dialog,
+		# USB/serial/MIDI devices, or screen capture.
+		Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=()"
 		# Strict CSP: a compromised LaGaufre script update must not be able to
 		# exfiltrate a recipient's download token. Only self + the two known
 		# suite.anct.gouv.fr origins (widget JS + its services API) are allowed.
@@ -54,6 +63,17 @@
 		reverse_proxy /static/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
+		}
+
+		# The E2E decryption Service Worker. Lives at the root so its default
+		# scope covers /_dl/<token>/<file_id>/... — no Service-Worker-Allowed
+		# header needed. Disable caching so a new deploy's SW takes over at
+		# the next page load instead of riding the browser's default 24h
+		# max-age.
+		@sw path /sw.js
+		handle @sw {
+			header Cache-Control "no-cache"
+			file_server
 		}
 
 		# Serve static assets. Missing files fall through to handle_errors

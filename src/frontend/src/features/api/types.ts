@@ -29,12 +29,21 @@ export interface TransferListItem {
   downloaded: boolean;
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
+  // Every transfer is encrypted; ``confidential`` marks the ones whose key
+  // we never hold (the recipient supplies it from the link fragment or by
+  // pasting it). Non-confidential transfers decrypt transparently because
+  // the backend serves the key.
+  confidential: boolean;
 }
 
 export interface TransferFile {
   id: string;
   filename: string;
   size: number;
+  // Plaintext size for encrypted files; null otherwise. UIs should
+  // fall back to `size` when null. For encryption, `size` is the ciphertext size
+  // that sits in S3 (plaintext + per-chunk GCM overhead).
+  plaintext_size: number | null;
   mime_type: string;
   created_at: string;
   scan_status: ScanStatus;
@@ -61,6 +70,10 @@ export interface TransferDetail {
   recipients: TransferRecipient[];
   auto_archive_on_download: boolean;
   pending_deletion_at: string | null;
+  confidential: boolean;
+  // Plaintext bytes per crypto chunk. Null only for legacy transfers
+  // created before encryption was mandatory.
+  encryption_chunk_size: number | null;
 }
 
 export interface TransferEvent {
@@ -98,6 +111,7 @@ export interface DownloadTransferFile {
   id: string;
   filename: string;
   size: number;
+  plaintext_size: number | null;
   mime_type: string;
   scan_status: ScanStatus;
 }
@@ -111,4 +125,10 @@ export interface DownloadTransferFull {
   is_owner: boolean;
   sharing_mode: SharingMode;
   auto_archive_on_download: boolean;
+  confidential: boolean;
+  encryption_chunk_size: number | null;
+  // URL-safe base64 of the AES key, served for non-confidential transfers so
+  // the SW decrypts transparently. Empty for confidential transfers (the key
+  // never reached us) and legacy plaintext transfers.
+  encryption_key: string;
 }

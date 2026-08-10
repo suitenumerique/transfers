@@ -59,3 +59,7 @@ class TestConfigView:
         assert "TRANSFER_MAX_FILE_SIZE" in response.data
         assert "TRANSFER_MAX_TOTAL_SIZE" in response.data
         assert "TRANSFER_MAX_FILES_PER_TRANSFER" in response.data
+        # The chunk size is the canonical value the recipient SW will
+        # use; the frontend reads it here so the encrypted upload it
+        # builds matches what the decrypt path expects.
+        assert "TRANSFER_CHUNK_SIZE" in response.data

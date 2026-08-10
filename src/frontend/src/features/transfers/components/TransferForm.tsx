@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Checkbox, Input, LabelledBox, Switch, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError, apiFetch } from "@/features/api/client";
 import type { SharingMode, TransferDetail } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
@@ -16,6 +16,8 @@ import {
   type DraftFile,
   type DrivePickedItem,
 } from "../api/useTransferDraft";
+import { hasUnscannedFiles, isScanBlocking } from "../utils/scanStatus";
+import { ButtonSpinner } from "./ButtonSpinner";
 import { DriveAttachButton } from "./DriveAttachButton";
 import { FileDropZone } from "./FileDropZone";
 import { FileItem } from "./FileItem";
@@ -52,36 +54,6 @@ function StorageGauge({
   );
 }
 
-// Small 16px spinner used as the submit button's `icon` while the form
-// waits for uploads to finish + finalize to return. Inherits currentColor
-// so it shows white on the filled brand button.
-function ButtonSpinner() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className="file-item__ring file-item__ring--spin"
-    >
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        stroke="currentColor"
-        strokeOpacity="0.35"
-        strokeWidth="2.5"
-      />
-      <path
-        d="M12 3a9 9 0 0 1 9 9"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 // Indeterminate spinner used while a Fichiers import runs server-side.
 // Plain CSS rotation — the SVG node itself is stable across draft
@@ -191,6 +163,12 @@ export function TransferForm() {
   const [pendingTransferId, setPendingTransferId] = useState<string | null>(
     null,
   );
+  // For confidential transfers, the key fragment is handed to the success
+  // screen via the navigation hash (link: to rebuild the working URL; email:
+  // to show the sender the key to share separately). Kept in a ref so the
+  // email path's poll-then-navigate can reach it after submit() cleared the
+  // draft. Null for normal transfers (the backend serves the key).
+  const carryFragmentRef = useRef<string | null>(null);
   const expiryMenu = useDropdownMenu();
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
@@ -217,9 +195,11 @@ export function TransferForm() {
     if (!data?.notifications_completed_at) return;
     isSubmittingRef.current = true;
     const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
+    const fragment = carryFragmentRef.current;
     navigate({
       to: hasFailures ? "/confirm-failed/$id" : "/confirm/$id",
       params: { id: data.id },
+      ...(fragment ? { hash: fragment } : {}),
     });
   }, [pollQuery.data, navigate]);
 
@@ -336,12 +316,69 @@ export function TransferForm() {
   };
 
   const hasFiles = draft.files.length > 0;
+  // Drive imports are encrypted server-side at finalize, which needs the key
+  // — impossible for a confidential transfer (we never hold the key). So the
+  // two are mutually exclusive: a Drive file greys the confidential toggle,
+  // and the Drive button is hidden while confidential is on.
+  const hasDriveFile = draft.files.some((f) => f.sourceUrl);
   const currentSize = draft.files.reduce((sum, f) => sum + f.total, 0);
   const anyError = draft.files.some((f) => f.state === "error");
   const awaitingUploads = draft.isAwaitingUploads;
   const finalizing = draft.isFinalizing;
   const scanning = draft.isScanning;
+  const importingDrive = draft.isImportingDrive;
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Tag the source so auto-clear only fires on scan-origin banners. A
+  // ``drive_import_failed`` / ``finalize_timeout`` / catch-all message
+  // must survive a scan-status transition (its underlying condition is
+  // unrelated), otherwise a background scan retry landing between the
+  // failure and the user's next action would silently drop actionable
+  // copy.
+  const [submitErrorSource, setSubmitErrorSource] = useState<
+    "scan" | "other" | null
+  >(null);
+  const showScanError = (msg: string) => {
+    setSubmitError(msg);
+    setSubmitErrorSource("scan");
+  };
+  const showOtherError = (msg: string) => {
+    setSubmitError(msg);
+    setSubmitErrorSource("other");
+  };
+  const clearSubmitError = () => {
+    setSubmitError(null);
+    setSubmitErrorSource(null);
+  };
+  // Auto-clear only *scan-origin* banners, only when the blocking scan
+  // state has resolved. ``isScanBlocking`` captures the three signals
+  // that keep the banner's advice accurate: the client-side scan poller
+  // gave up (``scanTimedOut``, the ``scan_timeout`` banner's own
+  // condition — files are still ``pending`` so a status-only check
+  // would clear the banner instantly after the submit that raised it),
+  // any file in ``error`` (retry loop expected to unstick), or any
+  // file ``infected`` (blocks until removed). ``retryScan`` flips
+  // ``scanTimedOut`` back to false and the effect clears then. Deps:
+  // file-count (add/remove) + status signature (webhook land) +
+  // ``scanTimedOut`` (retry) + the source itself (a fresh scan error
+  // should re-arm the effect even without a status change).
+  const scanStatusSignature = draft.files
+    .map((f) => f.scanStatus ?? "")
+    .join(",");
+  const anyScanBlocking = isScanBlocking(
+    draft.files,
+    (f) => f.scanStatus,
+    draft.scanTimedOut,
+  );
+  useEffect(() => {
+    if (submitErrorSource !== "scan") return;
+    if (anyScanBlocking) return;
+    clearSubmitError();
+  }, [
+    draft.files.length,
+    scanStatusSignature,
+    submitErrorSource,
+    anyScanBlocking,
+  ]);
 
   // Warn before any kind of departure while a draft has files or uploads
   // in flight. Two separate guards because the events don't overlap:
@@ -400,7 +437,22 @@ export function TransferForm() {
       return;
     }
 
-    setSubmitError(null);
+    clearSubmitError();
+    // Snapshot the fragment before submit() runs `resetLocal` and clears it.
+    // Read the synchronous ref rather than draft.keyFragment: if the user
+    // clicks Send before the render triggered by the fragment's arrival has
+    // flushed, the state value on the draft object is still the prior null
+    // and the confirm URL loses its ``#…``. The ref is written the same tick
+    // the fragment lands, so it's always current.
+    // Only confidential transfers carry it to the confirm page (link: to
+    // rebuild the working URL; email: to show the sender the key to share
+    // separately). Normal transfers get a bare link — the backend serves the
+    // key — so nothing to carry. Shown once: a refresh of the confirm URL
+    // drops the fragment, matching "we don't store it".
+    const fragmentToCarry = draft.confidential
+      ? draft.keyFragmentRef.current
+      : null;
+    carryFragmentRef.current = fragmentToCarry;
     try {
       const result = await draft.submit({
         title,
@@ -408,12 +460,17 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
         auto_archive_on_download: autoArchiveOnDownload,
+        confidential: draft.confidential,
       });
       if (result.sharing_mode === "link") {
-        // Link mode: nothing to wait for — go straight to the confirm page.
+        // Link mode: nothing to wait for, go straight to the confirm page.
         // Suppress the route-change confirm; see the ref's declaration.
         isSubmittingRef.current = true;
-        navigate({ to: "/confirm/$id", params: { id: result.id } });
+        navigate({
+          to: "/confirm/$id",
+          params: { id: result.id },
+          ...(fragmentToCarry ? { hash: fragmentToCarry } : {}),
+        });
       } else {
         // Email mode: enter polling state. The pollQuery effect will navigate
         // once the recipient-invitation task is done (success or partial fail).
@@ -428,7 +485,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_blocked"
       ) {
-        setSubmitError(
+        showScanError(
           t("A virus was detected. This transfer was blocked and not sent."),
         );
         return;
@@ -437,7 +494,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_file_error"
       ) {
-        setSubmitError(
+        showScanError(
           t(
             "A file could not be scanned and was blocked. Remove it to send the transfer.",
           ),
@@ -448,7 +505,7 @@ export function TransferForm() {
         err instanceof ApiError &&
         (err.body as { reason?: string })?.reason === "scan_error"
       ) {
-        setSubmitError(
+        showScanError(
           t(
             "The antivirus scan could not complete. Retry the scan, then send again.",
           ),
@@ -456,8 +513,25 @@ export function TransferForm() {
         return;
       }
       if (err instanceof Error && err.message === "scan_timeout") {
-        setSubmitError(
+        showScanError(
           t("The antivirus scan is taking too long. Please try again."),
+        );
+        return;
+      }
+      if (
+        err instanceof ApiError &&
+        (err.body as { reason?: string })?.reason === "drive_import_failed"
+      ) {
+        showOtherError(
+          t(
+            "A file couldn't be imported from Drive. Remove it and try again.",
+          ),
+        );
+        return;
+      }
+      if (err instanceof Error && err.message === "finalize_timeout") {
+        showOtherError(
+          t("The transfer is taking too long to finalize. Please try again."),
         );
         return;
       }
@@ -466,7 +540,7 @@ export function TransferForm() {
       // this keeps a finalize-side failure from silently re-enabling the button
       // with no feedback.
       console.error("Transfer submission failed:", err);
-      setSubmitError(
+      showOtherError(
         t("An error occurred while sending the transfer. Please try again."),
       );
     }
@@ -546,7 +620,7 @@ export function TransferForm() {
             onChange={handleFilesChange}
             errorMessage={fileError}
           />
-          {config.DRIVE && (
+          {config.DRIVE && !draft.confidential && (
             <DriveAttachButton
               variant="link"
               onPick={handleDrivePick}
@@ -564,10 +638,19 @@ export function TransferForm() {
               {draft.files.map((df) => {
                 const pct = percent(df);
                 const isUploading = df.state === "uploading";
+                // Server-side Drive import in progress. Reuses the same
+                // ring + % chip as browser uploads (``loaded`` is fed
+                // from the finalize poll's ``import_progress``), so both
+                // upload flows read the same on the file row.
+                const isImporting = df.state === "importing";
                 const isDone = df.state === "done";
-                const icon = isUploading ? (
+                // Confidential is never scanned. Flagging only the oversized
+                // file would imply the others *were* — one notice above Send
+                // covers the whole transfer instead.
+                const showScan = isDone && !draft.confidential;
+                const icon = isUploading || isImporting ? (
                   <UploadRing percent={pct} />
-                ) : df.state === "registering" || df.state === "importing" ? (
+                ) : df.state === "registering" ? (
                   <ImportSpinner />
                 ) : isDone ? (
                   <FileCheck />
@@ -594,7 +677,17 @@ export function TransferForm() {
                       : "default";
                 const extras = (
                   <>
-                    {isUploading && (
+                    {draft.confidential && (
+                      <Tooltip
+                        content={t("Confidential file")}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--encrypted">
+                          <Lock />
+                        </span>
+                      </Tooltip>
+                    )}
+                    {(isUploading || isImporting) && (
                       <span
                         className="file-item__pct"
                         role="progressbar"
@@ -605,21 +698,18 @@ export function TransferForm() {
                         {pct}%
                       </span>
                     )}
-                    {df.state === "importing" && (
-                      <span className="file-item__pct">
-                        {t("Importing...")}
-                      </span>
-                    )}
                     {df.state === "error" && (
                       <span className="file-item__error-text">
                         {df.error ?? t("Error creating transfer.")}
                       </span>
                     )}
-                    {isDone &&
-                      (df.scanStatus === undefined ||
-                        df.scanStatus === "pending" ||
+                    {showScan &&
+                      // Only once a scan is actually running — before Send a
+                      // "pending" file has nothing scanning it.
+                      df.scanSubmitted === true &&
+                      (df.scanStatus === "pending" ||
                         // A transient error is still "in progress" from the
-                        // user's view — it auto-retries, nothing to act on.
+                        // user's view, it auto-retries, nothing to act on.
                         (df.scanStatus === "error" &&
                           df.scanErrorKind !== "file")) &&
                       // Once polling has given up, swap the spinner for an
@@ -652,7 +742,7 @@ export function TransferForm() {
                           </span>
                         </Tooltip>
                       ))}
-                    {isDone && df.scanStatus === "clean" && (
+                    {showScan && df.scanStatus === "clean" && (
                       <Tooltip
                         content={t("Scanned, no virus found")}
                         placement="top"
@@ -662,7 +752,7 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
-                    {isDone && df.scanStatus === "infected" && (
+                    {showScan && df.scanStatus === "infected" && (
                       <Tooltip
                         content={t(
                           "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
@@ -675,7 +765,7 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
-                    {isDone &&
+                    {showScan &&
                       df.scanStatus === "error" &&
                       df.scanErrorKind === "file" && (
                         <Tooltip
@@ -690,16 +780,16 @@ export function TransferForm() {
                           </span>
                         </Tooltip>
                       )}
-                    {isDone && df.scanStatus === "too_large" && (
+                    {showScan && df.scanStatus === "too_large" && (
                       <Tooltip
                         content={t(
-                          "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
-                          { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+                          "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
                         )}
                         placement="top"
                       >
                         <span className="file-item__scan file-item__scan--warning">
                           <Warning />
+                          {t("Not scanned")}
                         </span>
                       </Tooltip>
                     )}
@@ -762,7 +852,7 @@ export function TransferForm() {
               }`}
               onClick={() => {
                 setSharingMode("email");
-                // Switching sharing mode is a draft-level change — disarm
+                // Switching sharing mode is a draft-level change, disarm
                 // any pending auto-finalize so the user re-confirms.
                 draft.cancelSubmit();
               }}
@@ -787,6 +877,60 @@ export function TransferForm() {
               <LinkIcon />
               <span>{t("Link")}</span>
             </button>
+          </div>
+
+          {/* Confidential toggle. Free to flip until send: every transfer is
+              encrypted, and this only decides whether the decryption key
+              reaches our servers. Greyed while a Drive file is present (Drive
+              imports need the key server-side). */}
+          <div
+            className="transfer-form__confidential"
+            title={
+              busy
+                ? t("Cannot change mode while sending.")
+                : hasDriveFile
+                  ? t(
+                      "Remove the Drive import to make this transfer confidential.",
+                    )
+                  : undefined
+            }
+          >
+            <div className="transfer-form__confidential-row">
+              <Switch
+                label={t("Confidential transfer")}
+                checked={draft.confidential}
+                onChange={(e) => {
+                  draft.setConfidential(e.currentTarget.checked);
+                  draft.cancelSubmit();
+                }}
+                disabled={busy || hasDriveFile}
+              />
+              <Tooltip
+                content={t(
+                  "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.",
+                )}
+                placement="left"
+              >
+                <button
+                  type="button"
+                  className="transfer-form__auto-archive-help"
+                  aria-label={t("More information")}
+                >
+                  <Info />
+                </button>
+              </Tooltip>
+            </div>
+            {draft.confidential && (
+              <p className="transfer-form__mode-hint">
+                {sharingMode === "email"
+                  ? t(
+                      "The email carries only the link. Send the decryption key to your recipient over a separate, trusted channel — we never see it and can't recover it.",
+                    )
+                  : t(
+                      "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.",
+                    )}
+              </p>
+            )}
           </div>
 
           {sharingMode === "email" && (
@@ -868,6 +1012,35 @@ export function TransferForm() {
             </Tooltip>
           </div>
 
+          {/* All submit-time callouts grouped in one block above the button
+              so the reader picks them up at a single glance before deciding
+              to commit. Order: ERROR → WARNING; within warnings, the
+              confidential notice (a design choice the user made) reads
+              before the "not scanned" notice (a state of the current
+              files). Same order as the DownloadView header stack, for
+              consistency across the two ends of a transfer. */}
+          {submitError && (
+            <Alert type={VariantType.ERROR}>{submitError}</Alert>
+          )}
+
+          {draft.confidential && hasFiles && (
+            <Alert type={VariantType.WARNING}>
+              {t(
+                "This transfer won't be scanned for viruses: the decryption key never reaches our servers, so we can't inspect the files.",
+              )}
+            </Alert>
+          )}
+
+          {!draft.confidential &&
+            hasFiles &&
+            hasUnscannedFiles(draft.files, (f) => f.scanStatus) && (
+              <Alert type={VariantType.WARNING}>
+                {t(
+                  "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
+                )}
+              </Alert>
+            )}
+
           <Button
             type="submit"
             fullWidth
@@ -882,7 +1055,9 @@ export function TransferForm() {
               )
             }
           >
-            {scanning
+            {importingDrive
+              ? t("Importing from Drive…")
+              : scanning
               ? t("Checking for viruses…")
               : finalizing
               ? t("Sending...")
@@ -899,16 +1074,14 @@ export function TransferForm() {
 
           {busy && (
             <p className="transfer-form__submit-hint" role="status">
-              {scanning
+              {importingDrive
+                ? t("Importing and encrypting your Drive files…")
+                : scanning
                 ? t("Scanning your files for viruses before sending…")
                 : t(
                     "Your transfer will be created once the upload finishes. Keep this tab open.",
                   )}
             </p>
-          )}
-
-          {submitError && (
-            <Alert type={VariantType.ERROR}>{submitError}</Alert>
           )}
         </section>
       </div>

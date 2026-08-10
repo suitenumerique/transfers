@@ -49,9 +49,7 @@ class TestScanResultWebhook:
 
     def test_malware_payload_marks_infected(self, api_client):
         f = self._file()
-        resp = _post(
-            api_client, f.id, "s3cr3t", {"status": "done", "malware": True}
-        )
+        resp = _post(api_client, f.id, "s3cr3t", {"status": "done", "malware": True})
         assert resp.status_code == 200
         f.refresh_from_db()
         assert f.scan_status == ScanStatus.INFECTED
@@ -173,7 +171,7 @@ class TestFinalizeScanGate:
         settings.CLAMAV_SCAN_ENABLED = True
 
     def _draft_with_file(self, user, scan_status, scan_error_kind=""):
-        draft = TransferDraftFactory(owner=user)
+        draft = TransferDraftFactory(owner=user, encryption_chunk_size=25 * 1024 * 1024)
         f = TransferFileFactory(
             draft=draft,
             transfer=None,
@@ -184,7 +182,13 @@ class TestFinalizeScanGate:
         return draft, f
 
     def _finalize(self, client, draft_id):
-        return client.post(f"{DRAFTS_URL}{draft_id}/finalize/", {}, format="json")
+        # Non-confidential finalize needs the key so the backend can serve it
+        # to recipients; the scan gate under test runs after that check.
+        return client.post(
+            f"{DRAFTS_URL}{draft_id}/finalize/",
+            {"encryption_key": "A" * 43},
+            format="json",
+        )
 
     def test_clean_finalizes(self, user, authenticated_client):
         draft, _ = self._draft_with_file(user, ScanStatus.CLEAN)

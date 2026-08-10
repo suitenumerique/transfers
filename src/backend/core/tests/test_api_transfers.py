@@ -212,11 +212,11 @@ class TestTransferList:
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
-    def test_list_deactivated_true_returns_non_active(
-        self, authenticated_client, user
-    ):
+    def test_list_deactivated_true_returns_non_active(self, authenticated_client, user):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
-        pending = TransferFactory(owner=user, status=TransferStatus.PENDING_FILE_DELETION)
+        pending = TransferFactory(
+            owner=user, status=TransferStatus.PENDING_FILE_DELETION
+        )
         deactivated = TransferFactory(owner=user, status=TransferStatus.DEACTIVATED)
 
         response = authenticated_client.get(f"{API_URL}?deactivated=true")
@@ -279,8 +279,12 @@ class TestTransferDeactivate:
         transfer.refresh_from_db()
         assert transfer.status == "pending_file_deletion"
         assert transfer.deactivation_reason == "manual"
-        expected_deletion = timezone.now() + timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
-        assert abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
+        expected_deletion = timezone.now() + timedelta(
+            hours=settings.TRANSFER_PURGE_DELAY_HOURS
+        )
+        assert (
+            abs((transfer.pending_deletion_at - expected_deletion).total_seconds()) < 5
+        )
 
         assert_single_event(
             transfer.id, TransferEventType.TRANSFER_DEACTIVATED_MANUALLY
@@ -305,6 +309,168 @@ class TestTransferDeactivate:
         response = authenticated_client.post(
             f"{API_URL}{other_transfer.id}/deactivate/"
         )
+        assert response.status_code == 404
+
+
+@pytest.mark.django_db
+class TestTransferHardDelete:
+    """DELETE /api/v1.0/transfers/<id>/ — hard-delete a fully-deactivated
+    transfer (row + FK-cascaded files + recipients). ``TransferEvent`` is
+    deliberately not FK-linked so its audit trail survives. Guarded by
+    ``status == DEACTIVATED`` so we never orphan S3 bytes."""
+
+    def _deactivated(self, owner):
+        """Build a Transfer + one file + one recipient + a couple of events
+        already in the terminal DEACTIVATED state — the state the hard-
+        delete is designed for."""
+        transfer = TransferFactory(
+            owner=owner, status=TransferStatus.DEACTIVATED
+        )
+        TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
+        transfer.recipients.create(email="r@example.org")
+        TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.TRANSFER_CREATED,
+            actor_type=ActorType.AGENT,
+        )
+        TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.TRANSFER_DEACTIVATED_MANUALLY,
+            actor_type=ActorType.AGENT,
+        )
+        return transfer
+
+    def test_unauthenticated(self, api_client, transfer):
+        response = api_client.delete(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 401
+
+    def test_purges_transfer_and_fk_children_but_keeps_events(
+        self, authenticated_client, user
+    ):
+        """Nominal path: the DEACTIVATED transfer row + FK-cascaded files +
+        recipients are gone; the events survive because ``transfer_id`` is
+        a plain UUIDField (not a FK), matching the class docstring's
+        "survive Transfer deletion" contract.
+        """
+        from core.models import Transfer, TransferFile, TransferRecipient
+
+        transfer = self._deactivated(user)
+        pre_event_ids = list(
+            TransferEvent.objects.filter(transfer_id=transfer.id).values_list(
+                "id", flat=True
+            )
+        )
+        assert len(pre_event_ids) == 2  # sanity: fixture created two events
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 204
+        assert not Transfer.objects.filter(id=transfer.id).exists()
+        # FK cascade for files + recipients:
+        assert not TransferFile.objects.filter(transfer_id=transfer.id).exists()
+        assert not TransferRecipient.objects.filter(
+            transfer_id=transfer.id
+        ).exists()
+        # Events stay behind, un-touched, on the audit trail.
+        assert (
+            TransferEvent.objects.filter(id__in=pre_event_ids).count()
+            == len(pre_event_ids)
+        )
+
+    def test_refuses_active_transfer(self, authenticated_client, user):
+        """The link is still live — killing it silently would surprise the
+        recipient. The agent must deactivate first, then delete. Backend
+        guard is defense-in-depth; the frontend hides the button too."""
+        from core.models import Transfer
+
+        transfer = TransferFactory(owner=user, status=TransferStatus.ACTIVE)
+        TransferFileFactory(
+            transfer=transfer,
+            upload_completed_at=timezone.now(),
+            s3_key="transfers/x/live.bin",
+        )
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 400
+        assert "status" in response.data
+        # Row must be intact.
+        assert Transfer.objects.filter(id=transfer.id).exists()
+
+    def test_wipes_s3_then_purges_pending_file_deletion(
+        self, patched_s3, authenticated_client, user
+    ):
+        """PENDING_FILE_DELETION also still owns S3 objects (waiting for the
+        grace window to elapse before the periodic sweep purges them).
+        Hard-delete bypasses the grace and wipes immediately."""
+        from core.models import Transfer
+
+        transfer = TransferFactory(
+            owner=user, status=TransferStatus.PENDING_FILE_DELETION
+        )
+        f = TransferFileFactory(
+            transfer=transfer,
+            upload_completed_at=timezone.now(),
+            s3_key="transfers/y/pending.bin",
+        )
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 204
+        patched_s3.delete.assert_any_call(f.s3_key)
+        assert not Transfer.objects.filter(id=transfer.id).exists()
+
+    def test_refuses_when_s3_delete_fails(
+        self, patched_s3, authenticated_client, user
+    ):
+        """S3 hiccup on wipe → 400, row + files intact. Otherwise deleting
+        the row would strand S3 objects the periodic sweep can no longer
+        find via a ``TransferFile.s3_key`` lookup."""
+        from botocore.exceptions import ClientError
+        from core.models import Transfer, TransferFile
+
+        # PENDING_FILE_DELETION still owns S3 bytes, so the wipe runs.
+        transfer = TransferFactory(
+            owner=user, status=TransferStatus.PENDING_FILE_DELETION
+        )
+        TransferFileFactory(
+            transfer=transfer,
+            upload_completed_at=timezone.now(),
+            s3_key="transfers/z/hiccup.bin",
+        )
+        # Make delete_object raise a ClientError; the best-effort helper
+        # swallows it and returns False.
+        patched_s3.delete.side_effect = ClientError(
+            {"Error": {"Code": "InternalError"}}, "DeleteObject"
+        )
+
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+
+        assert response.status_code == 400
+        # Pin the exact user-facing copy — PENDING_FILE_DELETION is
+        # invisible in the UI ("Deactivated" badge), so this branch has
+        # to (a) return the generic retryable message the modal shows
+        # and (b) never leak an internal term. A "detail" key alone
+        # would let a regression to "Some files could not be deleted
+        # from storage." pass silently — that copy still fits the shape
+        # but contradicts the deactivate confirm's "files will be
+        # deleted" promise.
+        expected = "This transfer can't be deleted right now. Try again in a moment."
+        detail = response.data["detail"]
+        assert (detail[0] if isinstance(detail, list) else detail) == expected
+        body = str(response.data).lower()
+        for banned in ("storage", "s3", "pending_file_deletion"):
+            assert banned not in body, (
+                f"Response leaks internal term {banned!r}: {response.data!r}"
+            )
+        assert Transfer.objects.filter(id=transfer.id).exists()
+        assert TransferFile.objects.filter(transfer_id=transfer.id).exists()
+
+    def test_rejects_other_user(self, authenticated_client):
+        """A non-owner sees the same 404 as if the row didn't exist — the
+        owner filter lives in ``get_queryset`` and gates every action."""
+        other_transfer = TransferFactory(status=TransferStatus.DEACTIVATED)
+        response = authenticated_client.delete(f"{API_URL}{other_transfer.id}/")
         assert response.status_code == 404
 
 

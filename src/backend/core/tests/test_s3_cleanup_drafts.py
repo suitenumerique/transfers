@@ -72,6 +72,7 @@ class TestAbortDraftLeaks:
             {
                 "draft_id": partial_mpu_file["draft_id"],
                 "filename": "second.bin",
+                "plaintext_size": S3_MIN_PART_SIZE - 28,
                 "size": S3_MIN_PART_SIZE,
             },
             format="json",
@@ -120,7 +121,9 @@ class TestCompleteUploadLeaks:
             {
                 "draft_id": partial_mpu_file["draft_id"],
                 "filename": "wrong-size.bin",
-                "size": 2 * S3_MIN_PART_SIZE,  # declare double what we'll upload
+                # Declare double what we'll upload to force the size mismatch.
+                "plaintext_size": 2 * S3_MIN_PART_SIZE - 28,
+                "size": 2 * S3_MIN_PART_SIZE,
             },
             format="json",
         )

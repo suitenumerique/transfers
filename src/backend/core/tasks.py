@@ -1,5 +1,6 @@
 """Celery tasks for the transferts core app."""
 
+import json
 import logging
 import secrets
 from datetime import timedelta
@@ -10,6 +11,7 @@ from django.utils import timezone
 
 import botocore
 import requests
+import sentry_sdk
 from celery import shared_task
 
 from core.enums import (
@@ -20,7 +22,8 @@ from core.enums import (
     TransferStatus,
 )
 from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
-from core.services import s3
+from core.services import encryption, s3
+from core.services.scan_auth import mint_request_token
 from core.services.email import send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
 
@@ -55,7 +58,7 @@ def deactivate_expired_transfers_task():
         # deactivate() returns False when another feed (manual / first
         # download) already moved the row out of ACTIVE between the query
         # above and now. Only record the expiry audit event when the transfer gets
-        # deactivated HERE, otherwise the log would claim an expiry that never 
+        # deactivated HERE, otherwise the log would claim an expiry that never
         # happened.
         if not transfer.deactivate(DeactivationReason.EXPIRED):
             continue
@@ -133,17 +136,33 @@ def cleanup_abandoned_drafts_task():
         logger.info("Cleaned up %d abandoned draft(s).", count)
 
 
-@shared_task
+@shared_task(acks_late=True, reject_on_worker_lost=True)
 def import_drive_file_task(transfer_file_id):
-    """Stream a public Drive permalink into our S3 multipart.
+    """Stream a public Drive permalink into our S3 multipart, encrypting it.
 
-    The ``TransferFile`` row is expected to already exist with ``source_url``
-    set and ``upload_completed_at`` still null. On success the row's
-    ``s3_key`` / ``upload_id`` / ``upload_completed_at`` are populated so
-    it looks indistinguishable from a browser-uploaded file. On failure the
-    row is deleted — the frontend's poller notices the disappearance and
-    surfaces a generic error; the user can re-pick from Drive to retry.
-    Any already-initiated S3 multipart is aborted as part of cleanup.
+    Runs during finalize (non-confidential transfers only, so we hold the
+    key). The bytes are fetched server-to-server, re-chunked into the
+    transfer's crypto chunk size, and each chunk is AES-GCM encrypted with
+    the key parked on the draft before enqueueing — so a Drive file is
+    indistinguishable from a browser-encrypted upload and the recipient SW
+    decrypts it the same way. The key is read from ``tf.draft.encryption_key``
+    rather than passed as a Celery kwarg, keeping it out of task metadata
+    and broker payloads.
+
+    ``acks_late`` + ``reject_on_worker_lost``: the message stays in the
+    queue until the task returns, and is redelivered to another worker if
+    the current one dies mid-execution (OOM kill, container restart).
+    The idempotency check at the top handles the redelivery cleanly.
+
+    On success ``upload_completed_at`` is set and the row stays PENDING, so the
+    finalize gate submits its scan. On failure ``import_failed_at`` is set and
+    the row is kept, so the finalize poll can surface it to the user. In
+    the (rare) case where the broker itself loses a message with no visible
+    failure, the draft stays "importing" until the user closes the tab, and
+    ``cleanup_abandoned_drafts_task`` reaps the orphan 24 h later.
+
+    Progress is published to ``bytes_imported`` after each S3 part upload
+    so the finalize poll can surface a per-file %.
     """
     try:
         tf = TransferFile.objects.get(id=transfer_file_id)
@@ -155,11 +174,59 @@ def import_drive_file_task(transfer_file_id):
         # a no-op rather than a duplicate import.
         return
 
+    # Redelivery cleanup: a previous invocation of this task may have
+    # created an MPU then died mid-upload (OOM, container restart), before
+    # its ``except`` cleanup could run. Its ``upload_id`` is still parked
+    # on the row — abort it before starting fresh, or the parts it uploaded
+    # would sit as an orphan MPU past ``cleanup_abandoned_drafts_task``'s
+    # reach (that task aborts ``tf.upload_id``, which we're about to
+    # overwrite with our new one) and only reach S3's multipart lifecycle
+    # cleanup days later.
+    if tf.upload_id:
+        try:
+            s3.abort_multipart_upload(key=tf.s3_key, upload_id=tf.upload_id)
+        except botocore.exceptions.ClientError:
+            logger.warning(
+                "Failed to abort stale MPU %s for TransferFile %s "
+                "(likely already gone or forgotten by S3); continuing.",
+                tf.upload_id,
+                tf.id,
+            )
+        TransferFile.objects.filter(id=tf.id).update(upload_id="")
+        tf.upload_id = ""
+
+    # The import runs at finalize while the file is still on the draft (the
+    # Transfer is created only once every Drive import has completed). The
+    # draft's chunk size is the value the client used to declare the
+    # ciphertext ``size``, so encrypting with it is what makes the produced
+    # object match; the settings fallback is a safety net.
+    chunk_size = (
+        tf.draft.encryption_chunk_size
+        if tf.draft and tf.draft.encryption_chunk_size
+        else settings.TRANSFER_CHUNK_SIZE
+    )
+    encryption_key = tf.draft.encryption_key if tf.draft else ""
     key = tf.s3_key or f"transfers/{tf.id}/{tf.filename}"
     upload_id = ""
     try:
+        aes_key = encryption.decode_key(encryption_key)
+
         with requests.get(tf.source_url, stream=True, timeout=60) as response:
             response.raise_for_status()
+
+            # Reject up front on the declared size, then cap what we actually
+            # read (the header may be missing or lying). Otherwise we'd encrypt
+            # and ship an unbounded body to S3 before the final check caught it.
+            declared = response.headers.get("Content-Length")
+            try:
+                declared = int(declared) if declared else None
+            except ValueError:
+                declared = None
+            if declared is not None and declared > tf.plaintext_size:
+                raise ValueError(
+                    f"Drive declared {declared} plaintext bytes but file "
+                    f"declared plaintext_size={tf.plaintext_size}."
+                )
 
             upload_id = s3.create_multipart_upload(
                 key=key, content_type=tf.mime_type or ""
@@ -172,89 +239,161 @@ def import_drive_file_task(transfer_file_id):
 
             parts = []
             part_number = 1
-            total_bytes = 0
+            total_plaintext = 0
+            total_ciphertext = 0
             buffer = bytearray()
-            for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
-                if not chunk:
-                    continue
-                buffer.extend(chunk)
-                # Drive may return small chunks; coalesce up to the target
-                # size before shipping a part to S3 to avoid hitting the 5
-                # MiB minimum on any part except the last.
-                while len(buffer) >= _DRIVE_IMPORT_CHUNK_SIZE:
-                    part_bytes = bytes(buffer[:_DRIVE_IMPORT_CHUNK_SIZE])
-                    del buffer[:_DRIVE_IMPORT_CHUNK_SIZE]
-                    etag = s3.upload_part_bytes(
-                        key=key,
-                        upload_id=upload_id,
-                        part_number=part_number,
-                        body=part_bytes,
-                    )
-                    parts.append({"PartNumber": part_number, "ETag": etag})
-                    part_number += 1
-                    total_bytes += len(part_bytes)
+            # Total chunk count, bound into every chunk's AAD so trailing
+            # truncation is detectable. Computed up front from the declared
+            # plaintext_size; the ``total_plaintext == tf.plaintext_size``
+            # check at the end guarantees we ship exactly this many parts.
+            expected_parts = encryption.total_parts(tf.plaintext_size, chunk_size)
 
-            # Flush the tail — may be smaller than the min part size, which
-            # is OK because it is the last part.
-            if buffer:
-                part_bytes = bytes(buffer)
+            def _encrypt_and_upload(plaintext: bytes) -> None:
+                nonlocal part_number, total_plaintext, total_ciphertext
+                body = encryption.encrypt_chunk(
+                    aes_key, plaintext, str(tf.id), part_number, expected_parts
+                )
                 etag = s3.upload_part_bytes(
                     key=key,
                     upload_id=upload_id,
                     part_number=part_number,
-                    body=part_bytes,
+                    body=body,
                 )
                 parts.append({"PartNumber": part_number, "ETag": etag})
-                total_bytes += len(part_bytes)
+                part_number += 1
+                total_plaintext += len(plaintext)
+                total_ciphertext += len(body)
+                # Publish progress so the finalize poll can surface a %.
+                # Direct UPDATE (no full-row save + auto_now churn) — cheap
+                # even for a 20 GiB / 800-chunk import.
+                TransferFile.objects.filter(id=tf.id).update(
+                    bytes_imported=total_plaintext
+                )
 
-        if total_bytes != tf.size:
+            downloaded = 0
+            for chunk in response.iter_content(chunk_size=_DRIVE_IMPORT_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                downloaded += len(chunk)
+                if downloaded > tf.plaintext_size:
+                    raise ValueError(
+                        f"Drive stream exceeded the declared "
+                        f"plaintext_size={tf.plaintext_size} (Content-Length "
+                        f"missing or understated)."
+                    )
+                buffer.extend(chunk)
+                # One crypto chunk = one S3 part. Coalesce Drive's arbitrary
+                # read sizes into full ``chunk_size`` plaintext blocks so the
+                # ciphertext layout matches what the browser produces (and
+                # every part but the last clears S3's 5 MiB minimum).
+                while len(buffer) >= chunk_size:
+                    _encrypt_and_upload(bytes(buffer[:chunk_size]))
+                    del buffer[:chunk_size]
+
+            # Flush the tail (the shorter last chunk). For an exact
+            # non-zero multiple of chunk_size the buffer is already empty —
+            # the last full chunk shipped inside the loop, matching the
+            # browser which emits no empty trailing chunk. Zero-byte
+            # plaintext is the special case: the browser still ships one
+            # chunk (just IV + tag, ``CRYPTO_OVERHEAD_PER_CHUNK`` bytes)
+            # so ``tf.size == 28``; ship the same here or the ciphertext
+            # size check below would fail with a 0-vs-28 mismatch.
+            if buffer or tf.plaintext_size == 0:
+                _encrypt_and_upload(bytes(buffer))
+
+        if total_plaintext != tf.plaintext_size:
             raise ValueError(
-                f"Drive returned {total_bytes} bytes but file declared {tf.size}."
+                f"Drive returned {total_plaintext} plaintext bytes but file "
+                f"declared plaintext_size={tf.plaintext_size}."
+            )
+        if total_ciphertext != tf.size:
+            raise ValueError(
+                f"Encrypted to {total_ciphertext} bytes but file declared "
+                f"size={tf.size}."
             )
 
         s3.complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
 
         tf.upload_id = ""
         tf.upload_completed_at = timezone.now()
-        # SKIPPED when scanning is off (downloadable, not "clean"), else
-        # PENDING until the scanner's webhook resolves it.
+        # Drive implies non-confidential, so we hold the key and this object
+        # is scannable. The row stays PENDING (the model default) so the
+        # finalize scan-submission loop picks it up on the next poll — same
+        # code path as browser uploads. The scan-exempt statuses are set
+        # here for the shortcuts (scan disabled instance-wide, file over
+        # the scanner cap) so the finalize gate lets the transfer through.
+        update_fields = ["upload_id", "upload_completed_at", "updated_at"]
         if not settings.CLAMAV_SCAN_ENABLED:
             tf.scan_status = ScanStatus.SKIPPED
+            update_fields.append("scan_status")
         elif tf.size > settings.SCAN_MAX_FILE_SIZE:
             tf.scan_status = ScanStatus.TOO_LARGE
-        tf.save(
-            update_fields=[
-                "upload_id",
-                "upload_completed_at",
-                "scan_status",
-                "updated_at",
-            ]
-        )
-        # PENDING ⟺ AV on AND within size limit (SKIPPED / TOO_LARGE set above).
-        if tf.scan_status == ScanStatus.PENDING:
-            submit_scan_task.delay(str(tf.id))
+            update_fields.append("scan_status")
+        tf.save(update_fields=update_fields)
     except Exception:
         # Catch broadly: any failure between create_multipart_upload and the
-        # final save (DB hiccup, S3 error, size mismatch, …) needs the same
-        # cleanup, otherwise the MPU and partial object leak.
+        # final save (DB hiccup, S3 error, size mismatch, bad key…) needs the
+        # same cleanup, otherwise the MPU and partial object leak. Report the
+        # original exception to Sentry before the cleanup runs — abort /
+        # delete calls can raise their own ClientError and would otherwise
+        # take over the active exception context here.
+        sentry_sdk.capture_exception()
         logger.exception("Drive import failed for TransferFile %s", transfer_file_id)
-        # Best-effort: a S3 cleanup error must not block tf.delete() — the
-        # frontend's poller relies on the row disappearing to surface the
-        # failure to the user.
         if upload_id:
             try:
                 s3.abort_multipart_upload(key=key, upload_id=upload_id)
             except botocore.exceptions.ClientError:
-                logger.exception(
-                    "Failed to abort MPU %s for key %s", upload_id, key
-                )
+                logger.exception("Failed to abort MPU %s for key %s", upload_id, key)
         # delete_object is idempotent on missing keys (S3 returns 204).
         if tf.s3_key:
             try:
                 s3.delete_object(tf.s3_key)
             except botocore.exceptions.ClientError:
                 logger.exception("Failed to delete object %s", tf.s3_key)
-        tf.delete()
+        # Keep the row and mark it failed so the finalize poll can surface
+        # the failure; the user removes the file (or re-picks to retry).
+        tf.upload_id = ""
+        tf.import_failed_at = timezone.now()
+        tf.save(update_fields=["upload_id", "import_failed_at", "updated_at"])
+
+
+class ScanNotPossible(Exception):
+    """This file cannot be meaningfully scanned, so it must not be submitted."""
+
+
+def _scan_encryption_params(tf):
+    """What the scanner needs to decrypt ``tf``.
+
+    Fail closed: scanning an encrypted object without these doesn't error out —
+    clamd reports the opaque bytes CLEAN. Everything we store is encrypted, so
+    anything we can't assemble decryption material for is a bug, not a plaintext
+    file, and must not be scanned. Read the state from the row's actual parent,
+    not the draft alone, so a reparented file can't pass as plaintext.
+    """
+    parent = tf.draft or tf.transfer
+    if parent is None:
+        raise ScanNotPossible("row has neither draft nor transfer")
+
+    if parent.encryption_chunk_size is None:
+        raise ScanNotPossible("no chunk size — cannot decrypt")
+
+    if not parent.encryption_key:
+        # No key yet (finalize supplies it), or confidential — never any key.
+        raise ScanNotPossible("encrypted, no key available")
+
+    return {
+        "key": parent.encryption_key,
+        "chunk_size": parent.encryption_chunk_size,
+        # AAD prefix — must match what the browser bound each chunk to.
+        "file_id": str(tf.id),
+        # Total chunks. Also bound into every AAD (as the ``:parts`` suffix)
+        # so the scanner detects trailing truncation: without it, dropping
+        # whole end chunks lands on a chunk boundary and the surviving
+        # chunks still authenticate.
+        "parts": encryption.total_parts(
+            tf.plaintext_size, parent.encryption_chunk_size
+        ),
+    }
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -309,22 +448,42 @@ def submit_scan_task(self, transfer_file_id):
         )
         tf.refresh_from_db(fields=["webhook_secret"])
 
+    try:
+        encryption_params = _scan_encryption_params(tf)
+    except ScanNotPossible as exc:
+        logger.info("Not scanning TransferFile %s: %s", transfer_file_id, exc)
+        return
+
     scan_url = s3.sign_scan_url(tf.s3_key)
     webhook_url = (
         f"{settings.SCAN_WEBHOOK_BASE_URL}/api/{settings.API_VERSION}"
         f"/webhooks/scan-result/?file_id={tf.id}&secret={tf.webhook_secret}"
     )
 
+    payload = {
+        "url": scan_url,
+        "filename": tf.filename,
+        "webhook_url": webhook_url,
+    }
+    if encryption_params:
+        payload["encryption"] = encryption_params
+
+    # Serialise once: the JWT ``bh`` claim binds the SHA-256 of the exact
+    # bytes we POST, so `requests` must ship the same bytes (``data=``, not
+    # ``json=``, so it doesn't re-serialise and drift the hash).
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    scan_path = f"/api/{settings.API_VERSION}/scan-async"
+    token = mint_request_token("POST", scan_path, body)
     try:
         response = requests.post(
-            f"{settings.CLAMAV_SERVICE_URL}/v2/scan-async",
-            json={
-                "url": scan_url,
-                "filename": tf.filename,
-                "webhook_url": webhook_url,
+            f"{settings.CLAMAV_SERVICE_URL}{scan_path}",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
             },
-            headers={"X-API-Key": settings.CLAMAV_API_KEY},
             timeout=10,
+            allow_redirects=False,
         )
         response.raise_for_status()
     except requests.RequestException as exc:
@@ -342,37 +501,38 @@ def submit_scan_task(self, transfer_file_id):
     # Targeted update: the row may have been concurrently mutated and we only
     # own the scan_job_id column here.
     TransferFile.objects.filter(id=tf.id).update(scan_job_id=job_id)
-    logger.info(
-        "Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id
-    )
+    logger.info("Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id)
 
 
 @shared_task
 def reap_stale_pending_scans_task():
-    """Re-submit files stuck in PENDING for too long.
+    """Re-submit scans that never came back (lost webhook, dead worker),
+    otherwise the file stays PENDING — and undownloadable — forever.
 
-    The file-scanner is stateless and delivers async results only via webhook,
-    so a lost message (webhook delivery exhausted, worker/broker crash, expired
-    presigned URL) would otherwise pin a file in PENDING — and thus
-    undownloadable — forever. This periodic sweep re-submits any file whose
-    upload completed more than ``SCAN_PENDING_REAP_MINUTES`` ago and is still
-    PENDING. ``submit_scan_task`` reuses the existing per-file secret and mints
-    a fresh presigned URL, so re-submitting is safe and idempotent on the
-    receiving end.
+    Clocked on ``scan_submitted_at``, not the upload: a scan only starts at
+    finalize, which can be long after the bytes landed.
     """
     if not settings.CLAMAV_SCAN_ENABLED:
         return
 
-    cutoff = timezone.now() - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
+    now = timezone.now()
+    cutoff = now - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
     stale = TransferFile.objects.filter(
         scan_status=ScanStatus.PENDING,
-        upload_completed_at__isnull=False,
-        upload_completed_at__lte=cutoff,
+        scan_submitted_at__isnull=False,
+        scan_submitted_at__lte=cutoff,
     ).values_list("id", flat=True)
 
     count = 0
     for file_id in stale:
         submit_scan_task.delay(str(file_id))
+        # Bump the timestamp only after the enqueue succeeds so the row
+        # stays visible to the next tick if the broker rejected us. The
+        # updated value keeps the same row from being re-reaped on every
+        # subsequent tick while the (re-submitted) scan is running.
+        TransferFile.objects.filter(id=file_id).update(
+            scan_submitted_at=now, updated_at=now
+        )
         count += 1
 
     if count:
@@ -456,7 +616,15 @@ def delete_pending_transfer_files_task():
 
 @shared_task
 def send_recipient_invitations_task(transfer_id):
-    """Send invitation emails to all recipients of an email-mode transfer."""
+    """Send invitation emails to every recipient of ``transfer_id`` that
+    doesn't have an ``email_sent_at`` yet.
+
+    The email carries only the download link, never the decryption key.
+    A non-confidential transfer's key is served by the backend at
+    download time; a confidential transfer's key never reaches us (the
+    sender delivers it out of band). Either way no decryption material
+    reaches this task or the outbound email body.
+    """
     try:
         transfer = Transfer.objects.select_related("owner").get(id=transfer_id)
     except Transfer.DoesNotExist:

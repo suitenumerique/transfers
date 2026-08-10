@@ -1,17 +1,21 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, ModalSize, Tooltip, useModal } from "@gouvfr-lasuite/cunningham-react";
+import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
-import { useConfig } from "@/features/providers/config";
+import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
-import { downloadFile } from "../api/useDownload";
+import { useNavigate } from "@tanstack/react-router";
+import { downloadFile, transferBaseUrl } from "../api/useDownload";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
+import { useHardDeleteTransfer } from "../api/useHardDeleteTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
+import { useDeadlineFlag } from "../utils/useDeadlineFlag";
+import { hasUnscannedFiles } from "../utils/scanStatus";
 import { FileItem } from "./FileItem";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
@@ -48,9 +52,10 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
-  const config = useConfig();
   const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
+  const hardDeleteTransfer = useHardDeleteTransfer();
+  const navigate = useNavigate();
   const resendTransfer = useResendTransfer();
   const [copied, setCopied] = useState(false);
   const [recipientsOpen, setRecipientsOpen] = useState(true);
@@ -65,6 +70,7 @@ export function TransferDetail({
   // before the task has even re-run.
   const seenCompletionRef = useRef<string | null>(null);
   const deactivateModal = useModal();
+  const hardDeleteModal = useModal();
   const events = useTransferEvents(transfer.id);
 
   // Refresh the parent's useTransfer query every 2s while a retry is in
@@ -94,12 +100,35 @@ export function TransferDetail({
   };
   const isRetrying = resendTransfer.isPending || isAwaitingRetry;
 
-  const downloadUrl = transfer.public_token
-    ? `${window.location.origin}/t/${transfer.public_token}`
-    : "";
+  // encryption: the working link only ever existed on the success screen post-
+  // finalize (via the navigation hash). We don't persist it anywhere, so
+  // the detail page can never reconstruct it. For non-encrypted the bare token
+  // is enough — same URL the recipient receives.
+  const baseUrl = transferBaseUrl(transfer.public_token);
+  // Confidential transfers can't be reconstructed here — the key lived only
+  // on the success screen. Normal transfers get a bare, working link.
+  const downloadUrl = transfer.confidential ? "" : baseUrl;
+  // Every finalized transfer is encrypted; null chunk size = legacy plaintext.
+  // Encrypted files need the recipient SW to decrypt, which this detail page
+  // doesn't run — so per-file download is disabled and the sender uses the
+  // link instead.
+  const isEncrypted = transfer.encryption_chunk_size != null;
   const isPublicLink = transfer.sharing_mode === "link";
-  const totalSize = transfer.files.reduce((sum, f) => sum + f.size, 0);
+  // For encryption, ``size`` is the ciphertext sitting in S3. The user-facing
+  // total should be the plaintext bytes they'll eventually save to disk.
+  const totalSize = transfer.files.reduce(
+    (sum, f) => sum + (f.plaintext_size ?? f.size),
+    0,
+  );
   const isActive = transfer.status === "active";
+  // ``expires_at`` has passed but the hourly
+  // ``deactivate_expired_transfers_task`` beat hasn't caught up yet — the
+  // row is honestly still ACTIVE in the DB (the agent can still deactivate
+  // it, copy the link, etc.), we just want to surface a subtle "expiration
+  // pending" cue instead of letting the header read "Expires 2 minutes
+  // ago" as if nothing were happening. Gated on ``isActive`` so a
+  // deactivated transfer never re-arms its timer.
+  const expirationPending = useDeadlineFlag(transfer.expires_at, isActive);
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(
@@ -145,12 +174,55 @@ export function TransferDetail({
 
   const handleDownload = (fileId: string) => {
     if (!transfer.public_token) return;
+    // Encrypted files need the recipient SW to decrypt, which this page
+    // doesn't run — the button is disabled below. Only legacy plaintext
+    // transfers use the plain backend redirect.
+    if (isEncrypted) return;
     downloadFile(transfer.public_token, fileId);
   };
 
   const handleDeactivateConfirm = () => {
     deactivateModal.close();
     deactivateTransfer.mutate(transfer.id);
+  };
+
+  const handleHardDeleteConfirm = () => {
+    // Close the modal + nav away ONLY on success. On failure (the
+    // backend refuses ACTIVE for defense-in-depth, and the S3 wipe on
+    // PENDING_FILE_DELETION can fail transiently — "try again in a
+    // moment" per the viewset), leaving the modal open lets the user
+    // see the error message and retry from the same click. The confirm
+    // button already disables via ``isPending`` so no double-fire.
+    hardDeleteTransfer.mutate(transfer.id, {
+      onSuccess: () => {
+        hardDeleteModal.close();
+        void navigate({ to: "/" });
+      },
+    });
+  };
+
+  const closeHardDeleteModal = () => {
+    // Clear a lingering error state so re-opening the modal (or the
+    // ``Cancel`` after a failed attempt) starts from a clean slate
+    // instead of surfacing the previous attempt's message.
+    hardDeleteTransfer.reset();
+    hardDeleteModal.close();
+  };
+
+  const hardDeleteErrorMessage = (): string | null => {
+    if (!hardDeleteTransfer.isError) return null;
+    // DRF ValidationError body is ``{field: ["message"]}``; grab the
+    // first message we find so the user sees the backend's own copy
+    // ("Deactivate it first…" / "Try again in a moment.") instead of
+    // a generic "Bad Request".
+    const err = hardDeleteTransfer.error;
+    if (err instanceof ApiError && err.body && typeof err.body === "object") {
+      for (const val of Object.values(err.body as Record<string, unknown>)) {
+        if (typeof val === "string") return val;
+        if (Array.isArray(val) && typeof val[0] === "string") return val[0];
+      }
+    }
+    return err instanceof Error ? err.message : t("Something went wrong. Please try again.");
   };
 
   // Sender-side mirror of the recipient's antivirus badge. The recap shows
@@ -174,8 +246,7 @@ export function TransferDetail({
       return (
         <Tooltip
           content={t(
-            "File too large to scan (over {{limit}}). The transfer can still be created, but the recipient will be told this file was not scanned.",
-            { limit: formatFileSize(config.SCAN_MAX_FILE_SIZE) },
+            "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
           )}
           placement="top"
         >
@@ -194,8 +265,10 @@ export function TransferDetail({
         <h1 className="transfer-detail__title">
           {transfer.title || t("Untitled")}
         </h1>
-        {transfer.status !== "active" && (
+        {transfer.status !== "active" ? (
           <TransferStatusBadge status={transfer.status} />
+        ) : (
+          expirationPending && <TransferStatusBadge status="expiring" />
         )}
       </header>
 
@@ -221,7 +294,52 @@ export function TransferDetail({
             </span>
           </>
         )}
+        {transfer.confidential && (
+          <>
+            <span className="transfer-detail__meta-sep">·</span>
+            <Tooltip
+              content={t(
+                "This transfer is confidential. The decryption key was only available when you created it; we never received it and don't keep it.",
+              )}
+              placement="top"
+            >
+              <span className="transfer-detail__meta-item transfer-detail__meta-item--encryption">
+                <Lock />
+                {t("Confidential")}
+              </span>
+            </Tooltip>
+          </>
+        )}
       </div>
+
+      {/* Page-level callouts — mirror TransferForm/TransferSuccess so the
+          sender sees the same warnings on the recap view they saw before
+          send. Confidential and "some files not scanned" are mutually
+          exclusive: a confidential transfer bypasses the scan by design,
+          and its banner already covers the "no scan" outcome. Strings
+          reused from TransferForm to avoid a second translation surface. */}
+      {transfer.confidential && transfer.files.length > 0 && (
+        <Alert
+          type={VariantType.WARNING}
+          className="transfer-detail__scan-alert"
+        >
+          {t(
+            "This transfer won't be scanned for viruses: the decryption key never reaches our servers, so we can't inspect the files.",
+          )}
+        </Alert>
+      )}
+
+      {!transfer.confidential &&
+        hasUnscannedFiles(transfer.files, (f) => f.scan_status) && (
+          <Alert
+            type={VariantType.WARNING}
+            className="transfer-detail__scan-alert"
+          >
+            {t(
+              "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
+            )}
+          </Alert>
+        )}
 
       {downloadUrl && (
         <div className="transfer-detail__link-box">
@@ -235,7 +353,7 @@ export function TransferDetail({
             onFocus={(e) => e.currentTarget.select()}
           />
           {/* Link stays visible on deactivated transfers for reference,
-              but copying is disabled — the URL no longer resolves. */}
+              but copying is disabled, the URL no longer resolves. */}
           <Button
             size="small"
             color="neutral"
@@ -317,23 +435,48 @@ export function TransferDetail({
               key={file.id}
               icon={<Doc />}
               name={file.filename}
-              size={formatFileSize(file.size)}
+              size={formatFileSize(file.plaintext_size ?? file.size)}
               state={
                 file.scan_status === "infected" ||
                 file.scan_status === "error"
                   ? "error"
                   : "done"
               }
-              extras={scanBadge(file.scan_status)}
+              extras={
+                <>
+                  {transfer.confidential && (
+                    <Tooltip
+                      content={t("Confidential file")}
+                      placement="top"
+                    >
+                      <span className="file-item__scan file-item__scan--encrypted">
+                        <Lock />
+                      </span>
+                    </Tooltip>
+                  )}
+                  {scanBadge(file.scan_status)}
+                </>
+              }
               action={
                 <Button
                   color="neutral"
                   variant="tertiary"
                   icon={<Download />}
                   onClick={() => handleDownload(file.id)}
-                  disabled={!isActive || !transfer.public_token || !downloadable}
+                  disabled={
+                    !isActive ||
+                    !transfer.public_token ||
+                    !downloadable ||
+                    isEncrypted
+                  }
                   aria-label={t("Download {{name}}", { name: file.filename })}
-                  title={t("Download")}
+                  title={
+                    isEncrypted
+                      ? t(
+                          "Open the download link to get this file — it decrypts in your browser.",
+                        )
+                      : t("Download")
+                  }
                 />
               }
             />
@@ -343,7 +486,12 @@ export function TransferDetail({
 
       {isActive && (
         <div className="transfer-detail__actions">
-          {isPublicLink ? (
+          {isPublicLink && downloadUrl ? (
+            // encryption link-mode transfers have no downloadUrl on this page (the
+            // working link only existed on the success screen, with the key
+            // fragment). The button would be visible but its onClick would
+            // no-op — hide it entirely so the UI stops promising an action
+            // it can't deliver.
             <Button
               color="brand"
               icon={copied ? <Checkmark /> : <Copy />}
@@ -374,6 +522,25 @@ export function TransferDetail({
             disabled={deactivateTransfer.isPending}
           >
             {t("Deactivate")}
+          </Button>
+        </div>
+      )}
+
+      {/* Hard-delete: hidden on ``ACTIVE`` so an agent doesn't silently
+          kill a live link — they have to click Deactivate first, which
+          makes the "the link is going away" step explicit. On
+          ``PENDING_FILE_DELETION`` (grace window running) and
+          ``DEACTIVATED`` (S3 already purged) the button is safe:
+          the backend wipes any remaining S3 bytes before dropping the
+          row so the periodic sweep never sees orphaned keys. */}
+      {transfer.status !== "active" && (
+        <div className="transfer-detail__actions">
+          <Button
+            color="error"
+            onClick={hardDeleteModal.open}
+            disabled={hardDeleteTransfer.isPending}
+          >
+            {t("Delete permanently")}
           </Button>
         </div>
       )}
@@ -455,6 +622,43 @@ export function TransferDetail({
         }
       >
         {t("This link will no longer work and files will be deleted.")}
+      </Modal>
+
+      <Modal
+        size={ModalSize.SMALL}
+        isOpen={hardDeleteModal.isOpen}
+        onClose={closeHardDeleteModal}
+        title={t("Delete permanently")}
+        rightActions={
+          <>
+            <Button
+              color="neutral"
+              variant="secondary"
+              onClick={closeHardDeleteModal}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              color="error"
+              onClick={handleHardDeleteConfirm}
+              disabled={hardDeleteTransfer.isPending}
+            >
+              {t("Delete permanently")}
+            </Button>
+          </>
+        }
+      >
+        {hardDeleteTransfer.isError && (
+          <Alert
+            type={VariantType.ERROR}
+            className="transfer-detail__hard-delete-error"
+          >
+            {hardDeleteErrorMessage()}
+          </Alert>
+        )}
+        {t(
+          "This is irreversible. Permanently deletes this transfer and its recipients. The activity log is kept for audit.",
+        )}
       </Modal>
     </div>
   );

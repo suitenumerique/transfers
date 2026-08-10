@@ -213,6 +213,13 @@ services:
     command: ["npm", "run", "dev"]
     volumes:
       - ./src/frontend/:/home/frontend/
+      # Anonymous volume — keeps the image-built node_modules from being
+      # shadowed by whatever the host has (or doesn't have) at that path.
+      # Critical on hosts where a stray ``npm install`` on the sshfs-mounted
+      # project makes symlinks in ``node_modules/.bin/`` unreadable to
+      # ``sh``, killing ``npm run dev`` with ``sh: vite: Operation not
+      # permitted``.
+      - /home/frontend/node_modules/
     ports:
       - "8980:3000"
 
@@ -222,6 +229,7 @@ services:
       - frontend-tools
     volumes:
       - ./src/frontend/:/home/frontend/
+      - /home/frontend/node_modules/
 
 volumes:
   objectstorage-data:
