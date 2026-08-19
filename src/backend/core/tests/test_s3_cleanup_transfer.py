@@ -26,7 +26,7 @@ class TestDeactivateLeaks:
     def test_deactivate_clears_all_objects(
         self, authenticated_client, user, live_s3_bucket
     ):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         transfer = TransferFactory(owner=user)
         for i in range(3):
             key = f"transfers/{transfer.id}/file-{i}.bin"

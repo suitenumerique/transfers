@@ -82,7 +82,7 @@ class Command(BaseCommand):
         active_ratio = opts["active_ratio"]
         max_files = opts["max_files_per_transfer"]
         active_count = int(count * active_ratio)
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         now = timezone.now()
 
         self.stdout.write(

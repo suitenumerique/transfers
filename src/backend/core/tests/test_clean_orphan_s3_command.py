@@ -28,7 +28,7 @@ class TestCleanOrphanObjects:
     """Happy-path coverage of the existing scan."""
 
     def test_dry_run_lists_orphans_without_deleting(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # Two objects in S3 — only one has a DB row pointing to it.
         seed_object(live_s3_bucket, bucket, "transfers/known/a.bin")
         seed_object(live_s3_bucket, bucket, "transfers/orphan/b.bin")
@@ -47,7 +47,7 @@ class TestCleanOrphanObjects:
         assert "Would delete 1 orphan(s)" in out.getvalue()
 
     def test_apply_deletes_orphans_only(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         seed_object(live_s3_bucket, bucket, "transfers/known/a.bin")
         seed_object(live_s3_bucket, bucket, "transfers/orphan/b.bin")
         seed_object(live_s3_bucket, bucket, "transfers/orphan/c.bin")
@@ -81,7 +81,7 @@ class TestCleanOrphanMPUs:
     """
 
     def test_apply_aborts_orphan_mpus(self, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # An MPU in S3 with no DB row — the kind a crashed worker leaves
         # behind. The command should detect and abort it.
         seed_mpu(live_s3_bucket, bucket, "transfers/orphan-mpu/x.bin", n_parts=2)
@@ -105,7 +105,7 @@ class TestCleanOrphanMinAge:
     """
 
     def test_default_skips_recent_orphan_object(self, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         seed_object(live_s3_bucket, bucket, "transfers/orphan/recent.bin")
 
         # No --min-age → default 24h. The just-seeded object's LastModified
@@ -115,7 +115,7 @@ class TestCleanOrphanMinAge:
         assert count_objects(live_s3_bucket, bucket) == 1
 
     def test_min_age_skips_recent_orphan_mpu(self, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         seed_mpu(live_s3_bucket, bucket, "transfers/orphan-mpu/recent.bin")
 
         # Moto hardcodes ``Initiated`` to 2010-11-10 in its

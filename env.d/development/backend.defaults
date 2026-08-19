@@ -34,7 +34,7 @@ AWS_S3_SIGNATURE_VERSION=s3v4
 AWS_S3_DOMAIN_REPLACE=http://localhost:8986
 
 # Transfers storage bucket
-TRANSFERS_BUCKET_NAME=transferts
+AWS_STORAGE_BUCKET_NAME=transferts
 
 # Transfer size caps (bytes)
 TRANSFER_MAX_FILE_SIZE=21474836480

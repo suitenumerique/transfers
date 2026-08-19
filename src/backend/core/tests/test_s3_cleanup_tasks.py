@@ -35,7 +35,7 @@ class TestCleanupAbandonedDraftsTask:
     catches the orphans."""
 
     def test_clears_partial_mpu_on_old_draft(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         draft = TransferDraftFactory(owner=user)
         TransferDraft.objects.filter(id=draft.id).update(
             created_at=timezone.now() - timedelta(hours=25)
@@ -52,7 +52,7 @@ class TestCleanupAbandonedDraftsTask:
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_clears_completed_object_on_old_draft(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         draft = TransferDraftFactory(owner=user)
         TransferDraft.objects.filter(id=draft.id).update(
             created_at=timezone.now() - timedelta(hours=25)
@@ -74,7 +74,7 @@ class TestCleanupAbandonedDraftsTask:
         # The young draft's S3 state must SURVIVE the sweep — this is the
         # safety side of the cron. Drafts that the user is still working
         # on must not be torn down.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         draft = TransferDraftFactory(owner=user)
         key = f"transfers/{draft.id}/young.bin"
         upload_id = seed_mpu(live_s3_bucket, bucket, key, n_parts=1)
@@ -119,7 +119,7 @@ class TestImportDriveFileTaskLeaks:
     def test_request_failure_mid_stream_leaves_no_orphan_mpu(
         self, user, live_s3_bucket
     ):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # Declare a size big enough to fit the two chunks we're about to
         # stream plus some, so the failure happens inside the streaming
         # loop and not at the post-loop size check.
@@ -155,7 +155,7 @@ class TestImportDriveFileTaskLeaks:
         # Drive returned fewer bytes than declared: the task's own size check
         # raises ValueError, which the except clause turns into the same
         # abort + delete + tf.delete cleanup.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # Declared size is larger than what we'll actually emit, so the
         # task's post-stream size check fires.
         tf = self._make_drive_file(user, plaintext_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
@@ -185,7 +185,7 @@ class TestImportDriveFileTaskLeaks:
         # Failure happens after create_multipart_upload succeeded but before
         # any chunk reached the buffer threshold to be uploaded as a part.
         # The MPU exists in S3 with zero parts — abort must still target it.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # Declared size is irrelevant here — the iterator raises before any
         # byte is streamed — but keep it consistent with the other tests.
         tf = self._make_drive_file(user, plaintext_size=3 * _DRIVE_IMPORT_CHUNK_SIZE)
@@ -215,7 +215,7 @@ class TestImportDriveFileTaskLeaks:
         # CompleteMultipartUpload (e.g. an inconsistent ETag set). The
         # except clause must abort the (now uncomplete) MPU and delete any
         # partial object.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         # One chunk fully streamed, declared size matches — so the post-stream
         # size check passes and we reach CompleteMultipartUpload.
         tf = self._make_drive_file(user, plaintext_size=_DRIVE_IMPORT_CHUNK_SIZE)
@@ -257,7 +257,7 @@ class TestImportDriveFileTaskLeaks:
         # s3_key + upload_id) is the analogue of the add_file rollback hole:
         # a DB hiccup here used to escape the narrow except tuple and leak
         # the freshly-created MPU.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         tf = self._make_drive_file(user, plaintext_size=_DRIVE_IMPORT_CHUNK_SIZE)
 
         mock_resp = MagicMock()
@@ -293,7 +293,7 @@ class TestExpireTransfersTask:
     """Cron sweep for expired transfers — two-step: flag then purge S3."""
 
     def test_clears_completed_objects_on_expired_transfer(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         transfer = TransferFactory(
             owner=user, expires_at=timezone.now() - timedelta(hours=1)
         )
@@ -322,7 +322,7 @@ class TestExpireTransfersTask:
         assert_bucket_empty(live_s3_bucket, bucket)
 
     def test_leaves_active_transfer_alone(self, user, live_s3_bucket):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         transfer = TransferFactory(
             owner=user, expires_at=timezone.now() + timedelta(days=1)
         )

@@ -128,7 +128,7 @@ def live_s3_bucket(monkeypatch):
     ``s3.get_s3_client`` / ``s3._get_presigning_client`` so the
     application code rebuilds its client against the mock.
     """
-    bucket = django_settings.TRANSFERS_BUCKET_NAME
+    bucket = django_settings.AWS_STORAGE_BUCKET_NAME
     with mock_aws():
         # ``endpoint_url=None`` makes boto3 use the standard AWS hostname,
         # which is what moto's HTTP interceptor recognises. A custom URL
@@ -181,7 +181,7 @@ def partial_mpu_file(authenticated_client, live_s3_bucket):
     )
     assert resp.status_code == 201, resp.data
     live_s3_bucket.upload_part(
-        Bucket=django_settings.TRANSFERS_BUCKET_NAME,
+        Bucket=django_settings.AWS_STORAGE_BUCKET_NAME,
         Key=resp.data["s3_key"],
         UploadId=resp.data["upload_id"],
         PartNumber=1,
@@ -206,7 +206,7 @@ def completed_file(authenticated_client, live_s3_bucket):
         format="json",
     )
     assert resp.status_code == 201, resp.data
-    bucket = django_settings.TRANSFERS_BUCKET_NAME
+    bucket = django_settings.AWS_STORAGE_BUCKET_NAME
     part = live_s3_bucket.upload_part(
         Bucket=bucket,
         Key=resp.data["s3_key"],

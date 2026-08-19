@@ -27,7 +27,7 @@ class TestRollbackOrphanMPU:
     def test_save_failure_after_mpu_created_leaves_no_orphan(
         self, authenticated_client, live_s3_bucket
     ):
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
 
         # Force TransferFile.save() to blow up *after* create_multipart_upload
         # has succeeded — same shape as a transient DB hiccup mid-add-file.

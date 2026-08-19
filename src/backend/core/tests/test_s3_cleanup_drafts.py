@@ -32,7 +32,7 @@ class TestRemoveFileLeaks:
             format="json",
         )
         assert resp.status_code == 204, resp.data
-        assert_bucket_empty(live_s3_bucket, settings.TRANSFERS_BUCKET_NAME)
+        assert_bucket_empty(live_s3_bucket, settings.AWS_STORAGE_BUCKET_NAME)
 
     def test_remove_completed_file_clears_object(
         self, authenticated_client, completed_file, live_s3_bucket
@@ -43,7 +43,7 @@ class TestRemoveFileLeaks:
             format="json",
         )
         assert resp.status_code == 204, resp.data
-        assert_bucket_empty(live_s3_bucket, settings.TRANSFERS_BUCKET_NAME)
+        assert_bucket_empty(live_s3_bucket, settings.AWS_STORAGE_BUCKET_NAME)
 
 
 @pytest.mark.django_db
@@ -58,7 +58,7 @@ class TestAbortDraftLeaks:
             f"{DRAFTS_URL}{partial_mpu_file['draft_id']}/abort/", {}, format="json"
         )
         assert resp.status_code == 204, resp.data
-        assert_bucket_empty(live_s3_bucket, settings.TRANSFERS_BUCKET_NAME)
+        assert_bucket_empty(live_s3_bucket, settings.AWS_STORAGE_BUCKET_NAME)
 
     def test_abort_clears_mixed_partial_and_completed(
         self, authenticated_client, partial_mpu_file, live_s3_bucket
@@ -66,7 +66,7 @@ class TestAbortDraftLeaks:
         # Attach a second file and complete it, so the draft mixes one
         # in-progress MPU with one sealed object — the most realistic shape
         # for a user changing their mind mid-batch.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         add_resp = authenticated_client.post(
             f"{DRAFTS_URL}add-file/",
             {
@@ -115,7 +115,7 @@ class TestCompleteUploadLeaks:
         # mismatch we attach a *second* file with a declared size that the
         # client will not match, then complete it after uploading the wrong
         # number of bytes.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         add_resp = authenticated_client.post(
             f"{DRAFTS_URL}add-file/",
             {
@@ -157,7 +157,7 @@ class TestCompleteUploadLeaks:
         # Pass a bogus ETag — moto rejects CompleteMultipartUpload with a
         # ClientError, which the viewset translates into the all-or-nothing
         # teardown of the draft.
-        bucket = settings.TRANSFERS_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_BUCKET_NAME
         resp = authenticated_client.post(
             f"{DRAFTS_URL}{partial_mpu_file['draft_id']}/complete-upload/",
             {

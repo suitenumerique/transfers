@@ -52,7 +52,7 @@ S3 / storage:
 | `AWS_S3_ACCESS_KEY_ID` / `AWS_S3_SECRET_ACCESS_KEY` | IAM credentials |
 | `AWS_S3_REGION_NAME` | Region (default `us-east-1`) |
 | `AWS_S3_SIGNATURE_VERSION` | `s3v4` by default |
-| `TRANSFERS_BUCKET_NAME` | Bucket name |
+| `AWS_STORAGE_BUCKET_NAME` | Bucket name |
 | `TRANSFER_PRESIGNED_URL_EXPIRY` | Presigned URL TTL in seconds (default 600) |
 | `TRANSFER_CHUNK_SIZE` | Multipart chunk size (default 25 MiB) |
 | `TRANSFER_UPLOAD_PARALLELISM` | Concurrent part uploads (default 4) |
