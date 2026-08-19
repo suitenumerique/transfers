@@ -145,10 +145,17 @@ jobs:
           subject-name: ${{ inputs.registry }}/${{ github.repository }}-${{ inputs.image_name }}
           subject-digest: ${{ steps.create-manifest.outputs.digest }}
           push-to-registry: true
+      # The GHCR package name is the image name minus the owner prefix, i.e.
+      # <repo>-<image_name>. Derive it from GITHUB_REPOSITORY rather than
+      # hardcoding the repo, so forks and renames don't send this step
+      # looking for a package that doesn't exist.
+      - name: Resolve GHCR package name
+        id: package
+        run: echo "name=${GITHUB_REPOSITORY#*/}-${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
       - name: Delete all untagged container images
         uses: actions/delete-package-versions@v5
         with:
-          package-name: st-transfers-${{ inputs.image_name }}
+          package-name: ${{ steps.package.outputs.name }}
           package-type: 'container'
           min-versions-to-keep: 0
           delete-only-untagged-versions: true
