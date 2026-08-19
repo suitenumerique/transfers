@@ -46,7 +46,7 @@ def run_orphan_sweep(
     ``mpus_scanned``, ``mpus_aborted``. Under dry-run the *_deleted /
     *_aborted counters report what *would* happen.
     """
-    bucket = settings.TRANSFERS_BUCKET_NAME
+    bucket = settings.AWS_STORAGE_BUCKET_NAME
     cutoff = (
         timezone.now() - timedelta(hours=min_age_hours) if min_age_hours > 0 else None
     )

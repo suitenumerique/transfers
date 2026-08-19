@@ -117,11 +117,15 @@ class Base(Configuration):
     AWS_S3_SIGNATURE_VERSION = values.Value(
         "s3v4", environ_name="AWS_S3_SIGNATURE_VERSION", environ_prefix=None
     )
+    # Bucket holding the transferred files. Named with the django-storages
+    # convention so the ``default`` S3Storage backend (and thus
+    # ``storages["default"].bucket_name``) resolves to the same bucket the
+    # hand-rolled boto3 client in ``core/services/s3.py`` uses.
+    AWS_STORAGE_BUCKET_NAME = values.Value(
+        "transferts", environ_name="AWS_STORAGE_BUCKET_NAME", environ_prefix=None
+    )
 
     # Transfers
-    TRANSFERS_BUCKET_NAME = values.Value(
-        "transferts", environ_name="TRANSFERS_BUCKET_NAME", environ_prefix=None
-    )
     TRANSFER_DEFAULT_EXPIRY_DAYS = values.PositiveIntegerValue(
         1, environ_name="TRANSFER_DEFAULT_EXPIRY_DAYS", environ_prefix=None
     )

@@ -69,7 +69,7 @@ def create_multipart_upload(key: str, content_type: str = "") -> str:
     """Initiate an S3 multipart upload. Returns the ``UploadId``."""
     client = get_s3_client()
     response = client.create_multipart_upload(
-        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
         Key=key,
         ContentType=content_type or "application/octet-stream",
     )
@@ -82,7 +82,7 @@ def sign_upload_part(key: str, upload_id: str, part_number: int) -> str:
     return client.generate_presigned_url(
         ClientMethod="upload_part",
         Params={
-            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
             "Key": key,
             "UploadId": upload_id,
             "PartNumber": part_number,
@@ -125,7 +125,7 @@ def sign_download_url(key: str, filename: str, content_type: str = "") -> str:
     return client.generate_presigned_url(
         ClientMethod="get_object",
         Params={
-            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
             "Key": key,
             "ResponseContentDisposition": _content_disposition(filename),
             "ResponseContentType": content_type or "application/octet-stream",
@@ -152,7 +152,7 @@ def sign_scan_url(key: str) -> str:
     return client.generate_presigned_url(
         ClientMethod="get_object",
         Params={
-            "Bucket": settings.TRANSFERS_BUCKET_NAME,
+            "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
             "Key": key,
         },
         ExpiresIn=settings.SCAN_PRESIGNED_URL_EXPIRY,
@@ -170,7 +170,7 @@ def upload_part_bytes(key: str, upload_id: str, part_number: int, body: bytes) -
     """
     client = get_s3_client()
     response = client.upload_part(
-        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
         Key=key,
         UploadId=upload_id,
         PartNumber=part_number,
@@ -188,7 +188,7 @@ def complete_multipart_upload(key: str, upload_id: str, parts: list[dict]) -> No
     ordered_parts = sorted(parts, key=lambda p: p["PartNumber"])
     client = get_s3_client()
     client.complete_multipart_upload(
-        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
         Key=key,
         UploadId=upload_id,
         MultipartUpload={"Parts": ordered_parts},
@@ -201,7 +201,7 @@ def abort_multipart_upload(key: str, upload_id: str) -> None:
     ``best_effort_abort_multipart_uploads_from_files``."""
     client = get_s3_client()
     client.abort_multipart_upload(
-        Bucket=settings.TRANSFERS_BUCKET_NAME,
+        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
         Key=key,
         UploadId=upload_id,
     )
@@ -212,13 +212,13 @@ def delete_object(key: str) -> None:
     best-effort sweeps over many files, use
     ``best_effort_delete_objects_from_files``."""
     client = get_s3_client()
-    client.delete_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
+    client.delete_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
 
 
 def head_object_size(key: str) -> int:
     """Return the actual size (ContentLength) of an object in the bucket."""
     client = get_s3_client()
-    response = client.head_object(Bucket=settings.TRANSFERS_BUCKET_NAME, Key=key)
+    response = client.head_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
     return int(response["ContentLength"])
 
 
