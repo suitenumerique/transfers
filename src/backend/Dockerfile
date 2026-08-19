@@ -69,8 +69,14 @@ COPY . /app/
 WORKDIR /app
 
 # collectstatic
+# Settings derive STATIC_ROOT from DJANGO_DATA_DIR, which is only set by the
+# compose env files at *run* time — during the build it would fall back to
+# /app/data/static and the COPY --from=link-collector below would find
+# nothing. Pin it from the STATIC_ROOT arg so both agree.
 RUN <<EOR
-DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput
+set -eu
+DJANGO_DATA_DIR="$(dirname ${STATIC_ROOT})" \
+    DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput
 # Replace duplicated file by a symlink to decrease the overall size of the final image
 rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${STATIC_ROOT}
 EOR
