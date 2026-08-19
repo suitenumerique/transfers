@@ -1,0 +1,40 @@
+name: Build and publish OCI images
+
+"on":
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+
+  docker-publish-backend:
+    uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    secrets: inherit
+    with:
+      image_name: "backend"
+      context: "src/backend"
+      target: runtime-prod
+
+  docker-publish-frontend:
+    uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    secrets: inherit
+    with:
+      image_name: "frontend"
+      context: "src/frontend"
+      target: runtime-prod
+      # The final runtime-prod stage does `FROM ${FRONTEND_IMAGE}` — passing the
+      # already-built amd64 tag here lets the arm64 build reuse the arch-independent
+      # Vite bundle instead of rebuilding it.
+      arm64_reuse_amd64_build_arg: "FRONTEND_IMAGE"
