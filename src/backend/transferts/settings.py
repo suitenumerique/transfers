@@ -467,9 +467,12 @@ class Base(Configuration):
         environ_name="DJANGO_EMAIL_BRAND_NAME",
         environ_prefix=None,
     )
+    # st-ansible emits this as DJANGO_EMAIL_FROM (base.django.env.j2), the same
+    # key drive and docs read. The Django setting keeps its standard name since
+    # EmailMultiAlternatives resolves the sender from DEFAULT_FROM_EMAIL.
     DEFAULT_FROM_EMAIL = values.Value(
         "transferts@suite-territoriale.fr",
-        environ_name="DEFAULT_FROM_EMAIL",
+        environ_name="DJANGO_EMAIL_FROM",
         environ_prefix=None,
     )
 
@@ -685,7 +688,7 @@ class Development(Base):
             "http://localhost:8980",
             "http://localhost:8981",
         ],
-        environ_name="CSRF_TRUSTED_ORIGINS",
+        environ_name="DJANGO_CSRF_TRUSTED_ORIGINS",
         environ_prefix=None,
     )
     DEBUG = True
