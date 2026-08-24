@@ -28,9 +28,14 @@
 		# USB/serial/MIDI devices, or screen capture.
 		Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=()"
 		# Strict CSP: a compromised LaGaufre script update must not be able to
-		# exfiltrate a recipient's download token. Only self + the two known
-		# suite.anct.gouv.fr origins (widget JS + its services API) are allowed.
-		Content-Security-Policy "default-src 'self'; script-src 'self' https://static.suite.anct.gouv.fr; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://static.suite.anct.gouv.fr; font-src 'self' data:; connect-src 'self' https://static.suite.anct.gouv.fr https://operateurs.suite.anct.gouv.fr {$TRANSFERTS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# exfiltrate a recipient's download token. Only self + whatever the
+		# deployment opts into is allowed. The two GAUFRE origins default to
+		# empty (widget off); set them to the script host and the services API
+		# host of your Suite operator, matching the backend's
+		# LAGAUFRE_WIDGET_URL / LAGAUFRE_API_URL. For La Suite territoriale:
+		#   TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN=https://static.suite.anct.gouv.fr
+		#   TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN=https://operateurs.suite.anct.gouv.fr
+		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN}; font-src 'self' data:; connect-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERTS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	}
 
 	route {

@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { LaGaufreV2, ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
+import { ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
 import { QuestionMark } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
 import { login, useAuth } from "@/features/auth";
-import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
+import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { useConfig } from "@/features/providers/config";
 import { useDownloadTransfer } from "@/features/transfers/api/useDownload";
@@ -76,11 +76,7 @@ function DownloadPage() {
         </Link>
         <div className="download-page__topbar-right">
           <LanguagePicker size="small" compact />
-          <LaGaufreV2
-            widgetPath={TERRITORIALE_GAUFRE.widgetPath}
-            apiUrl={TERRITORIALE_GAUFRE.apiUrl}
-            showMoreLimit={100}
-          />
+          <Gaufre />
           {!user && <ProConnectButton onClick={login} />}
         </div>
       </header>

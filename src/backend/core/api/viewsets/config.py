@@ -53,4 +53,14 @@ class ConfigView(drf.views.APIView):
                 "app_name": drive_config.get("app_name", "Drive"),
             }
 
+        # Surface the LaGaufre widget only when both URLs are configured —
+        # keeps the app switcher, and the third-party script it loads, off
+        # instances that didn't opt in.
+        lagaufre_config = getattr(settings, "LAGAUFRE_CONFIG", None) or {}
+        if lagaufre_config.get("widget_url") and lagaufre_config.get("api_url"):
+            payload["LAGAUFRE"] = {
+                "widget_url": lagaufre_config["widget_url"],
+                "api_url": lagaufre_config["api_url"],
+            }
+
         return drf.response.Response(payload)

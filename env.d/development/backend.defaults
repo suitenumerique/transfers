@@ -82,5 +82,14 @@ OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:8980,http://localhost:8981
 # `CORS_ALLOW_CREDENTIALS=True`.
 DRIVE_BASE_URL=
 
+# LaGaufre (La Suite app switcher) — leave blank to hide it. Both must be set
+# for the widget to render; the frontend's Caddy CSP must allow the same two
+# origins (TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
+# For La Suite territoriale, the API URL is scoped to an operator + siret:
+#   LAGAUFRE_WIDGET_URL=https://static.suite.anct.gouv.fr/widgets/lagaufre.js
+#   LAGAUFRE_API_URL=https://operateurs.suite.anct.gouv.fr/api/v1.0/lagaufre/services/?operator=9f5624fc-ef99-4d10-ae3f-403a81eb16ef&siret=21870030000013
+LAGAUFRE_WIDGET_URL=
+LAGAUFRE_API_URL=
+
 # Frontend
 FRONTEND_THEME=dsfr

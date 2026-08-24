@@ -1,11 +1,11 @@
 import { type PropsWithChildren } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { LaGaufreV2, MainLayout as UIKitLayout } from "@gouvfr-lasuite/ui-kit";
+import { MainLayout as UIKitLayout } from "@gouvfr-lasuite/ui-kit";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { ShellLayout } from "@/features/layouts/components/shell";
-import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
+import { Gaufre } from "../gaufre";
 import { useAuth, login } from "@/features/auth";
 
 export function MainLayout({ children }: PropsWithChildren) {
@@ -28,11 +28,7 @@ export function MainLayout({ children }: PropsWithChildren) {
       }
       rightHeaderContent={
         <>
-          <LaGaufreV2
-            widgetPath={TERRITORIALE_GAUFRE.widgetPath}
-            apiUrl={TERRITORIALE_GAUFRE.apiUrl}
-            showMoreLimit={100}
-          />
+          <Gaufre />
           <LanguagePicker size="small" compact />
           <Button size="small" onClick={login}>
             {t("Sign in")}

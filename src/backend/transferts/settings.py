@@ -296,6 +296,15 @@ class Base(Configuration):
         "app_name": os.environ.get("DRIVE_APP_NAME", "Fichiers"),
     }
 
+    # LaGaufre (La Suite's app switcher): rendered only when both URLs are
+    # set, so an instance outside a Suite deployment neither pulls a
+    # third-party script nor advertises services it has nothing to do with.
+    # Using os.environ directly for the same reason as DRIVE_CONFIG above.
+    LAGAUFRE_CONFIG = {
+        "widget_url": os.environ.get("LAGAUFRE_WIDGET_URL", ""),
+        "api_url": os.environ.get("LAGAUFRE_API_URL", ""),
+    }
+
     STORAGES = {
         "default": {
             "BACKEND": "storages.backends.s3.S3Storage",

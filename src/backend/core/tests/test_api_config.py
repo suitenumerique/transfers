@@ -51,6 +51,47 @@ class TestConfigView:
         assert "DRIVE" in response.data
         assert response.data["DRIVE"] == drive_config
 
+    def test_lagaufre_absent_when_urls_empty(self, api_client):
+        """LAGAUFRE must not appear when the widget isn't configured.
+
+        Off by default: an instance outside a Suite deployment must not pull
+        the third-party widget script nor list another operator's services.
+        """
+        with patch(
+            "core.api.viewsets.config.settings.LAGAUFRE_CONFIG",
+            {"widget_url": "", "api_url": ""},
+        ):
+            response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        assert "LAGAUFRE" not in response.data
+
+    def test_lagaufre_absent_when_only_one_url_set(self, api_client):
+        """A half-configured widget must stay hidden rather than render broken."""
+        with patch(
+            "core.api.viewsets.config.settings.LAGAUFRE_CONFIG",
+            {"widget_url": "https://static.example.gouv.fr/lagaufre.js", "api_url": ""},
+        ):
+            response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        assert "LAGAUFRE" not in response.data
+
+    def test_lagaufre_present_when_both_urls_set(self, api_client):
+        """LAGAUFRE key must appear with both URLs when configured."""
+        lagaufre_config = {
+            "widget_url": "https://static.example.gouv.fr/lagaufre.js",
+            "api_url": "https://operateurs.example.gouv.fr/api/v1.0/lagaufre/services/",
+        }
+        with patch(
+            "core.api.viewsets.config.settings.LAGAUFRE_CONFIG",
+            lagaufre_config,
+        ):
+            response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        assert response.data["LAGAUFRE"] == lagaufre_config
+
     def test_returns_transfer_limits(self, api_client):
         """Config must always include transfer limit settings."""
         response = api_client.get(CONFIG_URL)

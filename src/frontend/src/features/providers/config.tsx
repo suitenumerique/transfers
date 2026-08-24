@@ -9,6 +9,11 @@ export interface DriveConfig {
   app_name: string;
 }
 
+export interface LaGaufreConfig {
+  widget_url: string;
+  api_url: string;
+}
+
 export interface AppConfig {
   ENVIRONMENT: string;
   LANGUAGES: string[];
@@ -32,6 +37,10 @@ export interface AppConfig {
   HELP_URL: string;
   // Absent when the operator hasn't wired Drive up (DRIVE_BASE_URL empty).
   DRIVE?: DriveConfig;
+  // Absent unless the operator set both LAGAUFRE_WIDGET_URL and
+  // LAGAUFRE_API_URL — the app switcher is opt-in, since it loads a
+  // third-party script and lists another operator's services.
+  LAGAUFRE?: LaGaufreConfig;
 }
 
 interface ConfigContextValue {

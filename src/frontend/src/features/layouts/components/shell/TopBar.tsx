@@ -1,8 +1,8 @@
 import { useTranslation } from "react-i18next";
-import { LaGaufreV2, UserMenu } from "@gouvfr-lasuite/ui-kit";
+import { UserMenu } from "@gouvfr-lasuite/ui-kit";
 import { LeftPanel } from "@gouvfr-lasuite/ui-kit/icons";
 import { useAuth, logout } from "@/features/auth";
-import { TERRITORIALE_GAUFRE } from "@/features/config/constants";
+import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 
 interface TopBarProps {
@@ -26,11 +26,7 @@ export function TopBar({ sidebarCollapsed, onToggle }: TopBarProps) {
         <LeftPanel />
       </button>
       <div className="shell-topbar__spacer" />
-      <LaGaufreV2
-        widgetPath={TERRITORIALE_GAUFRE.widgetPath}
-        apiUrl={TERRITORIALE_GAUFRE.apiUrl}
-        showMoreLimit={100}
-      />
+      <Gaufre />
       {user && (
         <UserMenu
           user={{
