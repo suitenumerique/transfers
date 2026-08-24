@@ -401,6 +401,12 @@ class Base(Configuration):
             "rest_framework.parsers.JSONParser",
             "rest_framework.parsers.MultiPartParser",
         ],
+        "DEFAULT_RENDERER_CLASSES": [
+            # 🔒️ Disable BrowsableAPIRenderer which provides forms allowing a user to
+            # see all the data in the database (ie a serializer with a ForeignKey field
+            # will generate a form with a field with all possible values of the FK).
+            "rest_framework.renderers.JSONRenderer",
+        ],
         "EXCEPTION_HANDLER": "core.api.exception_handler",
         "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
         "PAGE_SIZE": 20,
@@ -451,6 +457,10 @@ class Base(Configuration):
     SESSION_ENGINE = "django.contrib.sessions.backends.cache"
     SESSION_CACHE_ALIAS = "default"
     SESSION_COOKIE_AGE = 60 * 60 * 12
+    # Namespaced so the cookie can't collide with another Django app sharing
+    # a parent domain. Lived in Development only, which left production on
+    # Django's default "sessionid".
+    SESSION_COOKIE_NAME = "transferts_sessionid"
 
     # Email
     EMAIL_HOST = values.Value(
@@ -701,8 +711,6 @@ class Development(Base):
         environ_prefix=None,
     )
     DEBUG = True
-
-    SESSION_COOKIE_NAME = "transferts_sessionid"
 
     USE_SWAGGER = True
     SESSION_CACHE_ALIAS = "session"
