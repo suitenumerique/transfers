@@ -1,5 +1,6 @@
 """Email notification service for transfer events."""
 
+import json
 import logging
 
 from django.conf import settings
@@ -20,15 +21,56 @@ def _public_base_url() -> str:
     return (base or "").rstrip("/")
 
 
+def _footer_logos() -> list[dict]:
+    """Parse ``EMAIL_FOOTER_LOGOS`` (JSON list of ``{url, alt, width,
+    height}``) into the entries the footer loops over. Entries without a
+    ``url`` are dropped; a malformed value logs and yields no logo rather
+    than failing every notification — a branding typo must not block
+    delivery."""
+    raw = getattr(settings, "EMAIL_FOOTER_LOGOS", "") or "[]"
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("EMAIL_FOOTER_LOGOS is not valid JSON; rendering no footer logo")
+        return []
+    if not isinstance(parsed, list):
+        logger.warning(
+            "EMAIL_FOOTER_LOGOS must be a JSON list; rendering no footer logo"
+        )
+        return []
+    logos = []
+    for entry in parsed:
+        if not isinstance(entry, dict) or not entry.get("url"):
+            continue
+        logos.append(
+            {
+                "url": entry["url"],
+                "alt": entry.get("alt", ""),
+                "width": entry.get("width"),
+                "height": entry.get("height"),
+            }
+        )
+    return logos
+
+
 def _common_context(base_url: str) -> dict:
-    """Brand chrome shared by every email template — Transferts wordmark
-    in the header, République Française + La Suite territoriale logos in
-    the footer. Identical between recipient and owner mails so the
-    visual identity stays consistent."""
+    """Brand chrome shared by every email template. Nothing institutional
+    is hardcoded: the header logo and the footer logos come from settings
+    (see ``EMAIL_LOGO_IMG`` / ``EMAIL_FOOTER_LOGOS``), so a self-hosted
+    instance never ships state marks it isn't allowed to use. The only
+    baked-in default is the product's own wordmark for the header.
+
+    PNG, not SVG, for anything you point these at: Gmail, Outlook (desktop
+    and web), Yahoo and iOS Mail do not render ``<img src="…svg">``.
+    """
+    custom_logo = (getattr(settings, "EMAIL_LOGO_IMG", "") or "").strip()
     return {
-        "logo_url": f"{base_url}/images/transferts-logo.svg",
-        "rf_logo_url": f"{base_url}/images/republique-francaise.svg",
-        "st_logo_url": f"{base_url}/images/lasuite-territoriale.svg",
+        # The shipped wordmark is a 2x raster (476x80) sized for the 238x40
+        # box in _base.html. A custom logo has an unknown ratio, so the
+        # template renders it at 40px high with its natural width.
+        "logo_url": custom_logo or f"{base_url}/images/transferts-logo.png",
+        "logo_width": None if custom_logo else 238,
+        "footer_logos": _footer_logos(),
         "terms_url": getattr(settings, "TERMS_URL", ""),
     }
 

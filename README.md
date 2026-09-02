@@ -59,6 +59,30 @@ S3 / storage:
 
 For IAM permissions required on the bucket, see [`docs/S3.md`](docs/S3.md#iam-permissions-on-the-bucket).
 
+### Branding (notification emails)
+
+No institutional identity ships with the code. The République Française
+block, the La Suite territoriale logo and the `@suite-territoriale.fr`
+sender are marks reserved to the French state and its operators, and this
+project is open source — a self-hosted instance must not end up sending
+them by default. Everything below is therefore deployment-supplied (the
+same convention as [docs](https://github.com/suitenumerique/docs) and
+[drive](https://github.com/suitenumerique/drive)); with nothing set, emails
+carry the Transferts wordmark in the header and no footer logo.
+
+| Variable | Effect |
+|---|---|
+| `DJANGO_EMAIL_LOGO_IMG` | Absolute URL of the header logo. Empty ⇒ the shipped Transferts wordmark. A custom logo is rendered 40px high at its natural width. |
+| `DJANGO_EMAIL_FOOTER_LOGOS` | JSON list of footer logos, e.g. `[{"url":"https://…/rf.png","alt":"République Française","width":80,"height":44}]`. `width`/`height` are CSS px and optional. Empty ⇒ no footer logo (never a broken image). |
+| `DJANGO_EMAIL_FROM` | Sender address (default `transferts@example.com`). |
+| `TERMS_URL` | Terms-of-use link in the email footer (omitted when empty). |
+| `HELP_URL` | Help link on the sidebar and the recipient page (hidden when empty). |
+
+Point the image variables at **PNG** files hosted on a public URL: Gmail,
+Outlook (desktop and web), Yahoo and iOS Mail do not render SVG in emails.
+Supply 2x rasters sized to the `width`/`height` you declare for crisp
+retina rendering.
+
 ## Background jobs (Celery beat)
 
 Schedule is defined in `src/backend/transferts/celery_app.py`.

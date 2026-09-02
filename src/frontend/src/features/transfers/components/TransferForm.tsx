@@ -924,7 +924,7 @@ export function TransferForm() {
               <p className="transfer-form__mode-hint">
                 {sharingMode === "email"
                   ? t(
-                      "The email carries only the link. Send the decryption key to your recipient over a separate, trusted channel — we never see it and can't recover it.",
+                      "The email will contain only the link. You'll have to pass the decryption key on yourself, through a channel other than email (SMS, instant messaging, in person…). We never see it and can't recover it.",
                     )
                   : t(
                       "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.",
