@@ -132,12 +132,31 @@ self.addEventListener("fetch", (event) => {
   if (!match) return;
   const token = match[1];
   const fileId = match[2];
-  event.respondWith(handleDownload(token, fileId));
+  // Wrap in a top-level try/catch: an unhandled throw inside handleDownload
+  // makes respondWith() reject, and Firefox reports that as an opaque
+  // "ServiceWorker … encountered an unexpected error" with no way to know
+  // whether it's a network hiccup, a decrypt failure, or a bug. A readable
+  // Response with the message keeps diagnostics possible.
+  event.respondWith(
+    handleDownload(token, fileId).catch((err) => {
+      const message =
+        (err && err.message) || "Unexpected error while streaming the download.";
+      return new Response(message, {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }),
+  );
 });
 
 async function handleDownload(token, fileId) {
   const entry = REGISTRY.get(token);
   if (!entry) {
+    // The registry is module-level; when the browser terminates an idle
+    // SW, it wipes with it. The page pings every 10s to keep the SW alive
+    // while it's up, so hitting this branch means either the tab was
+    // suspended (mobile background) or something bypassed the keepalive.
+    // Message is user-actionable: reloading re-runs registerEncryptionKey.
     return new Response("Decryption key not loaded. Reopen the link.", {
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" },

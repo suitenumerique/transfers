@@ -209,3 +209,40 @@ export function streamingDownloadUrl(
 ): string {
   return `/_dl/${token}/${fileId}/${encodeURIComponent(filename)}`;
 }
+
+// Firefox terminates an "idle" SW after ~30s (Chrome's behaviour is
+// similar). Once ``fetch`` has handed the streamed Response to the
+// browser via ``respondWith`` no further events reach the worker, so
+// mid-download the browser considers it idle and kills it — the
+// ciphertext stream aborts (NS_BINDING_ABORTED / "an unexpected error
+// occurred"), and the per-transfer key registry (module-level ``Map``
+// in sw.js) is wiped, so the retry click 500s with "Decryption key
+// not loaded". A message event is enough to reset the idle timer,
+// so we ping every ``SW_KEEPALIVE_INTERVAL_MS`` while any download is
+// in flight on the page. Firefox Send used the same trick.
+// Refs: bugzilla.mozilla.org/1302715, w3c/ServiceWorker#1558.
+const SW_KEEPALIVE_INTERVAL_MS = 10_000;
+
+// Start a keepalive tick that pings the controlling SW every 10s until
+// ``stop`` is called. Safe to call multiple times — each call gets its
+// own timer. The ping payload is deliberately typeless; sw.js already
+// handles ``encryption-ping`` and replies ``encryption-pong`` (we don't
+// read the reply here, the message event alone resets the idle timer).
+export function startServiceWorkerKeepalive(): () => void {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return () => {};
+  }
+  const send = () => {
+    try {
+      navigator.serviceWorker.controller?.postMessage({
+        type: "encryption-ping",
+      });
+    } catch {
+      // Controller went away between the null-check and the send — the
+      // next tick will pick up the new one (or exit if none). Not fatal.
+    }
+  };
+  send();
+  const id = setInterval(send, SW_KEEPALIVE_INTERVAL_MS);
+  return () => clearInterval(id);
+}

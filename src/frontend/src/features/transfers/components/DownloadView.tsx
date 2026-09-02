@@ -9,6 +9,7 @@ import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
   ensureEncryptionServiceWorker,
   registerEncryptionKey,
+  startServiceWorkerKeepalive,
   streamingDownloadUrl,
   unregisterEncryptionKey,
 } from "../upload/encryptionServiceWorker";
@@ -149,6 +150,18 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     };
   }, [token]);
 
+  // Firefox (and Chrome) terminate an idle SW after ~30s. Once handleDownload
+  // has returned the streamed Response via respondWith, no further events
+  // reach the worker — the browser considers it idle mid-download, kills it,
+  // and the ciphertext stream aborts. Ping every 10s while the download page
+  // is up (and the SW is ready to serve) to keep it alive. Only spun up for
+  // encrypted transfers — legacy plaintext downloads go 302 → S3 direct and
+  // don't touch the SW.
+  useEffect(() => {
+    if (!isEncrypted || encryptionState !== "ready") return;
+    return startServiceWorkerKeepalive();
+  }, [isEncrypted, encryptionState]);
+
   const submitPastedKey = async () => {
     const key = pastedKey.trim();
     if (!key) return;
@@ -216,7 +229,16 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(token, file.id, file.filename);
       document.body.appendChild(iframe);
-      setTimeout(() => iframe.remove(), 5000);
+      // 60s (vs the old 5s): the iframe hand-off happens once the browser
+      // sees Content-Disposition: attachment on the streamed Response,
+      // which for a large ciphertext arrives late — the backend has to
+      // negotiate the presigned URL, S3 has to serve the first byte, and
+      // the SW has to decrypt the first chunk before that header lands.
+      // The old 5s window silently killed large downloads on slow S3
+      // regions or first-byte-latency hiccups. 60s is comfortably above
+      // any realistic first-byte time; the browser's native download
+      // manager has taken over long before then in the healthy path.
+      setTimeout(() => iframe.remove(), 60_000);
     } else {
       downloadFile(token, file.id);
     }
