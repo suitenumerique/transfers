@@ -1,5 +1,6 @@
 {
   "A virus was detected. This transfer was blocked and not sent.": "A virus was detected. This transfer was blocked and not sent.",
+  "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.": "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.",
   "Something went wrong. Please try again.": "Something went wrong. Please try again.",
   "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.": "A virus was detected in this file. The transfer is blocked. Remove this file to send the others.",
   "A file could not be scanned and was blocked. Remove it to send the transfer.": "A file could not be scanned and was blocked. Remove it to send the transfer.",
