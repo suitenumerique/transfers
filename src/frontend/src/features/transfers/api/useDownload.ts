@@ -39,12 +39,15 @@ export function downloadFile(token: string, fileId: string): void {
 // first when several fire in quick succession (the "site tries to download
 // multiple files" prompt) — iframe loads aren't subject to the same
 // gesture-bound throttling, which makes them the right tool for the
-// "Download all" loop. The iframe is yanked after 5s, by which point the
-// browser has taken over the streaming.
+// "Download all" loop. The iframe is yanked after 60s: the browser's
+// native download manager takes over as soon as the 302 to S3's presigned
+// URL comes back with Content-Disposition: attachment, which can take a
+// few seconds on slow links / cold S3 regions. The old 5s window silently
+// cancelled downloads whose first byte arrived late.
 export function downloadFileInIframe(token: string, fileId: string): void {
   const iframe = document.createElement("iframe");
   iframe.style.display = "none";
   iframe.src = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
   document.body.appendChild(iframe);
-  setTimeout(() => iframe.remove(), 5000);
+  setTimeout(() => iframe.remove(), 60_000);
 }

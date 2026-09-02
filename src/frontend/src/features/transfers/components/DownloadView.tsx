@@ -9,6 +9,7 @@ import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
   ensureEncryptionServiceWorker,
   registerEncryptionKey,
+  startServiceWorkerKeepalive,
   streamingDownloadUrl,
   unregisterEncryptionKey,
 } from "../upload/encryptionServiceWorker";
@@ -84,6 +85,13 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   );
   const downloadUrl = initialUrlRef.current;
 
+  // The raw key string that's currently registered with the SW. Kept in a
+  // ref (not state) so it survives re-renders without causing them, and so
+  // ``triggerDownload`` can re-register it synchronously right before a
+  // download click without waiting for a state update to flush. Cleared on
+  // unmount. Populated by ``registerKey`` for both the auto path and the
+  // paste path — the paste input can be cleared safely once this is set.
+  const activeKeyRef = useRef<string | null>(null);
   // Hand a key to the SW and flip to `ready`. Shared by the auto-effect
   // (backend key / URL fragment) and the paste box. A malformed key (wrong
   // length/base64) throws inside registerEncryptionKey → surfaces as an error the
@@ -94,8 +102,28 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     const sw = await ensureEncryptionServiceWorker();
     if (!sw) return false;
     await registerEncryptionKey(sw, token, keyStr, transfer.files, chunkSize);
+    activeKeyRef.current = keyStr;
     registeredRef.current = true;
     return true;
+  };
+
+  // Belt-and-suspenders against the keepalive missing a tick (mobile tab
+  // suspend, background-throttled setInterval, a browser that killed the
+  // SW despite the pings): re-register the same key right before every
+  // download click. Idempotent — the SW's ``REGISTRY.set`` overwrites,
+  // handshake is a ~10ms postMessage round-trip when the worker is alive,
+  // and a click that would otherwise 500 with "Decryption key not loaded"
+  // now spins the worker back up + reloads the key transparently. Returns
+  // ``false`` when we've got nothing to re-register (should never happen
+  // once ``encryptionState === "ready"``, defensive nonetheless).
+  const refreshEncryptionKey = async (): Promise<boolean> => {
+    const keyStr = activeKeyRef.current;
+    if (!keyStr) return false;
+    try {
+      return await registerKey(keyStr);
+    } catch {
+      return false;
+    }
   };
 
   useEffect(() => {
@@ -142,12 +170,28 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // Drop the key from the SW registry on unmount (covers both the auto path
   // and a pasted key). The SW outlives the page and could be reused for
   // another transfer in the same tab, so stale keys are needless retention.
+  // Also clear the in-memory copy: keeping it around after the page is gone
+  // would let a stray ``triggerDownload`` (from a lingering handler on a
+  // detached DOM node, etc.) re-register a key the user was done with.
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      activeKeyRef.current = null;
       if (registeredRef.current) unregisterEncryptionKey(token);
     };
   }, [token]);
+
+  // Firefox (and Chrome) terminate an idle SW after ~30s. Once handleDownload
+  // has returned the streamed Response via respondWith, no further events
+  // reach the worker — the browser considers it idle mid-download, kills it,
+  // and the ciphertext stream aborts. Ping every 10s while the download page
+  // is up (and the SW is ready to serve) to keep it alive. Only spun up for
+  // encrypted transfers — legacy plaintext downloads go 302 → S3 direct and
+  // don't touch the SW.
+  useEffect(() => {
+    if (!isEncrypted || encryptionState !== "ready") return;
+    return startServiceWorkerKeepalive();
+  }, [isEncrypted, encryptionState]);
 
   const submitPastedKey = async () => {
     const key = pastedKey.trim();
@@ -210,13 +254,33 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // race: an anchor click triggers a top-level navigation the SW sometimes
   // doesn't intercept on the first click; sub-frame requests don't hit that
   // path and the Content-Disposition header still triggers a download.
-  const triggerDownload = (file: (typeof transfer.files)[number]) => {
+  const triggerDownload = async (file: (typeof transfer.files)[number]) => {
     if (isEncrypted) {
+      // Re-register the key immediately before opening the iframe. In the
+      // healthy path the SW is already alive (the keepalive is ticking) and
+      // this is a cheap idempotent no-op (~10ms handshake). In the edge
+      // case where the SW died anyway (mobile tab was backgrounded long
+      // enough for setInterval to be throttled below the idle threshold,
+      // browser bug, etc.), this spins it back up + reloads the key so
+      // the click doesn't 500 with "Decryption key not loaded". Fail
+      // closed: no iframe if the refresh didn't succeed — better a
+      // no-op click than a broken download.
+      const ok = await refreshEncryptionKey();
+      if (!ok) return;
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(token, file.id, file.filename);
       document.body.appendChild(iframe);
-      setTimeout(() => iframe.remove(), 5000);
+      // 60s (vs the old 5s): the iframe hand-off happens once the browser
+      // sees Content-Disposition: attachment on the streamed Response,
+      // which for a large ciphertext arrives late — the backend has to
+      // negotiate the presigned URL, S3 has to serve the first byte, and
+      // the SW has to decrypt the first chunk before that header lands.
+      // The old 5s window silently killed large downloads on slow S3
+      // regions or first-byte-latency hiccups. 60s is comfortably above
+      // any realistic first-byte time; the browser's native download
+      // manager has taken over long before then in the healthy path.
+      setTimeout(() => iframe.remove(), 60_000);
     } else {
       downloadFile(token, file.id);
     }
@@ -225,7 +289,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
     downloadableFiles.forEach((file, i) => {
       setTimeout(() => {
         if (isEncrypted) {
-          triggerDownload(file);
+          void triggerDownload(file);
         } else {
           downloadFileInIframe(token, file.id);
         }
@@ -433,7 +497,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
                       expired ||
                       encryptionState !== "ready"
                     }
-                    onClick={() => triggerDownload(file)}
+                    onClick={() => void triggerDownload(file)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
                     title={
                       expired
