@@ -64,7 +64,7 @@ export function TransferFailed({
         <div className="transfer-failed__key-share">
           <p className="transfer-failed__body">
             {t(
-              "This transfer is confidential: the email contains only the link. Send this decryption key to your recipients over a separate, trusted channel. We never received it and won't show it again.",
+              "This transfer is confidential: the email that was sent contains only the link. Pass this key on to your recipients through a channel other than email — SMS, instant messaging, in person… Without it they won't be able to open the files. We never received it and won't show it again.",
             )}
           </p>
           <div className="transfer-failed__link-box">
