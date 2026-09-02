@@ -21,10 +21,14 @@ LOGGING_LEVEL_LOGGERS_APP=INFO
 PYTHONPATH=/app
 
 # Mail
-DJANGO_EMAIL_BRAND_NAME="La Suite territoriale"
 DJANGO_EMAIL_HOST="mailcatcher"
-DJANGO_EMAIL_LOGO_IMG="http://localhost:8980/assets/logo-suite-numerique.png"
 DJANGO_EMAIL_PORT=1025
+# Branding is deployment-supplied (see settings.py, "Branding of the
+# notification emails"). Left unset here so dev mails use the neutral
+# defaults: shipped Transferts wordmark in the header, no footer logo.
+# To preview an institutional footer locally, host the PNGs yourself and:
+# DJANGO_EMAIL_FOOTER_LOGOS='[{"url":"http://localhost:8900/images/my-logo.png","alt":"My org","width":80,"height":44}]'
+# DJANGO_EMAIL_LOGO_IMG="http://localhost:8900/images/my-wordmark.png"
 
 # S3 Object Storage
 AWS_S3_ENDPOINT_URL=http://objectstorage:9000

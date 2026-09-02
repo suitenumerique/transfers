@@ -266,21 +266,17 @@ class Base(Configuration):
     )
 
     # End-user help / documentation URL. Surfaced by the frontend on the
-    # sidebar's "?" button as an external link (new tab) AND as the
-    # "Contacter le service support" link in the footer of every
-    # notification email. Defaults to the Suite Numérique docs page for
-    # the Transferts product. Override `SUPPORT_URL` separately if you
-    # need to point support somewhere different from in-app help.
-    HELP_URL = values.Value(
-        "https://docs.suite.anct.gouv.fr/docs/281bc1f0-5911-4442-b4b7-af78d77f0e1e/",
-        environ_name="HELP_URL",
-        environ_prefix=None,
-    )
-    SUPPORT_URL = values.Value(
-        "https://docs.suite.anct.gouv.fr/docs/281bc1f0-5911-4442-b4b7-af78d77f0e1e/",
-        environ_name="SUPPORT_URL",
-        environ_prefix=None,
-    )
+    # sidebar's "?" button and on the recipient page as an external link
+    # (new tab); the frontend hides the button when this is empty. Empty
+    # by default so a self-hosted instance doesn't point its users at the
+    # ANCT docs — the La Suite territoriale deployment sets it (st-ansible).
+    # ``SUPPORT_URL`` is reserved for a distinct support contact and is not
+    # consumed anywhere yet.
+    HELP_URL = values.Value("", environ_name="HELP_URL", environ_prefix=None)
+    SUPPORT_URL = values.Value("", environ_name="SUPPORT_URL", environ_prefix=None)
+    # Terms of use link rendered in the footer of every notification email
+    # (omitted when empty).
+    TERMS_URL = values.Value("", environ_name="TERMS_URL", environ_prefix=None)
 
     # Drive integration: when DRIVE_BASE_URL is set, the frontend renders an
     # "Attach from Drive" picker. Picked files are downloaded client-side
@@ -471,16 +467,38 @@ class Base(Configuration):
     EMAIL_USE_SSL = values.BooleanValue(
         False, environ_name="DJANGO_EMAIL_USE_SSL", environ_prefix=None
     )
+    # Branding of the notification emails. None of the institutional
+    # identity (République Française block, La Suite territoriale, sender
+    # domain, brand name) ships with the code: those marks are restricted
+    # to the state and its operators, and this project is open source. A
+    # self-hosted instance gets the neutral defaults below; the La Suite
+    # territoriale deployment injects its own values via st-ansible. Same
+    # convention as docs and drive (``EMAIL_LOGO_IMG`` / ``EMAIL_FROM``).
+    #
+    # Header logo URL. Empty ⇒ falls back to the Transferts wordmark shipped
+    # in the frontend's ``public/images`` (the product's own mark, fine to
+    # distribute). A custom logo is rendered at 40px high with its natural
+    # width; supply a 1x asset if Outlook desktop sizing matters to you.
+    EMAIL_LOGO_IMG = values.Value(
+        "", environ_name="DJANGO_EMAIL_LOGO_IMG", environ_prefix=None
+    )
+    # Institutional logos for the email footer, as a JSON list of
+    # ``{"url": …, "alt": …, "width": …, "height": …}`` (width/height in CSS
+    # px, optional). Empty ⇒ the footer renders no logo at all — never a
+    # broken image. Mail clients don't render SVG; point this at PNGs.
+    EMAIL_FOOTER_LOGOS = values.Value(
+        "[]", environ_name="DJANGO_EMAIL_FOOTER_LOGOS", environ_prefix=None
+    )
+    # Not consumed by any template yet; kept for parity with docs / drive so
+    # the same st-ansible env block applies. Neutral default.
     EMAIL_BRAND_NAME = values.Value(
-        "La Suite territoriale",
-        environ_name="DJANGO_EMAIL_BRAND_NAME",
-        environ_prefix=None,
+        "", environ_name="DJANGO_EMAIL_BRAND_NAME", environ_prefix=None
     )
     # st-ansible emits this as DJANGO_EMAIL_FROM (base.django.env.j2), the same
     # key drive and docs read. The Django setting keeps its standard name since
     # EmailMultiAlternatives resolves the sender from DEFAULT_FROM_EMAIL.
     DEFAULT_FROM_EMAIL = values.Value(
-        "transferts@suite-territoriale.fr",
+        "transferts@example.com",
         environ_name="DJANGO_EMAIL_FROM",
         environ_prefix=None,
     )

@@ -16,12 +16,15 @@
       <td align="center">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:12px;border:1px solid #e1e2e5;max-width:600px;width:100%;">
           {% comment %}
-            Brand header — wordmark SVG includes both the icon and the
-            "Transferts" text, so don't pair it with a sibling label.
+            Brand header — EMAIL_LOGO_IMG, or the shipped Transferts
+            wordmark. ``logo_width`` is only set for the shipped asset
+            (238x40, its native ratio — the PNG is a 476x80 2x raster); a
+            custom logo has an unknown ratio so it gets height only and
+            keeps its natural width.
           {% endcomment %}
           <tr>
             <td align="center" style="padding:32px 24px 16px;">
-              <img src="{{ logo_url }}" width="150" height="40" alt="Transferts" style="display:block;border:0;" />
+              <img src="{{ logo_url }}"{% if logo_width %} width="{{ logo_width }}"{% endif %} height="40" alt="Transferts" style="display:block;border:0;" />
             </td>
           </tr>
 
@@ -70,9 +73,15 @@
           {% endblock %}
 
           {% comment %}
-            Footer — gov branding + support links, separated by an
-            inset divider.
+            Footer — operator-supplied logos (EMAIL_FOOTER_LOGOS) and the
+            terms link, separated by an inset divider. Nothing here is
+            baked in: a self-hosted instance with neither configured gets
+            no footer at all rather than a broken image or a state mark it
+            isn't licensed to use. Logos are laid out left-to-right in
+            their configured order; the terms link takes the remaining
+            space in the middle.
           {% endcomment %}
+          {% if footer_logos or terms_url %}
           <tr>
             <td style="padding:0 32px;">
               <hr style="border:0;border-top:1px solid #ebedf0;margin:0;" />
@@ -82,21 +91,25 @@
             <td style="padding:24px 32px 32px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="vertical-align:middle;text-align:left;">
-                    <img src="{{ rf_logo_url }}" width="80" height="44" alt="République Française" style="display:block;border:0;" />
+                  {% for logo in footer_logos %}
+                  <td style="vertical-align:middle;text-align:{% if forloop.last and not forloop.first %}right{% else %}left{% endif %};{% if not forloop.first %}padding-left:16px;{% endif %}">
+                    <img src="{{ logo.url }}"{% if logo.width %} width="{{ logo.width }}"{% endif %}{% if logo.height %} height="{{ logo.height }}"{% endif %} alt="{{ logo.alt }}" style="display:block;border:0;{% if forloop.last and not forloop.first %}margin-left:auto;{% endif %}" />
                   </td>
-                  {% if terms_url %}
+                  {% if forloop.first and terms_url %}
                   <td style="vertical-align:middle;text-align:center;font-size:12px;color:#5d5d70;line-height:1.8;">
                     <a href="{{ terms_url }}" style="color:#5d5d70;text-decoration:underline;">Conditions générales d'utilisation</a>
                   </td>
                   {% endif %}
-                  <td style="vertical-align:middle;text-align:right;">
-                    <img src="{{ st_logo_url }}" width="74" height="40" alt="La Suite territoriale" style="display:block;border:0;margin-left:auto;" />
+                  {% empty %}
+                  <td style="vertical-align:middle;text-align:center;font-size:12px;color:#5d5d70;line-height:1.8;">
+                    <a href="{{ terms_url }}" style="color:#5d5d70;text-decoration:underline;">Conditions générales d'utilisation</a>
                   </td>
+                  {% endfor %}
                 </tr>
               </table>
             </td>
           </tr>
+          {% endif %}
         </table>
       </td>
     </tr>
