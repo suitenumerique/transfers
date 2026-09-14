@@ -20,7 +20,11 @@ jobs:
     with:
       image_name: "backend"
       context: "src/backend"
-      target: runtime-prod
+      # distroless/cc + python-build-standalone: no shell, no package
+      # manager, ~100 MB. Ships its own CA bundle (SSL_CERT_FILE is set by
+      # the base image), so TLS to the SMTP relay verifies out of the box.
+      # runtime-prod (debian-slim + entrypoint) stays for local/compose use.
+      target: runtime-distroless-prod
 
   docker-publish-frontend:
     uses: ./.github/workflows/docker-publish.yml
