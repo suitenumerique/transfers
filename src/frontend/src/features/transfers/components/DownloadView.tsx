@@ -18,14 +18,36 @@ import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { ButtonSpinner } from "./ButtonSpinner";
 import { FileItem } from "./FileItem";
 
+// The "copy link" pill hands the recipient a link to forward. Drop the
+// personal ``?r=`` first: a forwarded link would otherwise attribute the
+// next person's downloads to the original recipient. The fragment (key)
+// survives untouched.
+function stripRecipientToken(href: string): string {
+  try {
+    const u = new URL(href);
+    u.searchParams.delete("r");
+    return u.toString();
+  } catch {
+    return href;
+  }
+}
+
 interface DownloadViewProps {
   transfer: DownloadTransferFull;
   token: string;
+  // Recipient attribution token from the emailed link (``?r=``); forwarded
+  // on every download call so the sender sees who opened / downloaded.
+  recipientToken?: string;
   isOwner?: boolean;
 }
 
 
-export function DownloadView({ transfer, token, isOwner = false }: DownloadViewProps) {
+export function DownloadView({
+  transfer,
+  token,
+  recipientToken,
+  isOwner = false,
+}: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   // Every finalized transfer is encrypted; ``encryption_chunk_size`` is only
@@ -81,7 +103,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
   // recipient still gets a working link, while the visible URL bar no longer
   // leaks the key.
   const initialUrlRef = useRef<string>(
-    typeof window !== "undefined" ? window.location.href : "",
+    typeof window !== "undefined" ? stripRecipientToken(window.location.href) : "",
   );
   const downloadUrl = initialUrlRef.current;
 
@@ -307,7 +329,12 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       if (!ok) return;
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
-      iframe.src = streamingDownloadUrl(token, file.id, file.filename);
+      iframe.src = streamingDownloadUrl(
+        token,
+        file.id,
+        file.filename,
+        recipientToken,
+      );
       document.body.appendChild(iframe);
       // 60s (vs the old 5s): the iframe hand-off happens once the browser
       // sees Content-Disposition: attachment on the streamed Response,
@@ -320,7 +347,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
       // manager has taken over long before then in the healthy path.
       setTimeout(() => iframe.remove(), 60_000);
     } else {
-      downloadFile(token, file.id);
+      downloadFile(token, file.id, recipientToken);
     }
   };
   const downloadAll = () => {
@@ -329,7 +356,7 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         if (isEncrypted) {
           void triggerDownload(file);
         } else {
-          downloadFileInIframe(token, file.id);
+          downloadFileInIframe(token, file.id, recipientToken);
         }
       }, i * 800);
     });
@@ -424,6 +451,14 @@ export function DownloadView({ transfer, token, isOwner = false }: DownloadViewP
         >
           {t(
             "We couldn't set up decryption in your browser. Try a different browser or make sure yours is up to date.",
+          )}
+        </Alert>
+      )}
+
+      {isOwner && recipientToken && transfer.notify_on_download && (
+        <Alert type={VariantType.INFO} className="download-view__owner-alert">
+          {t(
+            "You are signed in as the sender: your own visits and downloads are not recorded, so this recipient's status won't change and no download receipt will be sent. Open the link in a private window to test it.",
           )}
         </Alert>
       )}

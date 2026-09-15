@@ -50,11 +50,16 @@ export interface AppConfig {
 interface ConfigContextValue {
   config: AppConfig | null;
   isReady: boolean;
+  // The /config/ fetch failed (API unreachable, 5xx). ``retry`` refetches.
+  isError: boolean;
+  retry: () => void;
 }
 
 const ConfigContext = createContext<ConfigContextValue>({
   config: null,
   isReady: false,
+  isError: false,
+  retry: () => {},
 });
 
 // Renders children unconditionally so the Auth provider mounts and fires its
@@ -70,7 +75,15 @@ export const ConfigProvider = ({ children }: PropsWithChildren) => {
 
   return (
     <ConfigContext.Provider
-      value={{ config: query.data ?? null, isReady: query.isFetched }}
+      value={{
+        config: query.data ?? null,
+        // ``status`` goes back to "pending" when a retry starts after an
+        // error (no data yet), unlike ``isFetched``, which stays true; the
+        // gate must keep showing the spinner through that window.
+        isReady: query.status !== "pending",
+        isError: query.isError,
+        retry: () => void query.refetch(),
+      }}
     >
       {children}
     </ConfigContext.Provider>
@@ -87,3 +100,11 @@ export const useConfig = (): AppConfig => {
 
 export const useConfigReady = (): boolean =>
   useContext(ConfigContext).isReady;
+
+export const useConfigState = (): Pick<
+  ConfigContextValue,
+  "isReady" | "isError" | "retry"
+> => {
+  const { isReady, isError, retry } = useContext(ConfigContext);
+  return { isReady, isError, retry };
+};

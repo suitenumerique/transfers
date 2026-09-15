@@ -7,10 +7,27 @@ export type TransferStatus =
 
 export type DeactivationReason = "manual" | "expired" | "first_download";
 
+// What we can honestly observe about a recipient. There is no "received":
+// the relay accepting the message says nothing about the mailbox, and we
+// don't do read tracking. "opened" / "downloaded" ride on the personal
+// ``?r=<token>`` in the emailed link — a copied link attributes to nobody.
+export type RecipientStatus =
+  | "sending"
+  | "failed"
+  | "sent"
+  | "opened"
+  | "downloaded";
+
 export interface TransferRecipient {
   id: string;
   email: string;
   email_sent_at: string | null;
+  status: RecipientStatus;
+  opened_at: string | null;
+  downloaded_at: string | null;
+  // Distinct files this recipient has fetched at least once; compare to
+  // ``files.length`` for "2 of 3".
+  downloaded_file_count: number;
 }
 
 export interface TransferListItem {
@@ -69,6 +86,9 @@ export interface TransferDetail {
   files: TransferFile[];
   recipients: TransferRecipient[];
   auto_archive_on_download: boolean;
+  // Opt-in: the sender gets one email per recipient, the first time that
+  // recipient has downloaded every file.
+  notify_on_download: boolean;
   pending_deletion_at: string | null;
   confidential: boolean;
   // Plaintext bytes per crypto chunk. Null only for legacy transfers
@@ -79,6 +99,9 @@ export interface TransferDetail {
 export interface TransferEvent {
   id: string;
   transfer_id: string;
+  // Set on LINK_OPENED / FILE_DOWNLOADED reached through a recipient's
+  // personal link, and on EMAIL_SENT; null for anonymous visits.
+  recipient_id: string | null;
   event_type: string;
   actor_type: "agent" | "external";
   actor_id: string | null;
@@ -125,6 +148,9 @@ export interface DownloadTransferFull {
   is_owner: boolean;
   sharing_mode: SharingMode;
   auto_archive_on_download: boolean;
+  // Sender opted into download receipts. Shown to the owner on their own
+  // download page (with ``?r=``) to say their visit won't trigger one.
+  notify_on_download: boolean;
   confidential: boolean;
   encryption_chunk_size: number | null;
   // URL-safe base64 of the AES key, served for non-confidential transfers so

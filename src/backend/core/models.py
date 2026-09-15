@@ -194,6 +194,10 @@ def _generate_public_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _generate_recipient_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
 class Transfer(BaseModel):
     """A file transfer created by an agent."""
 
@@ -239,6 +243,14 @@ class Transfer(BaseModel):
     # ``delete_pending_transfer_files_task``. Defaults to false so the
     # behaviour stays opt-in.
     auto_archive_on_download = models.BooleanField(default=False)
+    # Opt-in: email the sender about each recipient's downloads — at once
+    # when that recipient has fetched every file, or after
+    # TRANSFER_DOWNLOAD_RECEIPT_DELAY following their first download if they
+    # stopped partway (the email then says which files they took). One
+    # email per recipient. Only meaningful in email mode — attribution rides
+    # on the per-recipient token in the emailed link, a bare link can't say
+    # who downloaded.
+    notify_on_download = models.BooleanField(default=False)
     # Deadline after which the periodic sweep may delete this transfer's S3
     # objects. Populated at the ACTIVE → PENDING_FILE_DELETION transition,
     # null otherwise. The gap between the transition and this deadline lets
@@ -386,6 +398,25 @@ class TransferRecipient(BaseModel):
     )
     email = models.EmailField()
     email_sent_at = models.DateTimeField(null=True, blank=True)
+    # Rides in the emailed link as ``?r=<token>`` so the download page can
+    # attribute LINK_OPENED / FILE_DOWNLOADED events to this recipient.
+    # Every recipient of a transfer shares the same public_token; this is
+    # the only thing telling them apart. Opaque, not a secret on its own:
+    # it grants nothing the public token doesn't already grant.
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        default=_generate_recipient_token,
+    )
+    # Stamped when the "X downloaded your files" receipt was sent to the
+    # sender (notify_on_download). One receipt per recipient, ever.
+    download_notified_at = models.DateTimeField(null=True, blank=True)
+    # Stamped when the delayed (partial-download) receipt task was queued
+    # for this recipient. Claimed with a conditional UPDATE so concurrent
+    # downloads arm exactly one timer; cleared with the stamp above when a
+    # send fails, so a later download can arm a replacement.
+    delayed_receipt_armed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "core_transfer_recipient"

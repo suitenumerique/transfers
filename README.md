@@ -39,6 +39,7 @@ local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/aut
 | `TRANSFER_DEFAULT_EXPIRY_DAYS` | 1 | Default expiry; must be in `TRANSFER_EXPIRY_CHOICES` |
 | `TRANSFER_PURGE_DELAY_HOURS` | 6 | Grace period between link closure and S3 deletion (one-shot links + expiry + manual deactivation) |
 | `TRANSFER_CONFIDENTIAL_ENABLED` | `True` | Offer the "confidential transfer" toggle. `False` hides it and makes finalize reject `confidential`; existing confidential transfers stay downloadable |
+| `TRANSFER_DOWNLOAD_RECEIPT_DELAY` | 3600 | Seconds after a recipient's first download before the sender's receipt goes out when that recipient hasn't taken every file (see Delivery receipts) |
 
 Recipient count in email mode is hard-capped at 50 (in the serializer).
 
@@ -83,6 +84,29 @@ Point the image variables at **PNG** files hosted on a public URL: Gmail,
 Outlook (desktop and web), Yahoo and iOS Mail do not render SVG in emails.
 Supply 2x rasters sized to the `width`/`height` you declare for crisp
 retina rendering.
+
+## Delivery receipts (email mode)
+
+Every recipient of an email-mode transfer gets the same public link plus a
+personal `?r=<token>` (`TransferRecipient.token`). The download page and
+the decryption Service Worker forward it on every call, so `LINK_OPENED`
+and `FILE_DOWNLOADED` events carry a `recipient_id`. The transfer detail
+folds those events into one `status` per recipient — `sending`, `failed`,
+`sent`, `opened`, `downloaded` (+ `downloaded_file_count`) — which the
+post-send summary and the transfer page render as icons. There is no
+"received" state: the relay accepting a message says nothing about the
+mailbox, and we don't do read tracking.
+
+A link copied from the recipient page or the sender's page carries no
+token, so activity through it stays anonymous in the history.
+
+`notify_on_download` (checkbox on the form, email mode only) emails the
+sender once per recipient: immediately once that recipient has downloaded
+every file, or `TRANSFER_DOWNLOAD_RECEIPT_DELAY` seconds (default 3600)
+after their first download if they stopped partway, reporting "n of N"
+and which files were taken. Sent by `send_download_receipt_task`;
+at-most-once via `TransferRecipient.download_notified_at`, so whichever
+trigger fires first wins.
 
 ## Background jobs (Celery beat)
 

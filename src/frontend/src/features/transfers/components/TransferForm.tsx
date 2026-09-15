@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Input, LabelledBox, Switch, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
-import { ApiError, apiFetch } from "@/features/api/client";
-import type { SharingMode, TransferDetail } from "@/features/api/types";
+import { ApiError } from "@/features/api/client";
+import type { SharingMode } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
 import { formatFileSize } from "@/features/utils/string-helper";
+import { isNetworkError } from "@/features/utils/user-facing-error";
 import {
   fileKey,
   SubmitCancelledError,
@@ -156,19 +156,9 @@ export function TransferForm() {
   // auto-deactivates the transfer (status flip + scheduled S3 wipe).
   // Matches a "one-shot link" intent.
   const [autoArchiveOnDownload, setAutoArchiveOnDownload] = useState(false);
-  // Set after a successful email-mode submit. While set, the form is
-  // overlaid and the recipient-invitation task is polled until it stamps
-  // ``notifications_completed_at`` — at which point we navigate to the
-  // success or partial-failure confirmation page.
-  const [pendingTransferId, setPendingTransferId] = useState<string | null>(
-    null,
-  );
-  // For confidential transfers, the key fragment is handed to the success
-  // screen via the navigation hash (link: to rebuild the working URL; email:
-  // to show the sender the key to share separately). Kept in a ref so the
-  // email path's poll-then-navigate can reach it after submit() cleared the
-  // draft. Null for normal transfers (the backend serves the key).
-  const carryFragmentRef = useRef<string | null>(null);
+  // Opt-in (email mode): the sender gets one email per recipient, the first
+  // time that recipient has downloaded every file.
+  const [notifyOnDownload, setNotifyOnDownload] = useState(false);
   const expiryMenu = useDropdownMenu();
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
@@ -179,29 +169,6 @@ export function TransferForm() {
       void draft.abort();
     };
   }, []);
-
-  // Poll the freshly-finalized transfer every 2s while we're waiting for
-  // the recipient-invitation task to stamp ``notifications_completed_at``.
-  // Disabled (no fetch) when ``pendingTransferId`` is null.
-  const pollQuery = useQuery<TransferDetail>({
-    queryKey: ["transfer-poll", pendingTransferId],
-    queryFn: () => apiFetch<TransferDetail>(`/transfers/${pendingTransferId}/`),
-    enabled: pendingTransferId !== null,
-    refetchInterval: 2000,
-  });
-
-  useEffect(() => {
-    const data = pollQuery.data;
-    if (!data?.notifications_completed_at) return;
-    isSubmittingRef.current = true;
-    const hasFailures = data.recipients.some((r) => r.email_sent_at === null);
-    const fragment = carryFragmentRef.current;
-    navigate({
-      to: hasFailures ? "/confirm-failed/$id" : "/confirm/$id",
-      params: { id: data.id },
-      ...(fragment ? { hash: fragment } : {}),
-    });
-  }, [pollQuery.data, navigate]);
 
   const handleFilesChange = (incoming: File[]) => {
     setFileError(null);
@@ -452,7 +419,6 @@ export function TransferForm() {
     const fragmentToCarry = draft.confidential
       ? draft.keyFragmentRef.current
       : null;
-    carryFragmentRef.current = fragmentToCarry;
     try {
       const result = await draft.submit({
         title,
@@ -460,22 +426,20 @@ export function TransferForm() {
         sharing_mode: sharingMode,
         recipients: sharingMode === "email" ? recipients : [],
         auto_archive_on_download: autoArchiveOnDownload,
+        notify_on_download: sharingMode === "email" && notifyOnDownload,
         confidential: draft.confidential,
       });
-      if (result.sharing_mode === "link") {
-        // Link mode: nothing to wait for, go straight to the confirm page.
-        // Suppress the route-change confirm; see the ref's declaration.
-        isSubmittingRef.current = true;
-        navigate({
-          to: "/confirm/$id",
-          params: { id: result.id },
-          ...(fragmentToCarry ? { hash: fragmentToCarry } : {}),
-        });
-      } else {
-        // Email mode: enter polling state. The pollQuery effect will navigate
-        // once the recipient-invitation task is done (success or partial fail).
-        setPendingTransferId(result.id);
-      }
+      // Both modes go straight to the summary. In email mode the
+      // invitation task is still running at this point; the summary's
+      // recipients list polls it and shows each email's outcome in place,
+      // which beats parking the sender on a spinner for a 50-recipient
+      // send. Suppress the route-change confirm; see the ref's declaration.
+      isSubmittingRef.current = true;
+      navigate({
+        to: "/confirm/$id",
+        params: { id: result.id },
+        ...(fragmentToCarry ? { hash: fragmentToCarry } : {}),
+      });
     } catch (err) {
       // A cancel is a deliberate user action — stay on the form silently.
       if (err instanceof SubmitCancelledError) return;
@@ -541,7 +505,9 @@ export function TransferForm() {
       // with no feedback.
       console.error("Transfer submission failed:", err);
       showOtherError(
-        t("An error occurred while sending the transfer. Please try again."),
+        isNetworkError(err)
+          ? t("Can't reach the server. Check your connection and try again.")
+          : t("An error occurred while sending the transfer. Please try again."),
       );
     }
   };
@@ -580,23 +546,6 @@ export function TransferForm() {
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
-      {pendingTransferId !== null && (
-        <div
-          className="transfer-form__sending-overlay"
-          role="status"
-          aria-live="polite"
-        >
-          <div className="transfer-form__sending-icon" aria-hidden="true">
-            <Spinner size="lg" />
-          </div>
-          <h2 className="transfer-form__sending-title">
-            {t("Sending emails")}
-          </h2>
-          <p className="transfer-form__sending-text">
-            {t("This usually takes a few seconds.")}
-          </p>
-        </div>
-      )}
       <div className="transfer-form__grid">
         <section
           className="transfer-form__files-col"
@@ -1015,6 +964,33 @@ export function TransferForm() {
               </button>
             </Tooltip>
           </div>
+
+          {sharingMode === "email" && (
+            <div className="transfer-form__auto-archive">
+              <Checkbox
+                label={t(
+                  "Email me when a recipient downloads the files",
+                )}
+                checked={notifyOnDownload}
+                onChange={(e) => setNotifyOnDownload(e.currentTarget.checked)}
+                disabled={busy}
+              />
+              <Tooltip
+                content={t(
+                  "One email per recipient: as soon as they have downloaded every file, or about an hour after their first download if they stopped partway (it lists what they took). Only the links sent by email can be attributed — a copied link can't tell who used it.",
+                )}
+                placement="left"
+              >
+                <button
+                  type="button"
+                  className="transfer-form__auto-archive-help"
+                  aria-label={t("More information")}
+                >
+                  <Info />
+                </button>
+              </Tooltip>
+            </div>
+          )}
 
           {/* All submit-time callouts grouped in one block above the button
               so the reader picks them up at a single glance before deciding

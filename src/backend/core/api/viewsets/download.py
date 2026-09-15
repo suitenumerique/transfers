@@ -6,8 +6,10 @@ their own transfer is recognised — those self-views are skipped from the
 recipient activity log.
 """
 
+from django.conf import settings
 from django.db import transaction
 from django.http import HttpResponseRedirect
+from django.utils import timezone
 
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -22,6 +24,7 @@ from core.enums import (
     TransferEventType,
     TransferStatus,
 )
+from core.services.recipient_activity import files_downloaded_by
 from core.services.s3 import sign_download_url
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
@@ -69,20 +72,72 @@ def _denied_access_response(transfer: models.Transfer) -> Response | None:
     )
 
 
-def _record_visitor_event(transfer, event_type, request, payload=None):
-    # Skip the event when an authenticated agent is visiting/downloading
-    # their own transfer — recipient activity is the audit signal here,
-    # owner self-checks aren't.
+def _resolve_recipient(transfer, request):
+    """The recipient behind this visit, from the ``?r=<token>`` the emailed
+    link carries. None for a bare link (copied from the sender's page,
+    forwarded by hand, or emailed before tokens existed) and for a token
+    that doesn't belong to this transfer — attribution is best-effort, a
+    stale or foreign token must never turn into an error for the visitor."""
+    token = request.query_params.get("r")
+    if not token:
+        return None
+    return transfer.recipients.filter(token=token).first()
+
+
+def _record_visitor_event(
+    transfer, event_type, request, payload=None, recipient=None
+) -> bool:
+    """Journal a visitor action. Returns False when nothing was recorded:
+    an authenticated agent visiting/downloading their own transfer —
+    recipient activity is the audit signal here, owner self-checks aren't."""
     if request.user.is_authenticated and request.user.id == transfer.owner_id:
-        return
+        return False
     models.TransferEvent.objects.create(
         transfer_id=transfer.id,
+        recipient_id=recipient.id if recipient is not None else None,
         event_type=event_type,
         actor_type=ActorType.EXTERNAL,
         ip=request.META.get("REMOTE_ADDR"),
         user_agent=request.META.get("HTTP_USER_AGENT", ""),
         payload=payload or {},
     )
+    return True
+
+
+def _maybe_send_download_receipt(transfer, recipient):
+    """Queue the download receipt for the sender (opt-in per transfer, one
+    email per recipient).
+
+    * Every file fetched → enqueue now.
+    * Otherwise → enqueue with a TRANSFER_DOWNLOAD_RECEIPT_DELAY countdown,
+      at most once per recipient: the conditional UPDATE on
+      ``delayed_receipt_armed_at`` succeeds for a single request, however
+      many run concurrently. The email reports the files taken at send
+      time.
+
+    The task claims ``download_notified_at`` before sending, so only one
+    of the queued tasks emails."""
+    if not transfer.notify_on_download or recipient.download_notified_at:
+        return
+    file_count = transfer.files.count()
+    if not file_count:
+        return
+    downloaded = files_downloaded_by(transfer.id, recipient.id)
+    from core.tasks import send_download_receipt_task
+
+    args = (str(transfer.id), str(recipient.id))
+    if len(downloaded) >= file_count:
+        transaction.on_commit(lambda: send_download_receipt_task.delay(*args))
+        return
+    armed = models.TransferRecipient.objects.filter(
+        id=recipient.id, delayed_receipt_armed_at__isnull=True
+    ).update(delayed_receipt_armed_at=timezone.now())
+    if armed:
+        transaction.on_commit(
+            lambda: send_download_receipt_task.apply_async(
+                args=args, countdown=settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY
+            )
+        )
 
 
 def _all_files_downloaded_once(transfer) -> bool:
@@ -123,7 +178,12 @@ class DownloadTransferView(APIView):
         if denied is not None:
             return denied
 
-        _record_visitor_event(transfer, TransferEventType.LINK_OPENED, request)
+        _record_visitor_event(
+            transfer,
+            TransferEventType.LINK_OPENED,
+            request,
+            recipient=_resolve_recipient(transfer, request),
+        )
         serializer = DownloadTransferSerializer(transfer, context={"request": request})
         return Response(serializer.data)
 
@@ -179,7 +239,8 @@ class DownloadFileView(APIView):
             transfer_file.mime_type,
         )
 
-        _record_visitor_event(
+        recipient = _resolve_recipient(transfer, request)
+        recorded = _record_visitor_event(
             transfer,
             TransferEventType.FILE_DOWNLOADED,
             request,
@@ -187,7 +248,10 @@ class DownloadFileView(APIView):
                 "file_id": str(transfer_file.id),
                 "filename": transfer_file.filename,
             },
+            recipient=recipient,
         )
+        if recorded and recipient is not None:
+            _maybe_send_download_receipt(transfer, recipient)
 
         # Auto-archive check: if this transfer was flagged as one-shot and
         # every file has now been downloaded at least once, deactivate the

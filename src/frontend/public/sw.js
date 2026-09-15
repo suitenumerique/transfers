@@ -132,13 +132,16 @@ self.addEventListener("fetch", (event) => {
   if (!match) return;
   const token = match[1];
   const fileId = match[2];
+  // Recipient attribution token from the emailed link, forwarded verbatim
+  // to the backend's download endpoint. Absent on a bare link.
+  const recipientToken = url.searchParams.get("r");
   // Wrap in a top-level try/catch: an unhandled throw inside handleDownload
   // makes respondWith() reject, and Firefox reports that as an opaque
   // "ServiceWorker … encountered an unexpected error" with no way to know
   // whether it's a network hiccup, a decrypt failure, or a bug. A readable
   // Response with the message keeps diagnostics possible.
   event.respondWith(
-    handleDownload(token, fileId).catch((err) => {
+    handleDownload(token, fileId, recipientToken).catch((err) => {
       const message =
         (err && err.message) || "Unexpected error while streaming the download.";
       return new Response(message, {
@@ -149,7 +152,7 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-async function handleDownload(token, fileId) {
+async function handleDownload(token, fileId, recipientToken) {
   const entry = REGISTRY.get(token);
   if (!entry) {
     // The registry is module-level; when the browser terminates an idle
@@ -182,7 +185,8 @@ async function handleDownload(token, fileId) {
   // absolute in dev (backend on a different port).
   const backendUrl =
     (entry.apiOrigin || "") +
-    `${API_PATH}/downloads/${token}/files/${fileId}/download/?as=json`;
+    `${API_PATH}/downloads/${token}/files/${fileId}/download/?as=json` +
+    (recipientToken ? `&r=${encodeURIComponent(recipientToken)}` : "");
   const meta_resp = await fetch(backendUrl, { credentials: "include" });
   if (!meta_resp.ok) {
     return new Response("Failed to negotiate download URL.", {

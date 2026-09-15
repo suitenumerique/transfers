@@ -651,6 +651,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             expires_at=timezone.now()
             + timedelta(days=int(metadata["expires_in_days"])),
             auto_archive_on_download=metadata["auto_archive_on_download"],
+            notify_on_download=metadata["notify_on_download"],
             confidential=metadata["confidential"],
             # Read from the draft, not the request body — this is the same
             # value the Drive-import and scan tasks consumed, so recipients
