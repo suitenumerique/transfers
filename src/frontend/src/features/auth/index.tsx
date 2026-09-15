@@ -1,7 +1,9 @@
 import React, { PropsWithChildren, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { useConfigReady } from "@/features/providers/config";
+import { useConfigState } from "@/features/providers/config";
 
 interface User {
   id: string;
@@ -44,8 +46,43 @@ const fetchMe = async (): Promise<User> => {
   return res.json();
 };
 
+// Full-page state for an API that can't be reached at boot: nothing below
+// can render without /config/, so say so and offer a retry rather than
+// letting the first useConfig() throw into the error boundary.
+const ServiceUnavailable = ({ onRetry }: { onRetry: () => void }) => {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "1rem",
+        height: "100vh",
+        padding: "2rem",
+        textAlign: "center",
+      }}
+    >
+      <p style={{ margin: 0, maxWidth: "32rem" }}>
+        {t(
+          "The service can't be reached right now. Check your connection, or try again in a moment.",
+        )}
+      </p>
+      <Button color="brand" onClick={onRetry}>
+        {t("Retry")}
+      </Button>
+    </div>
+  );
+};
+
 export const Auth = ({ children }: PropsWithChildren) => {
-  const configReady = useConfigReady();
+  const {
+    isReady: configReady,
+    isError: configError,
+    retry: retryConfig,
+  } = useConfigState();
   const query = useQuery<User, Error & { code?: number }>({
     queryKey: ["auth", "me"],
     queryFn: fetchMe,
@@ -76,6 +113,10 @@ export const Auth = ({ children }: PropsWithChildren) => {
         <Spinner size="xl" />
       </div>
     );
+  }
+
+  if (configError) {
+    return <ServiceUnavailable onRetry={retryConfig} />;
   }
 
   return (

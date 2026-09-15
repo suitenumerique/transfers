@@ -206,8 +206,12 @@ export function streamingDownloadUrl(
   token: string,
   fileId: string,
   filename: string,
+  recipientToken?: string,
 ): string {
-  return `/_dl/${token}/${fileId}/${encodeURIComponent(filename)}`;
+  const path = `/_dl/${token}/${fileId}/${encodeURIComponent(filename)}`;
+  // The SW forwards ``r`` to the backend so the download is attributed to
+  // this recipient, same as the plaintext path.
+  return recipientToken ? `${path}?r=${encodeURIComponent(recipientToken)}` : path;
 }
 
 // Firefox terminates an "idle" SW after ~30s (Chrome's behaviour is

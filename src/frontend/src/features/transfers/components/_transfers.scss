@@ -278,59 +278,6 @@
     transform: rotate(-90deg);
   }
 
-  &__recipients-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--c--globals--spacings--xs);
-  }
-
-  &__recipient-row {
-    display: flex;
-    align-items: center;
-    gap: var(--c--globals--spacings--xs);
-    font-size: var(--c--globals--font--sizes--sm);
-  }
-
-  &__recipient-name {
-    font-weight: 600;
-    color: var(--c--contextuals--content--semantic--neutral--primary);
-  }
-
-  &__recipient-email {
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  // Per-recipient delivery status icon — pushed to the right edge of the
-  // row so the user can scan a column of ticks/warnings at a glance.
-  &__recipient-status {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
-
-    > svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    &--sent {
-      color: var(
-        --c--contextuals--content--semantic--success--primary,
-        #18753c
-      );
-    }
-
-    &--failed {
-      color: var(--c--contextuals--content--semantic--error--primary);
-    }
-  }
 
   // The list uses the shared `.file-item` rows (same component as the
   // upload form) — only the list container needs a local reset.
@@ -739,45 +686,6 @@
   gap: var(--c--globals--spacings--lg);
   position: relative;
 
-  // Shown after a successful email-mode submit while we poll for the
-  // recipient-invitation task to finish. Covers the entire form so the
-  // user can't interact with it during the wait. Same icon → title →
-  // subtitle stack as transfer-success / transfer-failed so the pre/post
-  // confirmation pages feel like one continuous flow.
-  &__sending-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--c--globals--spacings--xl);
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(2px);
-    z-index: 10;
-    border-radius: var(--c--components--forms-input--border-radius);
-  }
-
-  &__sending-icon {
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-    margin-bottom: var(--c--globals--spacings--md);
-  }
-
-  &__sending-title {
-    margin: 0 0 var(--c--globals--spacings--2xs);
-    font-size: var(--c--globals--font--sizes--lg, 1.125rem);
-    font-weight: 700;
-    line-height: 1.3;
-    color: var(--c--contextuals--content--semantic--neutral--primary);
-  }
-
-  &__sending-text {
-    margin: 0;
-    max-width: 360px;
-    text-align: center;
-    font-size: var(--c--globals--font--sizes--sm);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-  }
 
   // Two-column layout: files on the left, options on the right. Stacks on
   // narrow viewports; on desktop it fills the form's remaining height so
@@ -1215,8 +1123,7 @@
 // specificity than a single class, so stacking gap on top creates
 // double-spacing that the mock doesn't have. Explicit margins let each
 // row land at exactly the value the designers drew.
-.transfer-success,
-.transfer-failed {
+.transfer-success {
   align-items: center;
   justify-content: center;
   text-align: center;
@@ -1356,83 +1263,6 @@
   }
 }
 
-// Mirrors .transfer-success but with the error palette — used on the
-// /confirm-failed/<id> page when the recipient-invitation task didn't
-// reach every recipient.
-.transfer-failed {
-  // Confidential + email: same key-share panel as .transfer-success. Kept
-  // as an explicit copy rather than a shared placeholder, matching how the
-  // rest of this block already mirrors __icon/__title/__body.
-  &__link-box {
-    display: flex;
-    align-items: center;
-    gap: var(--c--globals--spacings--xs);
-    width: 100%;
-    margin-bottom: var(--c--globals--spacings--sm);
-    padding:
-      var(--c--globals--spacings--xs)
-      var(--c--globals--spacings--sm);
-    background: var(--c--contextuals--background--surface--primary);
-    border: 1px solid var(--c--contextuals--border--surface--primary);
-    border-radius: var(--c--components--forms-input--border-radius);
-
-    > .c__field {
-      flex: 1;
-      min-width: 0;
-
-      .c__input__wrapper {
-        border: 0;
-        background: transparent;
-        padding-inline: 0;
-        height: auto;
-      }
-    }
-
-    > .c__button {
-      flex-shrink: 0;
-    }
-  }
-
-  &__key-share {
-    width: 100%;
-    max-width: 340px;
-    margin: 0 auto var(--c--globals--spacings--md);
-    text-align: left;
-  }
-
-  &__icon {
-    color: var(--c--contextuals--content--semantic--error--primary);
-    margin-bottom: var(--c--globals--spacings--md);
-
-    > svg {
-      width: 48px;
-      height: 48px;
-    }
-  }
-
-  &__title {
-    margin: 0 0 var(--c--globals--spacings--2xs);
-    font-size: var(--c--globals--font--sizes--lg, 1.125rem);
-    font-weight: 700;
-    line-height: 1.3;
-    color: var(--c--contextuals--content--semantic--neutral--primary);
-  }
-
-  &__body {
-    margin: 0 0 var(--c--globals--spacings--md);
-    max-width: 340px;
-    font-size: var(--c--globals--font--sizes--sm);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-    line-height: 1.5;
-  }
-
-  &__actions {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: var(--c--globals--spacings--md);
-  }
-}
 
 // File Drop Zone — typography-first, dashed border (matches design handoff)
 .file-dropzone {
@@ -1762,3 +1592,89 @@
   }
 }
 
+
+// Recipient rows with their delivery / activity state (RecipientStatusList).
+// Shared by the post-send summary and the transfer page. The state cell is
+// pushed to the right edge so a column of icons scans at a glance; the
+// text label stays visible (not tooltip-only) for screen readers and for
+// anyone who doesn't read icons.
+.recipient-status {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  text-align: left;
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--xs);
+    font-size: var(--c--globals--font--sizes--sm);
+    min-width: 0;
+  }
+
+  &__name {
+    font-weight: 600;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+    white-space: nowrap;
+  }
+
+  &__email {
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  &__state {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: var(--c--globals--font--sizes--xs);
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    > svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &--sending > svg {
+      animation: recipient-status__spin 1s linear infinite;
+    }
+
+    &--failed {
+      color: var(--c--contextuals--content--semantic--error--primary);
+    }
+
+    &--opened {
+      color: var(--c--contextuals--content--semantic--brand--primary, #0659c5);
+    }
+
+    &--downloaded {
+      color: var(
+        --c--contextuals--content--semantic--success--primary,
+        #18753c
+      );
+    }
+  }
+}
+
+@keyframes recipient-status__spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// On the summary the list sits in a centered, 480px-wide column; give it
+// the full width and a little air above.
+.transfer-success__recipients {
+  width: 100%;
+  margin: var(--c--globals--spacings--md) 0 var(--c--globals--spacings--lg);
+}

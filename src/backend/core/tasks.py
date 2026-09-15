@@ -6,6 +6,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.mail import get_connection
 from django.db import transaction
 from django.utils import timezone
 
@@ -21,11 +22,17 @@ from core.enums import (
     TransferEventType,
     TransferStatus,
 )
-from core.models import Transfer, TransferDraft, TransferEvent, TransferFile
+from core.models import (
+    Transfer,
+    TransferDraft,
+    TransferEvent,
+    TransferFile,
+    TransferRecipient,
+)
 from core.services import encryption, s3
-from core.services.scan_auth import mint_request_token
-from core.services.email import send_recipient_invitation
+from core.services.email import send_download_receipt, send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
+from core.services.scan_auth import mint_request_token
 
 logger = logging.getLogger(__name__)
 
@@ -630,28 +637,96 @@ def send_recipient_invitations_task(transfer_id):
     except Transfer.DoesNotExist:
         return
 
-    for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
-        try:
-            send_recipient_invitation(transfer, recipient)
-            recipient.email_sent_at = timezone.now()
-            recipient.save(update_fields=["email_sent_at", "updated_at"])
-            TransferEvent.objects.create(
-                transfer_id=transfer.id,
-                recipient_id=recipient.id,
-                event_type=TransferEventType.EMAIL_SENT,
-                actor_type=ActorType.AGENT,
-                actor_id=transfer.owner_id,
-                payload={"email": recipient.email},
-            )
-        except Exception:
-            logger.exception(
-                "Failed to send invitation to %s for transfer %s",
-                recipient.email,
-                transfer_id,
-            )
+    # One SMTP session for the whole batch. ``EmailMessage.send()`` with no
+    # connection opens a fresh one per message — TCP + TLS + AUTH against
+    # the relay, several hundred ms each — which is what made a transfer
+    # with many recipients feel slow: the sender's screen waits on this
+    # task's completion stamp. Opening up front is best-effort: if the
+    # relay is down we still walk every recipient so each failure is
+    # logged and left retryable (``email_sent_at`` stays NULL), and the
+    # completion stamp below still lands so the frontend stops polling.
+    connection = get_connection()
+    try:
+        connection.open()
+    except Exception:
+        logger.exception(
+            "Could not open the mail connection for transfer %s; "
+            "sending will be retried per recipient",
+            transfer_id,
+        )
+    try:
+        for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
+            try:
+                send_recipient_invitation(transfer, recipient, connection=connection)
+                recipient.email_sent_at = timezone.now()
+                recipient.save(update_fields=["email_sent_at", "updated_at"])
+                TransferEvent.objects.create(
+                    transfer_id=transfer.id,
+                    recipient_id=recipient.id,
+                    event_type=TransferEventType.EMAIL_SENT,
+                    actor_type=ActorType.AGENT,
+                    actor_id=transfer.owner_id,
+                    payload={"email": recipient.email},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send invitation to recipient %s for transfer %s",
+                    recipient.id,
+                    transfer_id,
+                )
+                # A relay that dropped mid-batch leaves the session in an
+                # unusable state; close it so the next recipient's send
+                # reopens instead of failing on a dead socket.
+                connection.close()
+    finally:
+        connection.close()
 
     # Stamp completion regardless of per-recipient outcome — the frontend
     # uses this to leave its "sending…" polling state, and a partial failure
     # is signalled by recipients with email_sent_at IS NULL after the stamp.
     transfer.notifications_completed_at = timezone.now()
     transfer.save(update_fields=["notifications_completed_at", "updated_at"])
+
+
+@shared_task(bind=True, max_retries=3)
+def send_download_receipt_task(self, transfer_id, recipient_id):
+    """Email the sender about ``recipient_id``'s downloads.
+
+    Enqueued by the download view in two situations (see
+    ``_maybe_send_download_receipt``): right away when the recipient has
+    fetched every file, and with a one-hour countdown after their first
+    download. The email describes the state at send time — "every file"
+    or "n of N".
+
+    One email per recipient: the same recipient can be enqueued several
+    times (countdown task plus immediate one, parallel last-file
+    downloads), so the task first claims ``download_notified_at`` with a
+    conditional UPDATE; only the run that gets the row sends, the others
+    stop.
+
+    On a send failure both stamps (this one and ``delayed_receipt_armed_at``)
+    are released and the task retries with a bounded backoff (1, 2, 4 min).
+    A later download by this recipient can also re-queue it.
+    """
+    claimed = TransferRecipient.objects.filter(
+        id=recipient_id,
+        transfer_id=transfer_id,
+        download_notified_at__isnull=True,
+    ).update(download_notified_at=timezone.now())
+    if not claimed:
+        return
+    recipient = TransferRecipient.objects.select_related("transfer__owner").get(
+        id=recipient_id
+    )
+    try:
+        send_download_receipt(recipient.transfer, recipient)
+    except Exception as exc:
+        logger.exception(
+            "Failed to send download receipt for transfer %s (recipient %s)",
+            transfer_id,
+            recipient_id,
+        )
+        TransferRecipient.objects.filter(id=recipient_id).update(
+            download_notified_at=None, delayed_receipt_armed_at=None
+        )
+        raise self.retry(exc=exc, countdown=60 * 2**self.request.retries) from exc

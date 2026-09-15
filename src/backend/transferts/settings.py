@@ -144,6 +144,12 @@ class Base(Configuration):
     TRANSFER_CONFIDENTIAL_ENABLED = values.BooleanValue(
         True, environ_name="TRANSFER_CONFIDENTIAL_ENABLED", environ_prefix=None
     )
+    # Download receipts (notify_on_download): a recipient who fetched every
+    # file triggers the sender's email at once; one who stopped partway gets
+    # reported after this delay (seconds), with the files taken so far.
+    TRANSFER_DOWNLOAD_RECEIPT_DELAY = values.PositiveIntegerValue(
+        3600, environ_name="TRANSFER_DOWNLOAD_RECEIPT_DELAY", environ_prefix=None
+    )
     TRANSFER_MAX_FILE_SIZE = values.PositiveIntegerValue(
         20 * 1024 * 1024 * 1024,  # 20 Go — cap on any individual file
         environ_name="TRANSFER_MAX_FILE_SIZE",

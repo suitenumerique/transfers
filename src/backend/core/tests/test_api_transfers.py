@@ -323,9 +323,7 @@ class TestTransferHardDelete:
         """Build a Transfer + one file + one recipient + a couple of events
         already in the terminal DEACTIVATED state — the state the hard-
         delete is designed for."""
-        transfer = TransferFactory(
-            owner=owner, status=TransferStatus.DEACTIVATED
-        )
+        transfer = TransferFactory(owner=owner, status=TransferStatus.DEACTIVATED)
         TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
         transfer.recipients.create(email="r@example.org")
         TransferEvent.objects.create(
@@ -368,13 +366,10 @@ class TestTransferHardDelete:
         assert not Transfer.objects.filter(id=transfer.id).exists()
         # FK cascade for files + recipients:
         assert not TransferFile.objects.filter(transfer_id=transfer.id).exists()
-        assert not TransferRecipient.objects.filter(
-            transfer_id=transfer.id
-        ).exists()
+        assert not TransferRecipient.objects.filter(transfer_id=transfer.id).exists()
         # Events stay behind, un-touched, on the audit trail.
-        assert (
-            TransferEvent.objects.filter(id__in=pre_event_ids).count()
-            == len(pre_event_ids)
+        assert TransferEvent.objects.filter(id__in=pre_event_ids).count() == len(
+            pre_event_ids
         )
 
     def test_refuses_active_transfer(self, authenticated_client, user):
@@ -420,13 +415,12 @@ class TestTransferHardDelete:
         patched_s3.delete.assert_any_call(f.s3_key)
         assert not Transfer.objects.filter(id=transfer.id).exists()
 
-    def test_refuses_when_s3_delete_fails(
-        self, patched_s3, authenticated_client, user
-    ):
+    def test_refuses_when_s3_delete_fails(self, patched_s3, authenticated_client, user):
         """S3 hiccup on wipe → 400, row + files intact. Otherwise deleting
         the row would strand S3 objects the periodic sweep can no longer
         find via a ``TransferFile.s3_key`` lookup."""
         from botocore.exceptions import ClientError
+
         from core.models import Transfer, TransferFile
 
         # PENDING_FILE_DELETION still owns S3 bytes, so the wipe runs.
@@ -495,3 +489,128 @@ class TestTransferEvents:
         other_transfer = TransferFactory()
         response = authenticated_client.get(f"{API_URL}{other_transfer.id}/events/")
         assert response.status_code == 404
+
+
+@pytest.mark.django_db
+class TestRecipientStatuses:
+    """The detail payload folds the event log into one status per recipient
+    — what the recipients list on the summary and detail pages renders."""
+
+    def _detail(self, client, transfer):
+        response = client.get(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 200
+        return {r["email"]: r for r in response.data["recipients"]}
+
+    def _setup(self, user, *, sent, events=()):
+        """One two-file transfer, one recipient, the given attributed events
+        ("open", "f1", "f2"). Status derivation reads the event log only;
+        scan state is irrelevant here."""
+        transfer = TransferFactory(owner=user, sharing_mode="email")
+        files = {
+            "f1": TransferFileFactory(
+                transfer=transfer, upload_completed_at=timezone.now()
+            ),
+            "f2": TransferFileFactory(
+                transfer=transfer, upload_completed_at=timezone.now()
+            ),
+        }
+        recipient = transfer.recipients.create(
+            email="dest@example.org",
+            email_sent_at=timezone.now() if sent else None,
+        )
+        for token in events:
+            TransferEvent.objects.create(
+                transfer_id=transfer.id,
+                recipient_id=recipient.id,
+                event_type=(
+                    TransferEventType.LINK_OPENED
+                    if token == "open"
+                    else TransferEventType.FILE_DOWNLOADED
+                ),
+                actor_type=ActorType.EXTERNAL,
+                payload={} if token == "open" else {"file_id": str(files[token].id)},
+            )
+        return transfer, recipient
+
+    @pytest.mark.parametrize(
+        ("sent", "events", "expected"),
+        [
+            # Invitation task still running, nothing sent yet.
+            (False, [], {"status": "sending"}),
+            (True, [], {"status": "sent", "downloaded_file_count": 0}),
+            (True, ["open"], {"status": "opened", "opened_at": "set"}),
+            (
+                True,
+                ["open", "f1"],
+                {"status": "downloaded", "downloaded_file_count": 1},
+            ),
+            # Re-downloading f2 counts once.
+            (
+                True,
+                ["open", "f1", "f2", "f2"],
+                {
+                    "status": "downloaded",
+                    "downloaded_file_count": 2,
+                    "downloaded_at": "set",
+                },
+            ),
+        ],
+        ids=["sending", "sent", "opened", "partial", "complete"],
+    )
+    def test_status_follows_delivery_and_activity(
+        self, authenticated_client, user, sent, events, expected
+    ):
+        transfer, _ = self._setup(user, sent=sent, events=events)
+
+        row = self._detail(authenticated_client, transfer)["dest@example.org"]
+
+        for key, value in expected.items():
+            if value == "set":
+                assert row[key] is not None, key
+            else:
+                assert row[key] == value, key
+
+    def test_unsent_becomes_failed_once_the_invitation_task_completed(
+        self, authenticated_client, user
+    ):
+        transfer, recipient = self._setup(user, sent=False)
+        transfer.notifications_completed_at = timezone.now()
+        transfer.save(update_fields=["notifications_completed_at"])
+
+        row = self._detail(authenticated_client, transfer)["dest@example.org"]
+
+        assert row["status"] == "failed"
+        assert recipient.email_sent_at is None
+
+    def test_anonymous_download_is_not_attributed(self, authenticated_client, user):
+        """A download through a bare link (no ``?r=``) carries no recipient
+        and must not move anyone's status."""
+        transfer, _ = self._setup(user, sent=True)
+        TransferEvent.objects.create(
+            transfer_id=transfer.id,
+            event_type=TransferEventType.FILE_DOWNLOADED,
+            actor_type=ActorType.EXTERNAL,
+            payload={"file_id": str(transfer.files.first().id)},
+        )
+
+        row = self._detail(authenticated_client, transfer)["dest@example.org"]
+
+        assert row["status"] == "sent"
+        assert row["downloaded_file_count"] == 0
+
+    def test_detail_recipients_cost_a_bounded_number_of_queries(
+        self, authenticated_client, user, django_assert_max_num_queries
+    ):
+        """Activity is folded in one query for the whole transfer — the
+        recipients list must not fan out per row."""
+        transfer = TransferFactory(owner=user, sharing_mode="email")
+        TransferFileFactory(transfer=transfer, upload_completed_at=timezone.now())
+        for i in range(20):
+            transfer.recipients.create(
+                email=f"r{i}@example.org", email_sent_at=timezone.now()
+            )
+
+        with django_assert_max_num_queries(12):
+            response = authenticated_client.get(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 200
+        assert len(response.data["recipients"]) == 20

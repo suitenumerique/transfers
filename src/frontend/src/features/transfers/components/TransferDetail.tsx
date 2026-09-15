@@ -1,10 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Spinner, UserAvatar } from "@gouvfr-lasuite/ui-kit";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
-import type { ScanStatus, TransferDetail as TransferDetailType } from "@/features/api/types";
+import type { ScanStatus, TransferDetail as TransferDetailType, TransferEvent } from "@/features/api/types";
 import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -17,6 +16,7 @@ import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { hasUnscannedFiles } from "../utils/scanStatus";
 import { FileItem } from "./FileItem";
+import { RecipientStatusList } from "./RecipientStatusList";
 import { TransferStatusBadge } from "./TransferStatusBadge";
 
 const EVENT_LABELS: Record<string, string> = {
@@ -33,18 +33,23 @@ const EVENT_LABELS: Record<string, string> = {
   file_deleted: "File {{filename}} deleted",
 };
 
+// What the row's tooltip shows on hover, from the event payload: the file
+// for a download, the address for a sent notification. Null when the
+// payload has nothing to add (or predates the field).
+function eventDetail(ev: TransferEvent): string | null {
+  const payload = ev.payload as Record<string, unknown>;
+  if (ev.event_type === "file_downloaded" && typeof payload.filename === "string") {
+    return payload.filename;
+  }
+  if (ev.event_type === "email_sent" && typeof payload.email === "string") {
+    return payload.email;
+  }
+  return null;
+}
+
 // Turn "amed.benarfa@email.fr" into "Amed Ben Arfa" — purely cosmetic so the
 // avatar picks a deterministic color per person. Falls back to the raw email
 // when the local-part is uninformative (single segment, digits-only, etc.).
-function displayNameFromEmail(email: string): string {
-  const local = email.split("@")[0] ?? "";
-  if (!local) return email;
-  const parts = local
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1));
-  return parts.length >= 2 ? parts.join(" ") : email;
-}
 
 export function TransferDetail({
   transfer,
@@ -52,7 +57,6 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const deactivateTransfer = useDeactivateTransfer();
   const hardDeleteTransfer = useHardDeleteTransfer();
   const navigate = useNavigate();
@@ -73,17 +77,9 @@ export function TransferDetail({
   const hardDeleteModal = useModal();
   const events = useTransferEvents(transfer.id);
 
-  // Refresh the parent's useTransfer query every 2s while a retry is in
-  // flight; the prop will update with the new recipient statuses.
-  useEffect(() => {
-    if (!isAwaitingRetry) return;
-    const id = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: ["transfers", transfer.id] });
-    }, 2000);
-    return () => clearInterval(id);
-  }, [isAwaitingRetry, queryClient, transfer.id]);
-
-  // Detect when the polled data shows the retry done.
+  // The recipients list below polls the transfer query itself while
+  // ``notifications_completed_at`` is null (resend clears it), so the prop
+  // updates with the new statuses; this only detects when the retry is done.
   useEffect(() => {
     if (!isAwaitingRetry) return;
     const current = transfer.notifications_completed_at;
@@ -114,6 +110,11 @@ export function TransferDetail({
   // link instead.
   const isEncrypted = transfer.encryption_chunk_size != null;
   const isPublicLink = transfer.sharing_mode === "link";
+  // Events recorded through a recipient's personal link carry their id;
+  // name them in the history instead of a generic "Recipient".
+  const recipientEmailById = new Map(
+    transfer.recipients.map((r) => [r.id, r.email]),
+  );
   // For encryption, ``size`` is the ciphertext sitting in S3. The user-facing
   // total should be the plaintext bytes they'll eventually save to disk.
   const totalSize = transfer.files.reduce(
@@ -388,36 +389,7 @@ export function TransferDetail({
               })}
             </span>
           </button>
-          {recipientsOpen && (
-            <ul className="transfer-detail__recipients-list">
-              {transfer.recipients.map((r) => {
-                const name = displayNameFromEmail(r.email);
-                const sent = r.email_sent_at !== null;
-                return (
-                  <li key={r.id} className="transfer-detail__recipient-row">
-                    <UserAvatar fullName={name} size="small" />
-                    <span className="transfer-detail__recipient-name">
-                      {name}
-                    </span>
-                    <span className="transfer-detail__recipient-email">
-                      &lt;{r.email}&gt;
-                    </span>
-                    <span
-                      className={`transfer-detail__recipient-status${
-                        sent
-                          ? " transfer-detail__recipient-status--sent"
-                          : " transfer-detail__recipient-status--failed"
-                      }`}
-                      title={sent ? t("Email sent") : t("Email not sent")}
-                      aria-label={sent ? t("Email sent") : t("Email not sent")}
-                    >
-                      {sent ? <Checkmark /> : <Warning />}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          {recipientsOpen && <RecipientStatusList transfer={transfer} />}
         </section>
       )}
 
@@ -574,18 +546,31 @@ export function TransferDetail({
                 ev.payload as Record<string, unknown>,
               );
               const by =
-                ev.actor_type === "agent" ? t("You") : t("Recipient");
+                ev.actor_type === "agent"
+                  ? t("You")
+                  : (recipientEmailById.get(ev.recipient_id ?? "") ??
+                    t("Recipient"));
+              const detail = eventDetail(ev);
+              const activity = (
+                <div className="transfer-detail__history-activity">
+                  <span
+                    className="transfer-detail__history-tile"
+                    aria-hidden="true"
+                  >
+                    <Folder />
+                  </span>
+                  <span>{label}</span>
+                </div>
+              );
               return (
                 <div key={ev.id} className="transfer-detail__history-row">
-                  <div className="transfer-detail__history-activity">
-                    <span
-                      className="transfer-detail__history-tile"
-                      aria-hidden="true"
-                    >
-                      <Folder />
-                    </span>
-                    <span>{label}</span>
-                  </div>
+                  {detail ? (
+                    <Tooltip content={detail} placement="top">
+                      {activity}
+                    </Tooltip>
+                  ) : (
+                    activity
+                  )}
                   <div className="transfer-detail__history-date">
                     <RelativeDate iso={ev.created_at} />
                   </div>

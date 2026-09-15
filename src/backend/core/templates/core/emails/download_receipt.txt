@@ -1,0 +1,10 @@
+{% load humanize_size %}Vos fichiers ont été téléchargés.
+
+{{ recipient_email }} a téléchargé {% if complete %}les fichiers{% else %}{{ downloaded_count }} {% if downloaded_count == 1 %}fichier{% else %}fichiers{% endif %} sur {{ total_count }}{% endif %} de votre transfert{% if transfer.title %} : {{ transfer.title }}{% endif %}, le {{ downloaded_date }} à {{ downloaded_time }}.
+
+{{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %} · {{ total_size|humanize_size }}
+{% for file in files %}- {{ file.filename }} · {{ file.plaintext_size|default:file.size|humanize_size }}{% if not complete %} · {% if file.downloaded %}téléchargé{% else %}non téléchargé{% endif %}{% endif %}
+{% endfor %}
+Voir le transfert : {{ detail_url }}
+
+Vous recevez ce message parce que vous avez demandé à être prévenu des téléchargements de ce transfert.

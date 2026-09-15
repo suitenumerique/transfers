@@ -10,6 +10,7 @@ from rest_framework import serializers
 from core import models
 from core.enums import SharingMode
 from core.services import encryption
+from core.services.recipient_activity import activity_by_recipient
 
 # URL-safe base64 alphabet, no padding required. The frontend ships exactly
 # 43 chars for a 256-bit key, but accept the padded 44-char form too so a
@@ -100,10 +101,80 @@ class UserWithoutAbilitiesSerializer(UserSerializer):
 
 
 class TransferRecipientSerializer(serializers.ModelSerializer):
+    """A recipient with its delivery / activity state.
+
+    ``status`` collapses what we can honestly observe into one word the UI
+    maps to an icon: ``sending`` (invitation task still running), ``failed``
+    (task done, this email never left), ``sent`` (relay accepted it — we
+    never know about mailbox delivery, so there is no "received"),
+    ``opened`` (they followed their personal link), ``downloaded`` (at least
+    one file; ``downloaded_file_count`` says how many). The activity map is
+    computed once per transfer by the parent serializer and handed down via
+    context, so a 50-recipient detail costs one events query, not fifty.
+    """
+
+    status = serializers.SerializerMethodField()
+    opened_at = serializers.SerializerMethodField()
+    downloaded_at = serializers.SerializerMethodField()
+    downloaded_file_count = serializers.SerializerMethodField()
+
     class Meta:
         model = models.TransferRecipient
-        fields = ["id", "email", "email_sent_at"]
+        fields = [
+            "id",
+            "email",
+            "email_sent_at",
+            "status",
+            "opened_at",
+            "downloaded_at",
+            "downloaded_file_count",
+        ]
         read_only_fields = fields
+
+    def _activity(self, obj):
+        activity = self.context.get("recipient_activity")
+        if activity is None:
+            # Standalone use (no parent to precompute): fall back to a query
+            # per transfer, cached on the context for sibling rows.
+            activity = activity_by_recipient(obj.transfer_id)
+            self.context["recipient_activity"] = activity
+        return activity.get(obj.id)
+
+    @extend_schema_field(
+        {
+            "type": "string",
+            "enum": ["sending", "failed", "sent", "opened", "downloaded"],
+        }
+    )
+    def get_status(self, obj) -> str:
+        if obj.email_sent_at is None:
+            transfer = self.context.get("recipient_transfer") or obj.transfer
+            return (
+                "sending" if transfer.notifications_completed_at is None else "failed"
+            )
+        activity = self._activity(obj)
+        if activity is None:
+            return "sent"
+        if activity.downloaded_file_ids:
+            return "downloaded"
+        if activity.opened_at is not None:
+            return "opened"
+        return "sent"
+
+    @extend_schema_field({"type": "string", "format": "date-time", "nullable": True})
+    def get_opened_at(self, obj):
+        activity = self._activity(obj)
+        return activity.opened_at if activity else None
+
+    @extend_schema_field({"type": "string", "format": "date-time", "nullable": True})
+    def get_downloaded_at(self, obj):
+        activity = self._activity(obj)
+        return activity.downloaded_at if activity else None
+
+    @extend_schema_field({"type": "integer"})
+    def get_downloaded_file_count(self, obj) -> int:
+        activity = self._activity(obj)
+        return len(activity.downloaded_file_ids) if activity else 0
 
 
 class TransferFileSerializer(serializers.ModelSerializer):
@@ -196,12 +267,20 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "files",
             "recipients",
             "auto_archive_on_download",
+            "notify_on_download",
             "pending_deletion_at",
             "deactivation_reason",
             "confidential",
             "encryption_chunk_size",
         ]
         read_only_fields = fields
+
+    def to_representation(self, instance):
+        # Precompute the per-recipient activity once for the nested
+        # recipient rows (see TransferRecipientSerializer._activity).
+        self.context["recipient_transfer"] = instance
+        self.context["recipient_activity"] = activity_by_recipient(instance.id)
+        return super().to_representation(instance)
 
 
 class DraftAddFileSerializer(serializers.Serializer):
@@ -370,6 +449,10 @@ class DraftFinalizeSerializer(serializers.Serializer):
     # delete + status DEACTIVATED) once every file has been downloaded at
     # least once.
     auto_archive_on_download = serializers.BooleanField(required=False, default=False)
+    # Opt-in: email the sender each time a recipient has downloaded every
+    # file. Email mode only in practice — attribution needs the per-recipient
+    # token that only the emailed link carries; accepted and stored either way.
+    notify_on_download = serializers.BooleanField(required=False, default=False)
     # Confidential transfers keep the decryption key out of our infra: the
     # recipient supplies it from the URL fragment (link) or by pasting it
     # (email / bare link). Non-confidential transfers post ``encryption_key``
@@ -505,6 +588,7 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "is_owner",
             "sharing_mode",
             "auto_archive_on_download",
+            "notify_on_download",
             "confidential",
             "encryption_chunk_size",
             "encryption_key",

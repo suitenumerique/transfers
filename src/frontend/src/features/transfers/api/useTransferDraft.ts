@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
+import { userFacingError } from "@/features/utils/user-facing-error";
 import type {
   ScanErrorKind,
   ScanStatus,
@@ -79,6 +80,7 @@ export interface FinalizeMetadata {
   recipients?: string[];
   sensitive?: boolean;
   auto_archive_on_download?: boolean;
+  notify_on_download?: boolean;
   // When true, the decryption key is NOT sent to the backend: the recipient
   // supplies it from the link fragment or by pasting it. When false (normal),
   // the key is posted at finalize so the backend can serve it to recipients
@@ -436,8 +438,9 @@ export function useTransferDraft(): TransferDraftHandle {
         // Don't leak an error state if the user explicitly aborted the whole
         // draft — the local row is already gone.
         if (!filesRef.current.some((f) => f.key === key)) return;
-        updateFile(key, { state: "error", error: String(err) });
-        setError(String(err));
+        const message = userFacingError(err);
+        updateFile(key, { state: "error", error: message });
+        setError(message);
         // Leave the draft alive and surface the errored row. The user
         // decides: click Delete on the bad row (retry by re-dropping) or
         // cancel the whole draft. Previously we tore down the draft
@@ -724,11 +727,9 @@ export function useTransferDraft(): TransferDraftHandle {
         }
         return resp.draft_id;
       } catch (err) {
-        updateFile(draftFile.key, {
-          state: "error",
-          error: String(err),
-        });
-        setError(String(err));
+        const message = userFacingError(err);
+        updateFile(draftFile.key, { state: "error", error: message });
+        setError(message);
         if (knownDraftId === null) {
           // The init attempt failed; clear the lock so the next drop can
           // try again rather than waiting forever on a rejected promise.
@@ -789,7 +790,7 @@ export function useTransferDraft(): TransferDraftHandle {
           // user sees why and can retry / remove.
           updateFile(draftFile.key, {
             state: "error",
-            error: err instanceof Error ? err.message : String(err),
+            error: userFacingError(err),
           });
         }
       })();

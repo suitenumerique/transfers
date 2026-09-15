@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, Loader, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { transferBaseUrl } from "../api/useDownload";
 import { hasUnscannedFiles } from "../utils/scanStatus";
+import { RecipientStatusList } from "./RecipientStatusList";
 
 function daysUntil(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
@@ -61,6 +62,16 @@ export function TransferSuccess({
     copyToClipboard(encryptionFragment ?? "", setKeyCopied);
 
   const isLink = transfer.sharing_mode === "link";
+  // Email mode lands here straight after finalize, while the invitation
+  // task is still running: the recipients list below shows each email
+  // flipping from "sending" to its outcome, so the sender never waits on
+  // a blank spinner page. Failures show on their row and are retried from
+  // the transfer page.
+  const sending = !isLink && transfer.notifications_completed_at === null;
+  const someFailed =
+    !isLink &&
+    !sending &&
+    transfer.recipients.some((r) => r.status === "failed");
   // Only true when *every* file was actually scanned clean — not the "skipped"
   // state of an AV-disabled instance, nor a "too_large" file that bypassed the
   // scan. Reassures the sender the whole transfer passed the virus check before
@@ -81,10 +92,14 @@ export function TransferSuccess({
   return (
     <div className="transfer-success" role="status">
       <div className="transfer-success__icon" aria-hidden="true">
-        {isLink ? <LinkIcon /> : <MailCheckFilled />}
+        {isLink ? <LinkIcon /> : sending ? <Loader /> : <MailCheckFilled />}
       </div>
       <h1 className="transfer-success__title">
-        {isLink ? t("Transfer ready") : t("Transfer sent")}
+        {isLink
+          ? t("Transfer ready")
+          : sending
+            ? t("Sending emails…")
+            : t("Transfer sent")}
       </h1>
       {scanned && (
         <p className="transfer-success__scan">
@@ -161,14 +176,26 @@ export function TransferSuccess({
       ) : (
         <>
           <p className="transfer-success__body transfer-success__body--email">
-            {t(
-              "The download email has been sent successfully. Your recipients have",
-            )}{" "}
+            {t("Your recipients have")}{" "}
             <strong>
               {t("{{count}} days", { count: daysUntil(transfer.expires_at) })}
             </strong>{" "}
             {t("to download your items.")}
           </p>
+          {someFailed && (
+            <Alert
+              type={VariantType.WARNING}
+              className="transfer-success__scan-alert"
+            >
+              {t(
+                "Some emails couldn't be sent. Open the transfer page to retry.",
+              )}
+            </Alert>
+          )}
+          <RecipientStatusList
+            transfer={transfer}
+            className="transfer-success__recipients"
+          />
           {transfer.confidential && encryptionFragment && (
             <div className="transfer-success__key-share">
               <p className="transfer-success__body">

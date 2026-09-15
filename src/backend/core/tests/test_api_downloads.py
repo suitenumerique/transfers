@@ -9,7 +9,7 @@ from django.utils import timezone
 
 import pytest
 
-from core.enums import TransferEventType, TransferStatus
+from core.enums import ScanStatus, TransferEventType, TransferStatus
 from core.factories import TransferFactory, TransferFileFactory, UserFactory
 from core.models import TransferEvent
 from core.tests.conftest import assert_single_event
@@ -46,6 +46,9 @@ class TestDownloadTransferView:
         assert response.data["is_owner"] is True
         # Even for the owner, the raw email must not leak into the payload.
         assert "owner_email" not in response.data
+        # The owner's own visits are never journaled, so the download page
+        # needs this flag to say that no receipt will follow.
+        assert response.data["notify_on_download"] is False
 
     def test_get_expired_transfer(self, api_client):
         t = TransferFactory(expires_at=timezone.now() - timedelta(hours=1))
@@ -168,3 +171,145 @@ class TestDownloadFileView:
         # Same audit semantics as the 302 path — FILE_DOWNLOADED is
         # recorded as soon as the URL is handed out.
         assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED)
+
+
+@pytest.mark.django_db
+class TestRecipientAttribution:
+    """``?r=<recipient token>`` on the emailed link is what turns anonymous
+    visitor events into per-recipient activity."""
+
+    def _recipient(self, transfer, email="dest@example.org"):
+        return transfer.recipients.create(email=email, email_sent_at=timezone.now())
+
+    def test_link_opened_is_attributed_to_the_recipient(
+        self, api_client, transfer_with_file
+    ):
+        t = transfer_with_file
+        recipient = self._recipient(t)
+
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{t.public_token}/?r={recipient.token}"
+        )
+
+        assert response.status_code == 200
+        event = TransferEvent.objects.get(
+            transfer_id=t.id, event_type=TransferEventType.LINK_OPENED
+        )
+        assert event.recipient_id == recipient.id
+
+    def test_bare_or_foreign_token_stays_anonymous(
+        self, api_client, transfer_with_file
+    ):
+        """A copied link (no token), a token from another transfer, or a
+        made-up one must neither error nor be attributed."""
+        t = transfer_with_file
+        other = TransferFactory()
+        foreign = other.recipients.create(email="x@example.org")
+
+        for query in ("", f"?r={foreign.token}", "?r=nope"):
+            response = api_client.get(f"{DOWNLOADS_URL}/{t.public_token}/{query}")
+            assert response.status_code == 200
+
+        events = TransferEvent.objects.filter(
+            transfer_id=t.id, event_type=TransferEventType.LINK_OPENED
+        )
+        assert events.count() == 3
+        assert all(e.recipient_id is None for e in events)
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    def test_file_downloaded_is_attributed(self, _sign, api_client, transfer_with_file):
+        t = transfer_with_file
+        recipient = self._recipient(t)
+        file_id = t.files.first().id
+
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{file_id}/download/?r={recipient.token}"
+        )
+
+        assert response.status_code == 302
+        event = TransferEvent.objects.get(
+            transfer_id=t.id, event_type=TransferEventType.FILE_DOWNLOADED
+        )
+        assert event.recipient_id == recipient.id
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    @patch("core.tasks.send_download_receipt_task.apply_async")
+    @patch("core.tasks.send_download_receipt_task.delay")
+    def test_receipt_queued_once_every_file_is_downloaded(
+        self,
+        delay,
+        apply_async,
+        _sign,
+        api_client,
+        transfer_with_file,
+        django_capture_on_commit_callbacks,
+        settings,
+    ):
+        """Opt-in transfer, two files. The first attributed download arms
+        the delayed "partial" receipt once (persisted claim); the download
+        that completes the set sends immediately; a bare link never
+        triggers anything."""
+        settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY = 1234
+        t = transfer_with_file
+        t.notify_on_download = True
+        t.save(update_fields=["notify_on_download"])
+        second = TransferFileFactory(
+            transfer=t,
+            upload_completed_at=timezone.now(),
+            scan_status=ScanStatus.CLEAN,  # the factory default is PENDING → 202
+        )
+        first = t.files.exclude(id=second.id).get()
+        recipient = self._recipient(t)
+        base = f"{DOWNLOADS_URL}/{t.public_token}/files"
+
+        # The receipt is enqueued on commit; the test transaction never
+        # commits, so run the captured callbacks explicitly.
+        def get(path):
+            with django_capture_on_commit_callbacks(execute=True):
+                return api_client.get(path)
+
+        # Anonymous download of the first file: nothing attributed, no receipt.
+        get(f"{base}/{first.id}/download/")
+        assert delay.call_count == 0
+        assert apply_async.call_count == 0
+
+        # First attributed download: one of two files → arm the delayed
+        # partial receipt with the configured countdown, nothing immediate.
+        get(f"{base}/{first.id}/download/?r={recipient.token}")
+        assert delay.call_count == 0
+        apply_async.assert_called_once_with(
+            args=(str(t.id), str(recipient.id)), countdown=1234
+        )
+
+        recipient.refresh_from_db()
+        assert recipient.delayed_receipt_armed_at is not None
+
+        # Any further incomplete download finds the claim taken: no second
+        # timer, whether it's the same file again or another one.
+        get(f"{base}/{first.id}/download/?r={recipient.token}")
+        assert apply_async.call_count == 1
+
+        get(f"{base}/{second.id}/download/?r={recipient.token}")
+        delay.assert_called_once_with(str(t.id), str(recipient.id))
+        assert apply_async.call_count == 1
+
+        # Re-downloading after the receipt was stamped must not re-queue.
+        recipient.download_notified_at = timezone.now()
+        recipient.save(update_fields=["download_notified_at"])
+        get(f"{base}/{second.id}/download/?r={recipient.token}")
+        assert delay.call_count == 1
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    @patch("core.tasks.send_download_receipt_task.delay")
+    def test_receipt_not_queued_without_opt_in(
+        self, delay, _sign, api_client, transfer_with_file
+    ):
+        t = transfer_with_file
+        recipient = self._recipient(t)
+        file_id = t.files.first().id
+
+        api_client.get(
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{file_id}/download/?r={recipient.token}"
+        )
+
+        assert delay.call_count == 0

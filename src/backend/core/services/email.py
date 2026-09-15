@@ -8,6 +8,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils import formats, timezone
 
+from core.services.recipient_activity import activity_for
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,19 +87,26 @@ def _common_context(base_url: str) -> dict:
     }
 
 
-def _send_multipart(*, subject, text_body, html_body, to):
+def _send_multipart(*, subject, text_body, html_body, to, connection=None):
     msg = EmailMultiAlternatives(
         subject=subject,
         body=text_body,
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=to,
+        # ``None`` makes Django open (and close) a fresh SMTP session for
+        # this one message; a batch sender passes a shared connection.
+        connection=connection,
     )
     msg.attach_alternative(html_body, "text/html")
     msg.send()
 
 
-def send_recipient_invitation(transfer, recipient):
+def send_recipient_invitation(transfer, recipient, connection=None):
     """Send a download link email to a single recipient.
+
+    ``connection`` is an already-open mail connection to reuse; the batch
+    task passes one so a 50-recipient transfer costs one SMTP handshake
+    (TCP + TLS + AUTH) instead of fifty.
 
     Multipart message — HTML body matching the design mock plus a
     plain-text fallback for clients that strip HTML or filter on text.
@@ -115,7 +124,10 @@ def send_recipient_invitation(transfer, recipient):
         else "Un agent"
     )
     sender_email = transfer.owner.email if transfer.owner else ""
-    download_url = f"{base_url}/t/{transfer.public_token}"
+    # ``?r=<token>`` is what lets the download page attribute this
+    # recipient's opens and downloads (every recipient shares the same
+    # public token). It grants nothing beyond what the link already does.
+    download_url = f"{base_url}/t/{transfer.public_token}?r={recipient.token}"
     files = list(transfer.files.all())
     total_size = sum(f.size for f in files)
     expires_at = timezone.localtime(transfer.expires_at)
@@ -145,5 +157,70 @@ def send_recipient_invitation(transfer, recipient):
         text_body=render_to_string("core/emails/recipient_invitation.txt", ctx),
         html_body=render_to_string("core/emails/recipient_invitation.html", ctx),
         to=[recipient.email],
+        connection=connection,
     )
-    logger.info("Sent invitation to %s for transfer %s", recipient.email, transfer.id)
+    logger.info(
+        "Sent invitation to recipient %s for transfer %s", recipient.id, transfer.id
+    )
+
+
+def send_download_receipt(transfer, recipient, connection=None):
+    """Tell the sender what ``recipient`` has downloaded. Sent once per
+    recipient (the task stamps ``download_notified_at`` before calling
+    this) and only when the sender opted in (``notify_on_download``).
+    Reports the state at send time: every file, or "n of N" for a
+    recipient who stopped partway (the delayed trigger)."""
+    owner = transfer.owner
+    if owner is None or not owner.email:
+        return
+    base_url = _public_base_url()
+    files = list(transfer.files.all())
+    total_size = sum(f.plaintext_size or f.size for f in files)
+    activity = activity_for(transfer.id, recipient.id)
+    for f in files:
+        f.downloaded = str(f.id) in activity.downloaded_file_ids
+    downloaded_count = sum(1 for f in files if f.downloaded)
+    complete = downloaded_count >= len(files)
+    downloaded_at = timezone.localtime(activity.downloaded_at or timezone.now())
+    detail_url = f"{base_url}/transfers/{transfer.id}"
+
+    if complete:
+        subject = f"{recipient.email} a téléchargé vos fichiers"
+    else:
+        noun = "fichier" if downloaded_count == 1 else "fichiers"
+        subject = (
+            f"{recipient.email} a téléchargé {downloaded_count} {noun} sur {len(files)}"
+        )
+    ctx = {
+        **_common_context(base_url),
+        "subject": subject,
+        "transfer": transfer,
+        "recipient_email": recipient.email,
+        "files": files,
+        "total_size": total_size,
+        "complete": complete,
+        "downloaded_count": downloaded_count,
+        "total_count": len(files),
+        "downloaded_date": formats.date_format(downloaded_at, "d/m/Y"),
+        "downloaded_time": downloaded_at.strftime("%Hh%M"),
+        "banner_label": "Vos fichiers ont été téléchargés.",
+        "banner_icon": "&#x2B07;",
+        "cta_url": detail_url,
+        "cta_label": "Voir le transfert",
+        "cta_icon": "&#x2197;",
+        "detail_url": detail_url,
+    }
+
+    _send_multipart(
+        subject=subject,
+        text_body=render_to_string("core/emails/download_receipt.txt", ctx),
+        html_body=render_to_string("core/emails/download_receipt.html", ctx),
+        to=[owner.email],
+        connection=connection,
+    )
+    logger.info(
+        "Sent download receipt to owner %s for transfer %s (recipient %s)",
+        owner.id,
+        transfer.id,
+        recipient.id,
+    )

@@ -12,10 +12,26 @@ export function transferBaseUrl(publicToken: string | null | undefined): string 
   return `${window.location.origin}/t/${publicToken}`;
 }
 
-export function useDownloadTransfer(token: string | undefined) {
+// The emailed link carries ``?r=<recipient token>`` so the backend can
+// attribute this visit's LINK_OPENED / FILE_DOWNLOADED events to one
+// recipient (everyone shares the same public token). Forward it on every
+// download-side call; a bare link simply has none.
+export function withRecipient(path: string, recipientToken?: string): string {
+  return recipientToken
+    ? `${path}?r=${encodeURIComponent(recipientToken)}`
+    : path;
+}
+
+export function useDownloadTransfer(
+  token: string | undefined,
+  recipientToken?: string,
+) {
   return useQuery({
-    queryKey: ["downloads", token],
-    queryFn: () => apiFetch<DownloadTransferFull>(`/downloads/${token}/`),
+    queryKey: ["downloads", token, recipientToken ?? null],
+    queryFn: () =>
+      apiFetch<DownloadTransferFull>(
+        withRecipient(`/downloads/${token}/`, recipientToken),
+      ),
     enabled: !!token,
     retry: false,
   });
@@ -26,9 +42,15 @@ export function useDownloadTransfer(token: string | undefined) {
 // attachment header (baked into the presigned URL) and hands off to its
 // native download manager — the current page stays put, no blob is buffered
 // in memory, and large files stream straight from S3 to disk.
-export function downloadFile(token: string, fileId: string): void {
+export function downloadFile(
+  token: string,
+  fileId: string,
+  recipientToken?: string,
+): void {
   const a = document.createElement("a");
-  a.href = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
+  a.href = apiUrl(
+    withRecipient(`/downloads/${token}/files/${fileId}/download/`, recipientToken),
+  );
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -44,10 +66,16 @@ export function downloadFile(token: string, fileId: string): void {
 // URL comes back with Content-Disposition: attachment, which can take a
 // few seconds on slow links / cold S3 regions. The old 5s window silently
 // cancelled downloads whose first byte arrived late.
-export function downloadFileInIframe(token: string, fileId: string): void {
+export function downloadFileInIframe(
+  token: string,
+  fileId: string,
+  recipientToken?: string,
+): void {
   const iframe = document.createElement("iframe");
   iframe.style.display = "none";
-  iframe.src = apiUrl(`/downloads/${token}/files/${fileId}/download/`);
+  iframe.src = apiUrl(
+    withRecipient(`/downloads/${token}/files/${fileId}/download/`, recipientToken),
+  );
   document.body.appendChild(iframe);
   setTimeout(() => iframe.remove(), 60_000);
 }

@@ -30,10 +30,15 @@ function getErrorReason(error: unknown): DownloadErrorReason {
 function DownloadPage() {
   const { t } = useTranslation();
   const { token } = Route.useParams();
+  // ``?r=<recipient token>`` from the emailed link — see useDownload.
+  const { r: recipientToken } = Route.useSearch();
   const config = useConfig();
   const { user } = useAuth();
 
-  const { data, isLoading, isError, error } = useDownloadTransfer(token);
+  const { data, isLoading, isError, error } = useDownloadTransfer(
+    token,
+    recipientToken,
+  );
 
   const renderContent = () => {
     if (isLoading) {
@@ -54,7 +59,14 @@ function DownloadPage() {
         <p className="download-page__status">{messages[reason]}</p>
       );
     }
-    return <DownloadView transfer={data} token={token!} isOwner={data.is_owner} />;
+    return (
+      <DownloadView
+        transfer={data}
+        token={token!}
+        recipientToken={recipientToken}
+        isOwner={data.is_owner}
+      />
+    );
   };
 
   return (
@@ -103,4 +115,6 @@ function DownloadPage() {
 
 export const Route = createFileRoute("/t/$token")({
   component: DownloadPage,
+  validateSearch: (search: Record<string, unknown>): { r?: string } =>
+    typeof search.r === "string" && search.r ? { r: search.r } : {},
 });
