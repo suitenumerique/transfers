@@ -1882,6 +1882,48 @@ class TestReapStalePendingScans:
         submit = self._reap(settings)
         submit.assert_not_called()
 
+    def test_row_re_armed_between_read_and_claim_is_not_enqueued(self, user, settings):
+        """/rescan/ re-arming the same file while the reaper works must not
+        yield two scans: the reaper's claim is conditional on the marker it
+        read, so a stamp bumped in between makes it skip the enqueue.
+
+        ``scan_wait_seconds`` runs after the candidate read and before the
+        claim — hooking it is a deterministic way to move the stamp in that
+        window."""
+        from core.tasks import reap_stale_pending_scans_task
+
+        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_PENDING_REAP_MINUTES = 15
+        tf = self._file(user, submitted_ago_minutes=60)
+
+        def rearm_meanwhile(_size):
+            TransferFile.objects.filter(id=tf.id).update(
+                scan_submitted_at=timezone.now()
+            )
+            return 0  # stale by the budget, so the reaper does try to claim
+
+        with (
+            patch("core.tasks.scan_wait_seconds", side_effect=rearm_meanwhile),
+            patch("core.tasks.submit_scan_task.delay") as submit,
+        ):
+            reap_stale_pending_scans_task()
+        submit.assert_not_called()
+
+    def test_enqueue_failure_gives_the_stamp_back(self, user, settings):
+        """A broker rejection must leave the row reapable on the next tick,
+        not parked behind a fresh stamp for a whole budget."""
+        from core.tasks import reap_stale_pending_scans_task
+
+        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_PENDING_REAP_MINUTES = 15
+        tf = self._file(user, submitted_ago_minutes=60)
+        before = tf.scan_submitted_at
+        with patch("core.tasks.submit_scan_task.delay", side_effect=OSError("broker")):
+            with pytest.raises(OSError):
+                reap_stale_pending_scans_task()
+        tf.refresh_from_db()
+        assert tf.scan_submitted_at == before
+
     def test_bumped_timestamp_keeps_next_tick_from_re_reaping(self, user, settings):
         """A single stale row is re-enqueued on the first tick and left alone on
         the second, back-to-back — the re-enqueue bumps ``scan_submitted_at``

@@ -8,7 +8,7 @@ import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
   ensureEncryptionServiceWorker,
-  onDownloadStreaming,
+  onDownloadNotice,
   registerEncryptionKey,
   startServiceWorkerKeepalive,
   streamingDownloadUrl,
@@ -92,29 +92,35 @@ export function DownloadView({
   // No timer: removing the iframe before the first byte aborts the
   // request, which on a slow link is exactly when a 25 MiB first chunk
   // is still downloading.
-  const [preparingIds, setPreparingIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  // Keyed by a per-click request id (also in the iframe URL), so a notice
+  // from the SW is matched to this click only — never to another tab's or
+  // an earlier click's download of the same file.
+  const [pending, setPending] = useState<Map<string, string>>(() => new Map());
   const iframesRef = useRef<Map<string, HTMLIFrameElement>>(new Map());
-  const markPreparing = (fileId: string, on: boolean) =>
-    setPreparingIds((prev) => {
-      if (prev.has(fileId) === on) return prev;
-      const next = new Set(prev);
-      if (on) next.add(fileId);
-      else next.delete(fileId);
+  const preparingIds = new Set(pending.values());
+  const settle = (requestId: string) =>
+    setPending((prev) => {
+      if (!prev.has(requestId)) return prev;
+      const next = new Map(prev);
+      next.delete(requestId);
       return next;
     });
-  const dropIframe = (fileId: string) => {
-    const iframe = iframesRef.current.get(fileId);
+  const dropIframe = (requestId: string) => {
+    const iframe = iframesRef.current.get(requestId);
     if (!iframe) return;
-    iframesRef.current.delete(fileId);
+    iframesRef.current.delete(requestId);
     iframe.remove();
   };
   useEffect(
     () =>
-      onDownloadStreaming((fileId) => {
-        markPreparing(fileId, false);
-        setTimeout(() => dropIframe(fileId), 5_000);
+      onDownloadNotice((notice) => {
+        if (!iframesRef.current.has(notice.requestId)) return; // not ours
+        settle(notice.requestId);
+        if (notice.kind === "failed") {
+          dropIframe(notice.requestId);
+        } else {
+          setTimeout(() => dropIframe(notice.requestId), 5_000);
+        }
       }),
     [],
   );
@@ -395,8 +401,8 @@ export function DownloadView({
         return;
       }
       if (!ok) return;
-      markPreparing(file.id, true);
-      dropIframe(file.id);
+      const requestId = crypto.randomUUID();
+      setPending((prev) => new Map(prev).set(requestId, file.id));
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(
@@ -404,9 +410,10 @@ export function DownloadView({
         file.id,
         file.filename,
         recipientToken,
+        requestId,
       );
       document.body.appendChild(iframe);
-      iframesRef.current.set(file.id, iframe);
+      iframesRef.current.set(requestId, iframe);
     } else {
       downloadFile(token, file.id, recipientToken);
     }

@@ -733,21 +733,20 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     < scan_wait_seconds(f.size)
                 ):
                     continue
-                if is_transient:
-                    # Mirror the finalize gate: a transient error goes back to
-                    # PENDING before re-submitting.
-                    f.scan_status = ScanStatus.PENDING
-                    f.scan_error_kind = ""
-                # Re-arm the marker, else finalize thinks it's still in flight.
-                f.scan_submitted_at = timezone.now()
-                f.save(
-                    update_fields=[
-                        "scan_status",
-                        "scan_error_kind",
-                        "scan_submitted_at",
-                        "updated_at",
-                    ]
+                # Claim the row with a conditional UPDATE on the marker we
+                # read: the reaper may re-arm the same file concurrently, and
+                # only one of the two must enqueue. Also resets a transient
+                # error to PENDING (the finalize gate expects that).
+                claimed = models.TransferFile.objects.filter(
+                    id=f.id, scan_submitted_at=f.scan_submitted_at
+                ).update(
+                    scan_status=ScanStatus.PENDING,
+                    scan_error_kind="",
+                    scan_submitted_at=now,
+                    updated_at=now,
                 )
+                if not claimed:
+                    continue
                 transaction.on_commit(lambda fid=str(f.id): submit_scan_task.delay(fid))
                 rescanned.append(str(f.id))
 

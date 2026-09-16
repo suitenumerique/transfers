@@ -863,22 +863,6 @@
     overflow-y: auto;
   }
 
-  // Icon ring used by the uploader for indeterminate Fichiers import
-  // spinners. Stays inside `.transfer-form` because only the upload flow
-  // needs it; the recap never shows progress.
-  .file-item__ring {
-    &--spin {
-      animation: transfer-form__file-ring-spin 1s linear infinite;
-      transform-origin: center;
-    }
-  }
-
-  @keyframes transfer-form__file-ring-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   // The upload-flow extras (percent caption, error caption) sit inline
   // after the size separator via the shared `FileItem`. Coloring is
   // context-specific so it stays in `.transfer-form`.
@@ -1677,4 +1661,18 @@
 .transfer-success__recipients {
   width: 100%;
   margin: var(--c--globals--spacings--md) 0 var(--c--globals--spacings--lg);
+}
+
+// Indeterminate ring used by the Fichiers-import file rows and by
+// ``ButtonSpinner`` (submit button, download buttons on the recipient
+// page). Global: the recipient page is not inside ``.transfer-form``.
+.file-item__ring--spin {
+  animation: file-item__ring-spin 1s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes file-item__ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
