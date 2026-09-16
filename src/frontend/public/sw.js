@@ -255,14 +255,17 @@ self.addEventListener("fetch", (event) => {
       })
       .then((response) => {
         // Nothing will stream for an error response: tell the page so it
-        // stops showing "preparing…" and drops the iframe.
+        // stops showing "preparing…" and drops the iframe. Kept alive by
+        // waitUntil so the worker isn't torn down before the message goes.
         if (response.status >= 400) {
-          notifyClients({
-            type: "encryption-download-failed",
-            requestId,
-            fileId,
-            status: response.status,
-          });
+          event.waitUntil(
+            notifyClients({
+              type: "encryption-download-failed",
+              requestId,
+              fileId,
+              status: response.status,
+            }),
+          );
         }
         return response;
       }),
@@ -298,10 +301,18 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   //
   // ``apiOrigin`` is empty in prod (Caddy proxies /api/* same-origin) and
   // absolute in dev (backend on a different port).
+  // A ranged re-fetch is a resume of an interrupted download, not a new
+  // one: say so, and the backend lets it through on a one-shot transfer
+  // whose bytes are still in their post-deactivation grace window.
+  const requestedRange = parseRange(
+    request && request.headers.get("range"),
+    meta.plaintextSize,
+  );
   const backendUrl =
     (entry.apiOrigin || "") +
     `${API_PATH}/downloads/${token}/files/${fileId}/download/?as=json` +
-    (recipientToken ? `&r=${encodeURIComponent(recipientToken)}` : "");
+    (recipientToken ? `&r=${encodeURIComponent(recipientToken)}` : "") +
+    (requestedRange && requestedRange.start > 0 ? "&resume=1" : "");
   const meta_resp = await fetch(backendUrl, { credentials: "include" });
   if (!meta_resp.ok) {
     return new Response("Failed to negotiate download URL.", {
@@ -312,12 +323,25 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   if (!presignedUrl) {
     return new Response("Backend returned no download URL.", { status: 502 });
   }
-  // Resumable: a "Range: bytes=START-END" request (the browser's download
-  // manager retrying a broken download) is served as a 206. Chunks are
+  // A "Range: bytes=START-END" request is served as a 206: chunks are
   // independent AES-GCM blocks, so we fetch S3 from the chunk that holds
   // START, decrypt from that part number, and drop the plaintext before
   // START. Anything unparseable falls back to the full 200 response.
-  const range = parseRange(request && request.headers.get("range"), meta.plaintextSize);
+  //
+  // The browser's download manager uses this to pause/resume. Chrome
+  // routes the resume through the worker and it works. Firefox's download
+  // manager never talks to a worker (its pause/resume/retry re-request the
+  // URL with the system principal, outside any page), so those land on
+  // the static server whatever is advertised here; see
+  // docs/ENCRYPTION.md. Resumability needs a validator: the ETag below is
+  // stable per file, and a resume whose If-Range names another entity
+  // gets the whole file again rather than a mismatched tail.
+  const etag = '"' + fileId + "-" + meta.plaintextSize + '"';
+  const ifRange = request && request.headers.get("if-range");
+  const range =
+    ifRange && ifRange !== etag
+      ? null
+      : parseRange(request && request.headers.get("range"), meta.plaintextSize);
   const startChunk = range ? Math.floor(range.start / meta.chunkSize) : 0;
   const ciphertextOffset = startChunk * (meta.chunkSize + OVERHEAD);
   const upstream = await fetch(presignedUrl, {
@@ -350,13 +374,20 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
     "Content-Disposition":
       "attachment; filename=" + rfc5987FilenameStar(meta.filename),
     "Accept-Ranges": "bytes",
+    ETag: etag,
     // Tell the browser not to cache the decrypted stream — and irrelevant
     // anyway because the URL is one-shot per click.
     "Cache-Control": "no-store",
   };
+  // The browser cancelling the body (download paused or cancelled from
+  // its download manager) is reported to the page: on Firefox the
+  // recipient must restart from the page, and this is the only signal
+  // the page ever gets of it.
+  const onCancel = () =>
+    notifyClients({ type: "encryption-download-interrupted", requestId, fileId });
   if (!range) {
     headers["Content-Length"] = String(meta.plaintextSize);
-    return new Response(decrypted, { headers });
+    return new Response(watchCancel(decrypted, onCancel), { headers });
   }
   const skip = range.start - startChunk * meta.chunkSize;
   const length = range.end - range.start + 1;
@@ -364,7 +395,27 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   headers["Content-Length"] = String(length);
   headers["Content-Range"] =
     "bytes " + range.start + "-" + range.end + "/" + meta.plaintextSize;
-  return new Response(decrypted, { status: 206, headers });
+  return new Response(watchCancel(decrypted, onCancel), { status: 206, headers });
+}
+
+// Pass ``readable`` through unchanged and call ``onCancel`` if the
+// consumer cancels it (a pipe forwards the cancel upstream, so the
+// decrypt transform and the S3 fetch stop too). A normal end-of-stream
+// or an upstream error is not a cancel.
+function watchCancel(readable, onCancel) {
+  const reader = readable.getReader();
+  return new ReadableStream({
+    pull(controller) {
+      return reader.read().then(({ done, value }) => {
+        if (done) controller.close();
+        else controller.enqueue(value);
+      });
+    },
+    cancel(reason) {
+      onCancel();
+      return reader.cancel(reason);
+    },
+  });
 }
 
 // "bytes=START-END" / "bytes=START-" → { start, end } clamped to the file,
@@ -529,12 +580,13 @@ async function decryptOne(key, ciphertextChunk, additionalData) {
 }
 
 // Tell every open page of this origin something about a download in
-// flight. Used once per file, when its first decrypted bytes go out: that
-// is when the browser's download UI appears (Firefox only shows it once
-// body bytes arrive, Chrome on headers), so the page can stop showing
-// "preparing…" for that file.
+// flight: its first decrypted bytes going out (that is when the browser's
+// download UI appears — Firefox only shows it once body bytes arrive,
+// Chrome on headers — so the page can stop showing "preparing…"), an
+// error answered instead of a stream, or the browser cancelling the
+// stream midway.
 function notifyClients(message) {
-  self.clients
+  return self.clients
     .matchAll({ type: "window", includeUncontrolled: true })
     .then((clients) => {
       for (const client of clients) client.postMessage(message);

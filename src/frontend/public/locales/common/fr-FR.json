@@ -152,6 +152,7 @@
   "Transfer deactivated": "Transfert désactivé",
   "Deactivate after all files are downloaded": "Désactiver après téléchargement complet",
   "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.": "Dès que chaque fichier a été téléchargé au moins une fois, le transfert est automatiquement désactivé : le lien de téléchargement cesse de fonctionner et les fichiers sont supprimés de nos serveurs.",
+  "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.": "Le téléchargement de {{names}} a été interrompu. Sur Firefox, « Reprendre » et « Réessayer » depuis le panneau des téléchargements ne fonctionnent pas : cliquez à nouveau sur le fichier ici pour le relancer.",
   "Single-use link. Deactivates after full download.": "Lien à usage unique. Se désactive après téléchargement complet.",
   "Single-use link. Deactivates after full download by another user.": "Lien à usage unique. Se désactive après téléchargement complet par un autre utilisateur.",
   "More information": "Plus d’informations",
@@ -218,5 +219,6 @@
   "The upload failed. Remove the file and add it again.": "L'envoi a échoué. Retirez le fichier et ajoutez-le à nouveau.",
   "Something went wrong. Try again.": "Une erreur est survenue. Réessayez.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "Le service est injoignable pour le moment. Vérifiez votre connexion, ou réessayez dans un instant.",
-  "Retry": "Réessayer"
+  "Retry": "Réessayer",
+  "Download resumed": "Téléchargement repris"
 }

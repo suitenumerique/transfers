@@ -541,9 +541,12 @@ export function TransferDetail({
               </div>
             </div>
             {events.data.results.map((ev) => {
+              const payload = ev.payload as Record<string, unknown>;
               const label = t(
-                EVENT_LABELS[ev.event_type] ?? ev.event_type,
-                ev.payload as Record<string, unknown>,
+                ev.event_type === "file_downloaded" && payload.resume === true
+                  ? "Download resumed"
+                  : (EVENT_LABELS[ev.event_type] ?? ev.event_type),
+                payload,
               );
               const by =
                 ev.actor_type === "agent"

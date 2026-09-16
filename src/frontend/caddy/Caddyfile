@@ -91,13 +91,21 @@
 		# client-side router (TanStack Router) can resolve the path. Scoped to
 		# requests that accept HTML, so missing static assets (JS/CSS chunks)
 		# keep their 404 instead of getting a 200 index.html — chunk-load
-		# failures and stale-cache issues stay visible.
-		@spa_404 expression `{err.status_code} == 404`
+		# failures and stale-cache issues stay visible. /_dl/* is excluded
+		# too: those URLs only exist inside the decryption Service Worker, so
+		# one reaching Caddy means the worker didn't intercept it, and a
+		# plain 404 says so where a silent index.html in a hidden iframe
+		# wouldn't.
+		@spa_404 expression `{err.status_code} == 404 && !path('/_dl/*')`
 		handle @spa_404 {
 			@html header Accept *text/html*
 			handle @html {
 				rewrite * /index.html
-				file_server
+				# 200, not the 404 we arrived with: this *is* the page for
+				# that URL as far as the browser, caches and crawlers go.
+				file_server {
+					status 200
+				}
 			}
 		}
 	}

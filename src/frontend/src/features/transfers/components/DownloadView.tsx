@@ -19,6 +19,11 @@ import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { ButtonSpinner } from "./ButtonSpinner";
 import { FileItem } from "./FileItem";
 
+// Firefox's download manager re-requests a paused or retried download
+// outside any page (never through the Service Worker); see interruptedIds.
+const IS_FIREFOX =
+  typeof navigator !== "undefined" && /\bFirefox\//.test(navigator.userAgent);
+
 // The "copy link" pill hands the recipient a link to forward. Drop the
 // personal ``?r=`` first: a forwarded link would otherwise attribute the
 // next person's downloads to the original recipient. The fragment (key)
@@ -97,6 +102,18 @@ export function DownloadView({
   // an earlier click's download of the same file.
   const [pending, setPending] = useState<Map<string, string>>(() => new Map());
   const iframesRef = useRef<Map<string, HTMLIFrameElement>>(new Map());
+  // Every request id this page issued (→ file id), kept after the iframe
+  // is gone: the SW's "interrupted" notice comes minutes later, when the
+  // recipient pauses or cancels from the browser's download manager.
+  const requestsRef = useRef<Map<string, string>>(new Map());
+  // Files whose download was interrupted from the download manager. Only
+  // surfaced on Firefox: its Resume/Retry re-request the URL outside any
+  // page, which no Service Worker sees, so the recipient has to restart
+  // from here (docs/ENCRYPTION.md, "Interrupted downloads"). Chrome
+  // resumes through the worker on its own.
+  const [interruptedIds, setInterruptedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const preparingIds = new Set(pending.values());
   const settle = (requestId: string) =>
     setPending((prev) => {
@@ -114,7 +131,13 @@ export function DownloadView({
   useEffect(
     () =>
       onDownloadNotice((notice) => {
-        if (!iframesRef.current.has(notice.requestId)) return; // not ours
+        const fileId = requestsRef.current.get(notice.requestId);
+        if (!fileId) return; // not ours
+        if (notice.kind === "interrupted") {
+          if (!IS_FIREFOX) return;
+          setInterruptedIds((prev) => new Set(prev).add(fileId));
+          return;
+        }
         settle(notice.requestId);
         if (notice.kind === "failed") {
           dropIframe(notice.requestId);
@@ -124,13 +147,19 @@ export function DownloadView({
       }),
     [],
   );
+  // Clicks belong to the transfer they were made on: drop them (and
+  // their iframes) when the token changes in place, or on unmount.
   useEffect(() => {
     const iframes = iframesRef.current;
+    const requests = requestsRef.current;
     return () => {
       for (const iframe of iframes.values()) iframe.remove();
       iframes.clear();
+      requests.clear();
+      setPending(new Map());
+      setInterruptedIds(new Set());
     };
-  }, []);
+  }, [token]);
   // Tracks whether the SW currently holds this transfer's key, so the unmount
   // cleanup only unregisters when there's something to drop (set by both the
   // auto-effect and the paste handler).
@@ -267,10 +296,9 @@ export function DownloadView({
     };
   }, []);
 
-  // Drop the key from the SW registry when the token goes away (unmount, or
-  // in-place token change). Covers both the auto path and a pasted key. The
-  // SW outlives the page and could be reused for another transfer in the
-  // same tab, so stale keys are needless retention. Also clear the
+  // Drop the key from the SW (its in-memory registry and its IndexedDB
+  // copy) when the token goes away (unmount, or in-place token change).
+  // Covers both the auto path and a pasted key. Also clear the page's
   // in-memory copy: keeping it around after the page is gone would let a
   // stray ``triggerDownload`` (from a lingering handler on a detached DOM
   // node, etc.) re-register a key the user was done with.
@@ -402,7 +430,14 @@ export function DownloadView({
       }
       if (!ok) return;
       const requestId = crypto.randomUUID();
+      requestsRef.current.set(requestId, file.id);
       setPending((prev) => new Map(prev).set(requestId, file.id));
+      setInterruptedIds((prev) => {
+        if (!prev.has(file.id)) return prev;
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(
@@ -528,6 +563,23 @@ export function DownloadView({
         <Alert type={VariantType.INFO} className="download-view__owner-alert">
           {t(
             "You are signed in as the sender: your own visits and downloads are not recorded, so this recipient's status won't change and no download receipt will be sent. Open the link in a private window to test it.",
+          )}
+        </Alert>
+      )}
+
+      {interruptedIds.size > 0 && (
+        <Alert
+          type={VariantType.WARNING}
+          className="download-view__interrupted-alert"
+        >
+          {t(
+            "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.",
+            {
+              names: transfer.files
+                .filter((f) => interruptedIds.has(f.id))
+                .map((f) => f.filename)
+                .join(", "),
+            },
           )}
         </Alert>
       )}
