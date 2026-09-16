@@ -136,7 +136,8 @@ self.addEventListener("message", (event) => {
     // Always send back an ack — success or failure — so the page can
     // resolve the in-flight handshake promise either way instead of
     // hanging forever (e.g. malformed key bytes ⇒ importKey rejects).
-    void registerKey(data)
+    event.waitUntil(
+      registerKey(data)
       .then(() => {
         if (event.source && "postMessage" in event.source) {
           event.source.postMessage({
@@ -153,7 +154,8 @@ self.addEventListener("message", (event) => {
             message: err && err.message ? String(err.message) : "register failed",
           });
         }
-      });
+      }),
+    );
   } else if (data.type === "encryption-unregister") {
     REGISTRY.delete(data.token);
     event.waitUntil(forgetEntry(data.token));
@@ -232,24 +234,42 @@ self.addEventListener("fetch", (event) => {
   // Recipient attribution token from the emailed link, forwarded verbatim
   // to the backend's download endpoint. Absent on a bare link.
   const recipientToken = url.searchParams.get("r");
+  // Per-click id the page put in the URL; echoed in the notices below so
+  // the page matches them to its own pending download and not to another
+  // tab's (or an earlier click's) request for the same file.
+  const requestId = url.searchParams.get("dl") || "";
   // Wrap in a top-level try/catch: an unhandled throw inside handleDownload
   // makes respondWith() reject, and Firefox reports that as an opaque
   // "ServiceWorker … encountered an unexpected error" with no way to know
   // whether it's a network hiccup, a decrypt failure, or a bug. A readable
   // Response with the message keeps diagnostics possible.
   event.respondWith(
-    handleDownload(token, fileId, recipientToken, event.request).catch((err) => {
-      const message =
-        (err && err.message) || "Unexpected error while streaming the download.";
-      return new Response(message, {
-        status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
-    }),
+    handleDownload(token, fileId, recipientToken, requestId, event.request)
+      .catch((err) => {
+        const message =
+          (err && err.message) || "Unexpected error while streaming the download.";
+        return new Response(message, {
+          status: 500,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      })
+      .then((response) => {
+        // Nothing will stream for an error response: tell the page so it
+        // stops showing "preparing…" and drops the iframe.
+        if (response.status >= 400) {
+          notifyClients({
+            type: "encryption-download-failed",
+            requestId,
+            fileId,
+            status: response.status,
+          });
+        }
+        return response;
+      }),
   );
 });
 
-async function handleDownload(token, fileId, recipientToken, request) {
+async function handleDownload(token, fileId, recipientToken, requestId, request) {
   const entry = REGISTRY.get(token) || (await loadEntry(token));
   if (!entry) {
     // Neither in memory nor in the store: the page never registered this
@@ -316,7 +336,14 @@ async function handleDownload(token, fileId, recipientToken, request) {
   }
 
   let decrypted = upstream.body.pipeThrough(
-    decryptStream(entry.key, meta.chunkSize, meta.plaintextSize, fileId, startChunk + 1),
+    decryptStream(
+      entry.key,
+      meta.chunkSize,
+      meta.plaintextSize,
+      fileId,
+      startChunk + 1,
+      requestId,
+    ),
   );
   const headers = {
     "Content-Type": meta.mimeType,
@@ -370,11 +397,22 @@ function sliceStream(skip, length) {
       if (piece.length > remaining) piece = piece.subarray(0, remaining);
       remaining -= piece.length;
       controller.enqueue(piece);
+      // Range served in full: close our side and error the writable one,
+      // which cancels the decrypt transform and the S3 fetch behind it
+      // instead of decrypting the rest of the file into the void.
+      if (remaining <= 0) controller.terminate();
     },
   });
 }
 
-function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId, startPart = 1) {
+function decryptStream(
+  cryptoKey,
+  chunkSize,
+  plaintextSize,
+  fileId,
+  startPart = 1,
+  requestId = "",
+) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
   // Each chunk's AAD is `${fileId}:${partNumber}:${parts}` and must match
@@ -412,7 +450,7 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId, startPart = 
     controller.enqueue(plain);
     if (!streaming) {
       streaming = true;
-      notifyClients({ type: "encryption-download-streaming", fileId });
+      notifyClients({ type: "encryption-download-streaming", requestId, fileId });
     }
   };
 

@@ -534,21 +534,33 @@ def reap_stale_pending_scans_task():
     # (download + decrypt + clamd stream all scale with size), so it only
     # counts as lost past its size-based budget.
     stale = [
-        file_id
+        (file_id, submitted_at)
         for file_id, size, submitted_at in candidates
         if (now - submitted_at).total_seconds() >= scan_wait_seconds(size)
     ]
 
     count = 0
-    for file_id in stale:
-        submit_scan_task.delay(str(file_id))
-        # Bump the timestamp only after the enqueue succeeds so the row
-        # stays visible to the next tick if the broker rejected us. The
-        # updated value keeps the same row from being re-reaped on every
-        # subsequent tick while the (re-submitted) scan is running.
-        TransferFile.objects.filter(id=file_id).update(
-            scan_submitted_at=now, updated_at=now
-        )
+    for file_id, submitted_at in stale:
+        # Claim before enqueueing, with a conditional UPDATE on the marker
+        # we read: /rescan/ may re-arm the same file concurrently and only
+        # one of the two must enqueue. The new stamp also keeps the row out
+        # of the next ticks while the re-submitted scan runs.
+        claimed = TransferFile.objects.filter(
+            id=file_id,
+            scan_status=ScanStatus.PENDING,
+            scan_submitted_at=submitted_at,
+        ).update(scan_submitted_at=now, updated_at=now)
+        if not claimed:
+            continue
+        try:
+            submit_scan_task.delay(str(file_id))
+        except Exception:
+            # Broker rejected us: give the stamp back so the next tick sees
+            # the row again instead of waiting a full budget.
+            TransferFile.objects.filter(id=file_id, scan_submitted_at=now).update(
+                scan_submitted_at=submitted_at
+            )
+            raise
         count += 1
 
     if count:

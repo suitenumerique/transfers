@@ -202,22 +202,34 @@ export function unregisterEncryptionKey(token: string): void {
   }
 }
 
-// Subscribe to the SW's "first decrypted bytes of <fileId> are on their
-// way" notice (see notifyClients in sw.js). Returns the unsubscribe.
-export function onDownloadStreaming(
-  callback: (fileId: string) => void,
+export type DownloadNotice =
+  | { kind: "streaming"; requestId: string; fileId: string }
+  | { kind: "failed"; requestId: string; fileId: string; status: number };
+
+// Subscribe to the SW's per-download notices (see notifyClients in
+// sw.js): "streaming" once a request's first decrypted bytes are on their
+// way, "failed" when it answered an error and nothing will stream. The
+// notices are broadcast to every page of the origin; callers match
+// ``requestId`` against their own clicks. Returns the unsubscribe.
+export function onDownloadNotice(
+  callback: (notice: DownloadNotice) => void,
 ): () => void {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     return () => {};
   }
   const listener = (event: MessageEvent) => {
     const data = event.data;
-    if (
-      data &&
-      data.type === "encryption-download-streaming" &&
-      typeof data.fileId === "string"
-    ) {
-      callback(data.fileId);
+    if (!data || typeof data.fileId !== "string") return;
+    const requestId = typeof data.requestId === "string" ? data.requestId : "";
+    if (data.type === "encryption-download-streaming") {
+      callback({ kind: "streaming", requestId, fileId: data.fileId });
+    } else if (data.type === "encryption-download-failed") {
+      callback({
+        kind: "failed",
+        requestId,
+        fileId: data.fileId,
+        status: typeof data.status === "number" ? data.status : 0,
+      });
     }
   };
   navigator.serviceWorker.addEventListener("message", listener);
@@ -233,11 +245,17 @@ export function streamingDownloadUrl(
   fileId: string,
   filename: string,
   recipientToken?: string,
+  // Per-click id echoed in the SW's notices (see onDownloadNotice).
+  requestId?: string,
 ): string {
   const path = `/_dl/${token}/${fileId}/${encodeURIComponent(filename)}`;
+  const params = new URLSearchParams();
   // The SW forwards ``r`` to the backend so the download is attributed to
   // this recipient, same as the plaintext path.
-  return recipientToken ? `${path}?r=${encodeURIComponent(recipientToken)}` : path;
+  if (recipientToken) params.set("r", recipientToken);
+  if (requestId) params.set("dl", requestId);
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 // Firefox terminates an "idle" SW after ~30s (Chrome's behaviour is
