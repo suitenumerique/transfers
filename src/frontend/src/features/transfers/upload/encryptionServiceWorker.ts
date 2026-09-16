@@ -54,8 +54,23 @@ export async function ensureEncryptionServiceWorker(): Promise<ServiceWorker | n
   // doesn't try to postMessage before there's a recipient. Bounded so a
   // worker that never claims doesn't trap the caller forever — null lets
   // DownloadView fall through to its error state.
+  //
+  // One case needs no waiting: a registration that already existed, is
+  // active with nothing installing, and still isn't controlling us. That
+  // is a hard reload (Ctrl+Shift+R bypasses the worker for the page and
+  // everything it loads, iframes included); no controllerchange will ever
+  // come, so go straight to the recovery reload instead of showing
+  // "preparing…" for the whole wait first.
+  const hardReloaded =
+    !navigator.serviceWorker.controller &&
+    !!existing &&
+    !!reg.active &&
+    !reg.installing &&
+    !reg.waiting;
   if (!navigator.serviceWorker.controller) {
-    const controlled = await new Promise<boolean>((resolve) => {
+    const controlled = hardReloaded
+      ? false
+      : await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => resolve(false), CONTROLLER_WAIT_MS);
       navigator.serviceWorker.addEventListener(
         "controllerchange",
