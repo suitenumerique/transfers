@@ -8,6 +8,7 @@ import { RelativeDate } from "@/features/ui/components/relative-date";
 import { downloadFile, downloadFileInIframe } from "../api/useDownload";
 import {
   ensureEncryptionServiceWorker,
+  onDownloadStreaming,
   registerEncryptionKey,
   startServiceWorkerKeepalive,
   streamingDownloadUrl,
@@ -82,6 +83,48 @@ export function DownloadView({
   });
   const [pastedKey, setPastedKey] = useState("");
   const [pasteError, setPasteError] = useState(false);
+  // Files clicked whose first decrypted bytes haven't left the SW yet. The
+  // browser shows nothing until they do (a whole ciphertext chunk has to
+  // be fetched and authenticated first — on Firefox the download UI only
+  // appears at that point), so the button spins in the meantime. Cleared
+  // by the SW's notice; the hidden iframe that carries the request is
+  // dropped a moment later, once the download manager owns the stream.
+  // No timer: removing the iframe before the first byte aborts the
+  // request, which on a slow link is exactly when a 25 MiB first chunk
+  // is still downloading.
+  const [preparingIds, setPreparingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const iframesRef = useRef<Map<string, HTMLIFrameElement>>(new Map());
+  const markPreparing = (fileId: string, on: boolean) =>
+    setPreparingIds((prev) => {
+      if (prev.has(fileId) === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(fileId);
+      else next.delete(fileId);
+      return next;
+    });
+  const dropIframe = (fileId: string) => {
+    const iframe = iframesRef.current.get(fileId);
+    if (!iframe) return;
+    iframesRef.current.delete(fileId);
+    iframe.remove();
+  };
+  useEffect(
+    () =>
+      onDownloadStreaming((fileId) => {
+        markPreparing(fileId, false);
+        setTimeout(() => dropIframe(fileId), 5_000);
+      }),
+    [],
+  );
+  useEffect(() => {
+    const iframes = iframesRef.current;
+    return () => {
+      for (const iframe of iframes.values()) iframe.remove();
+      iframes.clear();
+    };
+  }, []);
   // Tracks whether the SW currently holds this transfer's key, so the unmount
   // cleanup only unregisters when there's something to drop (set by both the
   // auto-effect and the paste handler).
@@ -123,7 +166,14 @@ export function DownloadView({
     if (!chunkSize) return false;
     const sw = await ensureEncryptionServiceWorker();
     if (!sw) return false;
-    await registerEncryptionKey(sw, token, keyStr, transfer.files, chunkSize);
+    await registerEncryptionKey(
+      sw,
+      token,
+      keyStr,
+      transfer.files,
+      chunkSize,
+      transfer.expires_at,
+    );
     if (!mountedRef.current) {
       // Resolved after the unmount cleanup already cleared these refs. Don't
       // resurrect them — the caller decides whether to drop the key SW-side.
@@ -237,6 +287,24 @@ export function DownloadView({
     return startServiceWorkerKeepalive();
   }, [isEncrypted, encryptionState]);
 
+  // Coming back to the tab (or a bfcache restore): the keepalive was
+  // throttled while hidden and the worker may have been replaced. The
+  // store covers the next download either way; re-registering here just
+  // warms the new instance so the click doesn't pay the IDB round-trip.
+  useEffect(() => {
+    if (!isEncrypted || encryptionState !== "ready") return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshEncryptionKey();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEncrypted, encryptionState]);
+
   const submitPastedKey = async () => {
     const key = pastedKey.trim();
     if (!key) return;
@@ -327,6 +395,8 @@ export function DownloadView({
         return;
       }
       if (!ok) return;
+      markPreparing(file.id, true);
+      dropIframe(file.id);
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(
@@ -336,20 +406,12 @@ export function DownloadView({
         recipientToken,
       );
       document.body.appendChild(iframe);
-      // 60s (vs the old 5s): the iframe hand-off happens once the browser
-      // sees Content-Disposition: attachment on the streamed Response,
-      // which for a large ciphertext arrives late — the backend has to
-      // negotiate the presigned URL, S3 has to serve the first byte, and
-      // the SW has to decrypt the first chunk before that header lands.
-      // The old 5s window silently killed large downloads on slow S3
-      // regions or first-byte-latency hiccups. 60s is comfortably above
-      // any realistic first-byte time; the browser's native download
-      // manager has taken over long before then in the healthy path.
-      setTimeout(() => iframe.remove(), 60_000);
+      iframesRef.current.set(file.id, iframe);
     } else {
       downloadFile(token, file.id, recipientToken);
     }
   };
+  const anyPreparing = preparingIds.size > 0;
   const downloadAll = () => {
     downloadableFiles.forEach((file, i) => {
       setTimeout(() => {
@@ -564,11 +626,14 @@ export function DownloadView({
                   <Button
                     color="neutral"
                     variant="tertiary"
-                    icon={<Download />}
+                    icon={
+                      preparingIds.has(file.id) ? <ButtonSpinner /> : <Download />
+                    }
                     disabled={
                       !downloadable ||
                       expired ||
-                      encryptionState !== "ready"
+                      encryptionState !== "ready" ||
+                      preparingIds.has(file.id)
                     }
                     onClick={() => void triggerDownload(file)}
                     aria-label={t("Download {{name}}", { name: file.filename })}
@@ -577,7 +642,8 @@ export function DownloadView({
                         ? t("This transfer has expired.")
                         : !downloadable
                           ? t("Available once the antivirus scan passes")
-                          : encryptionState === "ready"
+                          : encryptionState === "ready" &&
+                              !preparingIds.has(file.id)
                             ? t("Download")
                             : t("Preparing your download…")
                     }
@@ -630,7 +696,7 @@ export function DownloadView({
         <Button
           color="brand"
           icon={
-            isEncrypted && encryptionState === "loading" ? (
+            (isEncrypted && encryptionState === "loading") || anyPreparing ? (
               <ButtonSpinner />
             ) : (
               <Download />
@@ -638,12 +704,12 @@ export function DownloadView({
           }
           fullWidth
           onClick={downloadAll}
-          disabled={expired || encryptionState !== "ready"}
+          disabled={expired || encryptionState !== "ready" || anyPreparing}
           className="download-view__download-all"
         >
           {expired
             ? t("Transfer expired")
-            : isEncrypted && encryptionState === "loading"
+            : (isEncrypted && encryptionState === "loading") || anyPreparing
               ? t("Preparing your download…")
               : t("Download all")}
         </Button>
