@@ -34,6 +34,7 @@ from core.api.serializers import (
 from core.api.utils import log_agent_event
 from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
+from core.services.scan_budget import scan_wait_seconds
 from core.tasks import import_drive_file_task, submit_scan_task
 
 logger = logging.getLogger(__name__)
@@ -714,12 +715,23 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         with transaction.atomic():
             draft = self._get_locked_draft(pk)
             rescanned = []
+            now = timezone.now()
             for f in draft.files.filter(upload_completed_at__isnull=False):
                 is_pending = f.scan_status == ScanStatus.PENDING
                 is_transient = (
                     f.scan_status == ScanStatus.ERROR and f.scan_error_kind != "file"
                 )
                 if not (is_pending or is_transient):
+                    continue
+                # A pending scan still inside its size-based budget is
+                # running, not lost: re-submitting would queue a second full
+                # download + scan of the same bytes behind the first.
+                if (
+                    is_pending
+                    and f.scan_submitted_at is not None
+                    and (now - f.scan_submitted_at).total_seconds()
+                    < scan_wait_seconds(f.size)
+                ):
                     continue
                 if is_transient:
                     # Mirror the finalize gate: a transient error goes back to
