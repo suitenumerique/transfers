@@ -74,6 +74,7 @@ function persistEntry(token, entry) {
       files: Array.from(entry.files.entries()),
       apiOrigin: entry.apiOrigin,
       expiresAt: entry.expiresAt,
+      clients: Array.from(entry.clients),
     }),
   ).catch(() => {});
 }
@@ -99,9 +100,43 @@ async function loadEntry(token) {
     files: new Map(row.files),
     apiOrigin: row.apiOrigin || "",
     expiresAt: row.expiresAt,
+    clients: new Set(row.clients || []),
   };
   REGISTRY.set(token, entry);
   return entry;
+}
+
+// Drop the pages that are gone without having released the key (closed
+// or navigated away before their unregister went out), so a stale id
+// never keeps a key alive on its own.
+async function pruneClients(entry) {
+  let live;
+  try {
+    live = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  } catch {
+    return;
+  }
+  const ids = new Set(live.map((c) => c.id));
+  for (const id of entry.clients) {
+    if (!ids.has(id)) entry.clients.delete(id);
+  }
+}
+
+// One page letting go of a transfer's key. Other pages of the same
+// transfer keep it: the entry only goes once its last client has released
+// it (or on expiry), so a download paused in one tab still resumes after
+// another tab of the same link was closed.
+async function releaseEntry(token, clientId) {
+  const entry = REGISTRY.get(token) || (await loadEntry(token));
+  if (!entry) return;
+  entry.clients.delete(clientId);
+  await pruneClients(entry);
+  if (entry.clients.size > 0) {
+    await persistEntry(token, entry);
+    return;
+  }
+  REGISTRY.delete(token);
+  await forgetEntry(token);
 }
 
 async function sweepExpired() {
@@ -137,7 +172,7 @@ self.addEventListener("message", (event) => {
     // resolve the in-flight handshake promise either way instead of
     // hanging forever (e.g. malformed key bytes ⇒ importKey rejects).
     event.waitUntil(
-      registerKey(data)
+      registerKey(data, event.source && event.source.id)
       .then(() => {
         if (event.source && "postMessage" in event.source) {
           event.source.postMessage({
@@ -157,8 +192,7 @@ self.addEventListener("message", (event) => {
       }),
     );
   } else if (data.type === "encryption-unregister") {
-    REGISTRY.delete(data.token);
-    event.waitUntil(forgetEntry(data.token));
+    event.waitUntil(releaseEntry(data.token, event.source && event.source.id));
   } else if (data.type === "encryption-ping") {
     // Health-check the page can use to confirm we're alive.
     if (event.source && "postMessage" in event.source) {
@@ -167,7 +201,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
-async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
+async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }, clientId) {
   // Throw (don't silently return) on a malformed payload — the message
   // handler routes rejections to `encryption-register-error`, so the page's
   // handshake promise rejects and DownloadView flips to its error
@@ -183,6 +217,11 @@ async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
     false,
     ["decrypt"],
   );
+  // A page re-registers on every return to the foreground and other tabs
+  // of the same link register too: what the earlier registrations
+  // accumulated — the pages holding the key, each file's resume
+  // capability — carries over.
+  const existing = REGISTRY.get(token) || (await loadEntry(token));
   const fileMap = new Map();
   for (const f of files) {
     if (
@@ -200,6 +239,7 @@ async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
       // which is harder to reason about than a single loud failure.
       throw new Error("Invalid file entry in encryption-register payload");
     }
+    const known = existing && existing.files.get(f.id);
     fileMap.set(f.id, {
       plaintextSize: f.plaintextSize,
       chunkSize: f.chunkSize,
@@ -207,11 +247,13 @@ async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
       mimeType: typeof f.mimeType === "string" && f.mimeType
         ? f.mimeType
         : "application/octet-stream",
+      resumeToken: (known && known.resumeToken) || "",
     });
   }
   const entry = {
     key,
     files: fileMap,
+    clients: new Set(existing ? existing.clients : []),
     apiOrigin: typeof apiOrigin === "string" ? apiOrigin : "",
     // Fallback: a transfer lives at most 30 days, so a payload without an
     // expiry still ages out of the store.
@@ -220,6 +262,8 @@ async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
         ? expiresAt
         : Date.now() + 30 * 24 * 3600 * 1000,
   };
+  await pruneClients(entry);
+  if (clientId) entry.clients.add(clientId);
   REGISTRY.set(token, entry);
   await persistEntry(token, entry);
 }
@@ -301,27 +345,40 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   //
   // ``apiOrigin`` is empty in prod (Caddy proxies /api/* same-origin) and
   // absolute in dev (backend on a different port).
-  // A ranged re-fetch is a resume of an interrupted download, not a new
-  // one: say so, and the backend lets it through on a one-shot transfer
-  // whose bytes are still in their post-deactivation grace window.
+  // Every download URL comes with a resume capability for that file
+  // (kept with the entry, so it survives a worker restart). It goes back
+  // to the backend when this request continues an earlier download — a
+  // ranged re-fetch by the download manager, or the page re-sending the
+  // file after an interruption (``?resume=1`` on our own URL) — and lets
+  // it through on a one-shot transfer whose bytes are still in their
+  // post-deactivation grace window.
   const requestedRange = parseRange(
     request && request.headers.get("range"),
     meta.plaintextSize,
   );
+  const continuing =
+    (requestedRange && requestedRange.start > 0) ||
+    (request && new URL(request.url).searchParams.get("resume") === "1");
   const backendUrl =
     (entry.apiOrigin || "") +
     `${API_PATH}/downloads/${token}/files/${fileId}/download/?as=json` +
     (recipientToken ? `&r=${encodeURIComponent(recipientToken)}` : "") +
-    (requestedRange && requestedRange.start > 0 ? "&resume=1" : "");
+    (continuing && meta.resumeToken
+      ? `&resume=${encodeURIComponent(meta.resumeToken)}`
+      : "");
   const meta_resp = await fetch(backendUrl, { credentials: "include" });
   if (!meta_resp.ok) {
     return new Response("Failed to negotiate download URL.", {
       status: meta_resp.status || 502,
     });
   }
-  const { url: presignedUrl } = await meta_resp.json();
+  const { url: presignedUrl, resume: resumeToken } = await meta_resp.json();
   if (!presignedUrl) {
     return new Response("Backend returned no download URL.", { status: 502 });
+  }
+  if (typeof resumeToken === "string" && resumeToken !== meta.resumeToken) {
+    meta.resumeToken = resumeToken;
+    void persistEntry(token, entry);
   }
   // A "Range: bytes=START-END" request is served as a 206: chunks are
   // independent AES-GCM blocks, so we fetch S3 from the chunk that holds

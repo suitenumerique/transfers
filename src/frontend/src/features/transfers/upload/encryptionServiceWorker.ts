@@ -273,6 +273,10 @@ export function streamingDownloadUrl(
   recipientToken?: string,
   // Per-click id echoed in the SW's notices (see onDownloadNotice).
   requestId?: string,
+  // This click restarts a download the browser interrupted: the SW then
+  // sends the backend the resume capability it got with the earlier URL,
+  // which a one-shot transfer needs to hand the file out again.
+  resume = false,
 ): string {
   const path = `/_dl/${token}/${fileId}/${encodeURIComponent(filename)}`;
   const params = new URLSearchParams();
@@ -280,6 +284,7 @@ export function streamingDownloadUrl(
   // this recipient, same as the plaintext path.
   if (recipientToken) params.set("r", recipientToken);
   if (requestId) params.set("dl", requestId);
+  if (resume) params.set("resume", "1");
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }

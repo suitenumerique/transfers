@@ -106,11 +106,14 @@ export function DownloadView({
   // is gone: the SW's "interrupted" notice comes minutes later, when the
   // recipient pauses or cancels from the browser's download manager.
   const requestsRef = useRef<Map<string, string>>(new Map());
-  // Files whose download was interrupted from the download manager. Only
-  // surfaced on Firefox: its Resume/Retry re-request the URL outside any
-  // page, which no Service Worker sees, so the recipient has to restart
-  // from here (docs/ENCRYPTION.md, "Interrupted downloads"). Chrome
-  // resumes through the worker on its own.
+  // Files whose download the browser interrupted (paused or cancelled
+  // from its download manager). The next click on such a file is sent as
+  // a resume, which a one-shot transfer needs to hand the file out again.
+  // Only surfaced on Firefox: its Resume/Retry re-request the URL outside
+  // any page, which no Service Worker sees, so the recipient has to
+  // restart from here (docs/ENCRYPTION.md, "Interrupted downloads").
+  // Chrome resumes through the worker on its own.
+  const interruptedRef = useRef<Set<string>>(new Set());
   const [interruptedIds, setInterruptedIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -134,8 +137,10 @@ export function DownloadView({
         const fileId = requestsRef.current.get(notice.requestId);
         if (!fileId) return; // not ours
         if (notice.kind === "interrupted") {
-          if (!IS_FIREFOX) return;
-          setInterruptedIds((prev) => new Set(prev).add(fileId));
+          interruptedRef.current.add(fileId);
+          if (IS_FIREFOX) {
+            setInterruptedIds((prev) => new Set(prev).add(fileId));
+          }
           return;
         }
         settle(notice.requestId);
@@ -152,10 +157,12 @@ export function DownloadView({
   useEffect(() => {
     const iframes = iframesRef.current;
     const requests = requestsRef.current;
+    const interrupted = interruptedRef.current;
     return () => {
       for (const iframe of iframes.values()) iframe.remove();
       iframes.clear();
       requests.clear();
+      interrupted.clear();
       setPending(new Map());
       setInterruptedIds(new Set());
     };
@@ -432,6 +439,7 @@ export function DownloadView({
       const requestId = crypto.randomUUID();
       requestsRef.current.set(requestId, file.id);
       setPending((prev) => new Map(prev).set(requestId, file.id));
+      const resume = interruptedRef.current.delete(file.id);
       setInterruptedIds((prev) => {
         if (!prev.has(file.id)) return prev;
         const next = new Set(prev);
@@ -446,6 +454,7 @@ export function DownloadView({
         file.filename,
         recipientToken,
         requestId,
+        resume,
       );
       document.body.appendChild(iframe);
       iframesRef.current.set(requestId, iframe);
