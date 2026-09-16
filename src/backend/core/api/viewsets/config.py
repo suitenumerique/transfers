@@ -36,6 +36,11 @@ class ConfigView(drf.views.APIView):
             # will decrypt against (one S3 part = one crypto chunk).
             "TRANSFER_CHUNK_SIZE": settings.TRANSFER_CHUNK_SIZE,
             "SCAN_MAX_FILE_SIZE": settings.SCAN_MAX_FILE_SIZE,
+            # Scan wait budget = BASE + PER_GIB × bytes; the form's "taking
+            # too long" threshold uses the same formula as /rescan/ and the
+            # reaper (see core.services.scan_budget).
+            "SCAN_WAIT_BASE_SECONDS": settings.SCAN_WAIT_BASE_SECONDS,
+            "SCAN_WAIT_SECONDS_PER_GIB": settings.SCAN_WAIT_SECONDS_PER_GIB,
             "TRANSFER_EXPIRY_CHOICES": settings.TRANSFER_EXPIRY_CHOICES,
             "TRANSFER_DEFAULT_EXPIRY_DAYS": settings.TRANSFER_DEFAULT_EXPIRY_DAYS,
             # Lets the form hide the confidential toggle on instances that

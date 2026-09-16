@@ -33,6 +33,7 @@ from core.services import encryption, s3
 from core.services.email import send_download_receipt, send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
 from core.services.scan_auth import mint_request_token
+from core.services.scan_budget import scan_wait_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -524,11 +525,19 @@ def reap_stale_pending_scans_task():
 
     now = timezone.now()
     cutoff = now - timedelta(minutes=settings.SCAN_PENDING_REAP_MINUTES)
-    stale = TransferFile.objects.filter(
+    candidates = TransferFile.objects.filter(
         scan_status=ScanStatus.PENDING,
         scan_submitted_at__isnull=False,
         scan_submitted_at__lte=cutoff,
-    ).values_list("id", flat=True)
+    ).values_list("id", "size", "scan_submitted_at")
+    # The reap window is a floor; a big file's scan legitimately runs longer
+    # (download + decrypt + clamd stream all scale with size), so it only
+    # counts as lost past its size-based budget.
+    stale = [
+        file_id
+        for file_id, size, submitted_at in candidates
+        if (now - submitted_at).total_seconds() >= scan_wait_seconds(size)
+    ]
 
     count = 0
     for file_id in stale:

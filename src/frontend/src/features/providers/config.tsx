@@ -30,6 +30,11 @@ export interface AppConfig {
   // scan entirely (never submitted). 2 GB in prod (= clamav cap), smaller in
   // dev. Surfaced so the UI can name the limit in the "not scanned" tooltip.
   SCAN_MAX_FILE_SIZE: number;
+  // How long a scan may run before the form calls it "taking too long":
+  // BASE + PER_GIB × bytes under scan. Same formula as the backend's
+  // rescan endpoint and reaper, so a retry never duplicates a running scan.
+  SCAN_WAIT_BASE_SECONDS: number;
+  SCAN_WAIT_SECONDS_PER_GIB: number;
   TRANSFER_EXPIRY_CHOICES: number[];
   TRANSFER_DEFAULT_EXPIRY_DAYS: number;
   // False when the operator disabled confidential transfers: the form hides

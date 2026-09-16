@@ -12,6 +12,7 @@ endpoints on the public Transfer surface.
 
 import json
 import uuid as _uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
@@ -1826,6 +1827,20 @@ class TestReapStalePendingScans:
         submit = self._reap(settings)
         submit.assert_called_once_with(str(tf.id))
 
+    def test_big_file_gets_its_size_based_window(self, user, settings):
+        """15 minutes is only the floor: a 2 GiB scan is allowed
+        120 + 2×600 = 1320 s before the reaper re-submits it."""
+        settings.SCAN_WAIT_BASE_SECONDS = 120
+        settings.SCAN_WAIT_SECONDS_PER_GIB = 600
+        tf = self._file(user, submitted_ago_minutes=20)
+        tf.size = 2 * 1024**3
+        tf.save(update_fields=["size"])
+        self._reap(settings).assert_not_called()
+
+        tf.scan_submitted_at = timezone.now() - timedelta(seconds=1400)
+        tf.save(update_fields=["scan_submitted_at"])
+        self._reap(settings).assert_called_once_with(str(tf.id))
+
     def test_leaves_a_freshly_submitted_scan_alone(self, user, settings):
         """The file was uploaded hours ago but its scan only started at Send, a
         moment ago. Timing from the upload would re-submit a scan that is
@@ -2197,6 +2212,32 @@ class TestDraftRescan:
         with submit_p as submit, commit_p:
             resp = self._rescan(authenticated_client, draft.id)
         assert resp.status_code == 200
+        assert resp.data["rescanned_file_ids"] == [str(f.id)]
+        submit.assert_called_once_with(str(f.id))
+
+    def test_pending_scan_inside_its_budget_is_left_running(
+        self, authenticated_client, user, settings
+    ):
+        """A 1 GiB file submitted a minute ago is still being scanned: the
+        retry button must not queue a second full download + scan of it.
+        Past its size-based budget it is treated as lost and re-submitted."""
+        settings.SCAN_WAIT_BASE_SECONDS = 120
+        settings.SCAN_WAIT_SECONDS_PER_GIB = 600
+        draft, f = self._draft_with_file(user, ScanStatus.PENDING)
+        f.size = 1024**3
+        f.scan_submitted_at = timezone.now() - timedelta(minutes=1)
+        f.save(update_fields=["size", "scan_submitted_at"])
+        submit_p, commit_p = self._patched()
+
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
+        assert resp.data["rescanned_file_ids"] == []
+        submit.assert_not_called()
+
+        f.scan_submitted_at = timezone.now() - timedelta(minutes=13)  # > 720s
+        f.save(update_fields=["scan_submitted_at"])
+        with submit_p as submit, commit_p:
+            resp = self._rescan(authenticated_client, draft.id)
         assert resp.data["rescanned_file_ids"] == [str(f.id)]
         submit.assert_called_once_with(str(f.id))
 

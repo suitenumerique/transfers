@@ -271,11 +271,23 @@ class Base(Configuration):
     )
     # Files still PENDING this long after their upload completed are assumed to
     # have lost their scan result (the scanner is stateless / webhook-only) and
-    # are re-submitted by ``reap_stale_pending_scans_task``.
+    # are re-submitted by ``reap_stale_pending_scans_task``. Floor only: a big
+    # file's window is the larger of this and its size-based budget below.
     SCAN_PENDING_REAP_MINUTES = values.PositiveIntegerValue(
         15,
         environ_name="SCAN_PENDING_REAP_MINUTES",
         environ_prefix=None,
+    )
+    # How long a scan is allowed to run before it is considered lost: BASE +
+    # PER_GIB × size. The scanner downloads the file, decrypts it and streams
+    # it to clamd, so the time scales with size. Used by the frontend's
+    # "taking too long" threshold (via /config/), by /rescan/ (a scan inside
+    # its budget is still running — don't queue a duplicate) and by the reaper.
+    SCAN_WAIT_BASE_SECONDS = values.PositiveIntegerValue(
+        120, environ_name="SCAN_WAIT_BASE_SECONDS", environ_prefix=None
+    )
+    SCAN_WAIT_SECONDS_PER_GIB = values.PositiveIntegerValue(
+        600, environ_name="SCAN_WAIT_SECONDS_PER_GIB", environ_prefix=None
     )
 
     # End-user help / documentation URL. Surfaced by the frontend on the

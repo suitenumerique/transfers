@@ -115,3 +115,7 @@ class TestConfigView:
         # use; the frontend reads it here so the encrypted upload it
         # builds matches what the decrypt path expects.
         assert "TRANSFER_CHUNK_SIZE" in response.data
+        # The scan wait budget must reach the frontend so its poller and the
+        # backend's rescan/reaper agree on how long a big scan may run.
+        assert response.data["SCAN_WAIT_BASE_SECONDS"] > 0
+        assert response.data["SCAN_WAIT_SECONDS_PER_GIB"] > 0

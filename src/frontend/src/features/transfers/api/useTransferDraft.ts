@@ -122,7 +122,7 @@ export interface TransferDraftHandle {
   // True while finalize is blocked on the antivirus scan (backend returns 202
   // until every file is clean). Drives the "checking for viruses" loading step.
   isScanning: boolean;
-  // True once the background scan poller has waited SCAN_MAX_WAIT_MS without a
+  // True once the background scan poller has waited its scan budget without a
   // verdict (scanner likely down). Polling is stopped; `retryScan` re-arms it.
   scanTimedOut: boolean;
   retryScan: () => void;
@@ -200,7 +200,7 @@ const POLL_INTERVAL_MS = 200;
 // Finalize is gated by the antivirus scan: the backend answers 202 while files
 // are still being scanned. Re-poll on that interval, give up after the max.
 const SCAN_POLL_INTERVAL_MS = 2000;
-const SCAN_MAX_WAIT_MS = 120000;
+const GIB = 1024 ** 3;
 // A Drive import scales with file size and routinely outlives a scan, so it
 // gets its own ceiling — the scan budget would abort healthy large imports.
 const DRIVE_IMPORT_MAX_WAIT_MS = 900000;
@@ -242,7 +242,7 @@ export function useTransferDraft(): TransferDraftHandle {
   const [isAwaitingUploads, setIsAwaitingUploads] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  // The background scan poller gives up after SCAN_MAX_WAIT_MS so a durably
+  // The background scan poller gives up after the scan budget so a durably
   // unreachable scanner doesn't leave the form polling /drafts/ forever. The
   // backend reaper keeps re-submitting, so the file still self-heals once the
   // scanner recovers — the user just re-arms polling via `retryScan`.
@@ -272,6 +272,18 @@ export function useTransferDraft(): TransferDraftHandle {
   // waiting for the next render.
   const draftIdRef = useRef<string | null>(null);
   const filesRef = useRef<DraftFile[]>([]);
+  // Scan wait budget for the files currently on the draft: the scanner
+  // downloads, decrypts and streams each one to clamd, so a 1 GiB file
+  // legitimately takes minutes. Same formula as the backend (rescan /
+  // reaper) so the retry we offer after the budget never duplicates a scan
+  // that is still running.
+  const scanBudgetMs = useCallback(() => {
+    const bytes = filesRef.current.reduce((sum, f) => sum + (f.size || 0), 0);
+    const seconds =
+      config.SCAN_WAIT_BASE_SECONDS +
+      (bytes / GIB) * config.SCAN_WAIT_SECONDS_PER_GIB;
+    return Math.ceil(seconds) * 1000;
+  }, [config.SCAN_WAIT_BASE_SECONDS, config.SCAN_WAIT_SECONDS_PER_GIB]);
   // Promise that resolves with the draft id once the initial POST
   // /drafts/add-file/ succeeds. Second+ drops wait on it before firing
   // add-file, so they don't race multiple "create-draft" requests.
@@ -517,7 +529,7 @@ export function useTransferDraft(): TransferDraftHandle {
     // survives re-renders (the effect re-runs whenever `files` changes) because
     // it lives in a ref, so unrelated file edits don't reset the clock.
     if (scanDeadlineRef.current === null) {
-      scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
+      scanDeadlineRef.current = Date.now() + scanBudgetMs();
     }
 
     let cancelled = false;
@@ -623,9 +635,9 @@ export function useTransferDraft(): TransferDraftHandle {
     // is a no-op (state already false), the poller effect won't re-run to
     // re-anchor a null deadline, and the next tick would read `now > null` and
     // time out immediately. A concrete deadline is always valid.
-    scanDeadlineRef.current = Date.now() + SCAN_MAX_WAIT_MS;
+    scanDeadlineRef.current = Date.now() + scanBudgetMs();
     setScanTimedOut(false);
-  }, []);
+  }, [scanBudgetMs]);
 
   const registerFile = useCallback(
     async (
@@ -1006,7 +1018,7 @@ export function useTransferDraft(): TransferDraftHandle {
           if (reason === "scan_pending" || reason === "drive_importing") {
             if (reason === "scan_pending") {
               if (scanDeadline === null) {
-                scanDeadline = Date.now() + SCAN_MAX_WAIT_MS;
+                scanDeadline = Date.now() + scanBudgetMs();
               }
             } else if (driveDeadline === null) {
               driveDeadline = Date.now() + DRIVE_IMPORT_MAX_WAIT_MS;
