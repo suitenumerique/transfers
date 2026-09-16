@@ -20,13 +20,101 @@ const TAG_BYTES = 16;
 const OVERHEAD = IV_BYTES + TAG_BYTES;
 const API_PATH = "/api/v1.0";
 
-// transferToken -> { key: CryptoKey, files: Map<fileId, FileMeta>, apiOrigin: string }
+// transferToken -> { key: CryptoKey, files: Map<fileId, FileMeta>, apiOrigin: string, expiresAt: number }
 // ``apiOrigin`` is the absolute base URL of the Django backend as seen from
 // the browser. In prod that's same-origin (Caddy proxies /api/* to the
 // backend) and the page sends "" — we fall back to building a relative
 // /api/v1.0/... URL. In dev the frontend is on :8980 and the backend on
 // :8981, so the page sends the absolute origin and we use it as-is.
+//
+// In-memory cache in front of IndexedDB. The browser terminates an idle
+// worker whenever it likes (Firefox: ~30s, and a backgrounded tab's
+// keepalive pings get throttled), which wipes this Map; a download request
+// arriving at the fresh instance then reloads the entry from the store.
+// The CryptoKey is stored non-extractable, so the raw key bytes never sit
+// on disk in readable form. Entries carry the transfer's expiry and are
+// dropped past it, and on explicit unregister.
 const REGISTRY = new Map();
+const DB_NAME = "transferts-decryption";
+const DB_VERSION = 1;
+const STORE = "entries";
+
+function openStore() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(STORE, { keyPath: "token" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function storeRequest(mode, run) {
+  // Small IDB helper: open, run one request in a transaction, resolve with
+  // its result. Storage failures are swallowed by callers — the in-memory
+  // registry still works for the life of this worker instance.
+  return openStore().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        const req = run(tx.objectStore(STORE));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        tx.oncomplete = () => db.close();
+      }),
+  );
+}
+
+function persistEntry(token, entry) {
+  return storeRequest("readwrite", (store) =>
+    store.put({
+      token,
+      key: entry.key,
+      files: Array.from(entry.files.entries()),
+      apiOrigin: entry.apiOrigin,
+      expiresAt: entry.expiresAt,
+    }),
+  ).catch(() => {});
+}
+
+function forgetEntry(token) {
+  return storeRequest("readwrite", (store) => store.delete(token)).catch(() => {});
+}
+
+async function loadEntry(token) {
+  let row;
+  try {
+    row = await storeRequest("readonly", (store) => store.get(token));
+  } catch {
+    return null;
+  }
+  if (!row) return null;
+  if (row.expiresAt && row.expiresAt < Date.now()) {
+    void forgetEntry(token);
+    return null;
+  }
+  const entry = {
+    key: row.key,
+    files: new Map(row.files),
+    apiOrigin: row.apiOrigin || "",
+    expiresAt: row.expiresAt,
+  };
+  REGISTRY.set(token, entry);
+  return entry;
+}
+
+async function sweepExpired() {
+  try {
+    const rows = await storeRequest("readonly", (store) => store.getAll());
+    const now = Date.now();
+    for (const row of rows) {
+      if (row.expiresAt && row.expiresAt < now) await forgetEntry(row.token);
+    }
+  } catch {
+    // Storage unavailable — nothing to sweep.
+  }
+}
 
 self.addEventListener("install", () => {
   // Skip waiting so a fresh SW takes over without a reload — the user's
@@ -38,7 +126,7 @@ self.addEventListener("install", () => {
 self.addEventListener("activate", (event) => {
   // Claim existing clients so the very first page load that registered us
   // is already controlled when it postMessages the key.
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(Promise.all([self.clients.claim(), sweepExpired()]));
 });
 
 self.addEventListener("message", (event) => {
@@ -68,6 +156,7 @@ self.addEventListener("message", (event) => {
       });
   } else if (data.type === "encryption-unregister") {
     REGISTRY.delete(data.token);
+    event.waitUntil(forgetEntry(data.token));
   } else if (data.type === "encryption-ping") {
     // Health-check the page can use to confirm we're alive.
     if (event.source && "postMessage" in event.source) {
@@ -76,7 +165,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
-async function registerKey({ token, keyBytes, files, apiOrigin }) {
+async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }) {
   // Throw (don't silently return) on a malformed payload — the message
   // handler routes rejections to `encryption-register-error`, so the page's
   // handshake promise rejects and DownloadView flips to its error
@@ -118,11 +207,19 @@ async function registerKey({ token, keyBytes, files, apiOrigin }) {
         : "application/octet-stream",
     });
   }
-  REGISTRY.set(token, {
+  const entry = {
     key,
     files: fileMap,
     apiOrigin: typeof apiOrigin === "string" ? apiOrigin : "",
-  });
+    // Fallback: a transfer lives at most 30 days, so a payload without an
+    // expiry still ages out of the store.
+    expiresAt:
+      Number.isFinite(expiresAt) && expiresAt > 0
+        ? expiresAt
+        : Date.now() + 30 * 24 * 3600 * 1000,
+  };
+  REGISTRY.set(token, entry);
+  await persistEntry(token, entry);
 }
 
 self.addEventListener("fetch", (event) => {
@@ -141,7 +238,7 @@ self.addEventListener("fetch", (event) => {
   // whether it's a network hiccup, a decrypt failure, or a bug. A readable
   // Response with the message keeps diagnostics possible.
   event.respondWith(
-    handleDownload(token, fileId, recipientToken).catch((err) => {
+    handleDownload(token, fileId, recipientToken, event.request).catch((err) => {
       const message =
         (err && err.message) || "Unexpected error while streaming the download.";
       return new Response(message, {
@@ -152,14 +249,12 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-async function handleDownload(token, fileId, recipientToken) {
-  const entry = REGISTRY.get(token);
+async function handleDownload(token, fileId, recipientToken, request) {
+  const entry = REGISTRY.get(token) || (await loadEntry(token));
   if (!entry) {
-    // The registry is module-level; when the browser terminates an idle
-    // SW, it wipes with it. The page pings every 10s to keep the SW alive
-    // while it's up, so hitting this branch means either the tab was
-    // suspended (mobile background) or something bypassed the keepalive.
-    // Message is user-actionable: reloading re-runs registerEncryptionKey.
+    // Neither in memory nor in the store: the page never registered this
+    // transfer here, or it unregistered (navigated away) or the entry
+    // expired. Message is user-actionable: reopening the link re-registers.
     return new Response("Decryption key not loaded. Reopen the link.", {
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -197,31 +292,89 @@ async function handleDownload(token, fileId, recipientToken) {
   if (!presignedUrl) {
     return new Response("Backend returned no download URL.", { status: 502 });
   }
-  const upstream = await fetch(presignedUrl, { credentials: "omit" });
+  // Resumable: a "Range: bytes=START-END" request (the browser's download
+  // manager retrying a broken download) is served as a 206. Chunks are
+  // independent AES-GCM blocks, so we fetch S3 from the chunk that holds
+  // START, decrypt from that part number, and drop the plaintext before
+  // START. Anything unparseable falls back to the full 200 response.
+  const range = parseRange(request && request.headers.get("range"), meta.plaintextSize);
+  const startChunk = range ? Math.floor(range.start / meta.chunkSize) : 0;
+  const ciphertextOffset = startChunk * (meta.chunkSize + OVERHEAD);
+  const upstream = await fetch(presignedUrl, {
+    credentials: "omit",
+    headers: ciphertextOffset > 0 ? { Range: "bytes=" + ciphertextOffset + "-" } : {},
+  });
   if (!upstream.ok || !upstream.body) {
     return new Response("Failed to fetch encrypted bytes.", {
       status: upstream.status || 502,
     });
   }
+  if (ciphertextOffset > 0 && upstream.status !== 206) {
+    // Storage ignored the range and sent the whole object: we can't line
+    // that up with the chunk we asked for, so refuse rather than corrupt.
+    return new Response("Storage does not support ranged reads.", { status: 502 });
+  }
 
-  const decrypted = upstream.body.pipeThrough(
-    decryptStream(entry.key, meta.chunkSize, meta.plaintextSize, fileId),
+  let decrypted = upstream.body.pipeThrough(
+    decryptStream(entry.key, meta.chunkSize, meta.plaintextSize, fileId, startChunk + 1),
   );
+  const headers = {
+    "Content-Type": meta.mimeType,
+    "Content-Disposition":
+      "attachment; filename=" + rfc5987FilenameStar(meta.filename),
+    "Accept-Ranges": "bytes",
+    // Tell the browser not to cache the decrypted stream — and irrelevant
+    // anyway because the URL is one-shot per click.
+    "Cache-Control": "no-store",
+  };
+  if (!range) {
+    headers["Content-Length"] = String(meta.plaintextSize);
+    return new Response(decrypted, { headers });
+  }
+  const skip = range.start - startChunk * meta.chunkSize;
+  const length = range.end - range.start + 1;
+  decrypted = decrypted.pipeThrough(sliceStream(skip, length));
+  headers["Content-Length"] = String(length);
+  headers["Content-Range"] =
+    "bytes " + range.start + "-" + range.end + "/" + meta.plaintextSize;
+  return new Response(decrypted, { status: 206, headers });
+}
 
-  return new Response(decrypted, {
-    headers: {
-      "Content-Type": meta.mimeType,
-      "Content-Length": String(meta.plaintextSize),
-      "Content-Disposition":
-        "attachment; filename=" + rfc5987FilenameStar(meta.filename),
-      // Tell the browser not to cache the decrypted stream — and irrelevant
-      // anyway because the URL is one-shot per click.
-      "Cache-Control": "no-store",
+// "bytes=START-END" / "bytes=START-" → { start, end } clamped to the file,
+// or null for anything else (no header, multiple ranges, suffix ranges).
+function parseRange(header, size) {
+  if (!header) return null;
+  const m = /^bytes=(\d+)-(\d*)$/.exec(header.trim());
+  if (!m) return null;
+  const start = Number(m[1]);
+  const end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (!Number.isSafeInteger(start) || start < 0 || start >= size || end < start) return null;
+  return { start, end };
+}
+
+// Drop the first ``skip`` bytes, then pass through ``length`` bytes and
+// close — turns a from-chunk-boundary plaintext stream into the exact
+// byte range the browser asked for.
+function sliceStream(skip, length) {
+  let toSkip = skip;
+  let remaining = length;
+  return new TransformStream({
+    transform(chunk, controller) {
+      let piece = chunk;
+      if (toSkip > 0) {
+        const drop = Math.min(toSkip, piece.length);
+        toSkip -= drop;
+        piece = piece.subarray(drop);
+      }
+      if (remaining <= 0 || piece.length === 0) return;
+      if (piece.length > remaining) piece = piece.subarray(0, remaining);
+      remaining -= piece.length;
+      controller.enqueue(piece);
     },
   });
 }
 
-function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
+function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId, startPart = 1) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
   // Each chunk's AAD is `${fileId}:${partNumber}:${parts}` and must match
@@ -232,40 +385,70 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
   const ciphertextChunkSize = chunkSize + OVERHEAD;
   const encoder = new TextEncoder();
   const parts = plaintextSize <= 0 ? 1 : Math.ceil(plaintextSize / chunkSize);
-  let pending = new Uint8Array(0);
-  let plaintextRemaining = plaintextSize;
-  let partNumber = 1;
+  // Network chunks are queued as-is and only joined once a whole ciphertext
+  // chunk is in: joining on every arrival would copy the growing buffer
+  // each time (Firefox delivers fetch bodies in ~32 KiB pieces, i.e.
+  // hundreds of copies of up to 25 MiB per chunk).
+  const queue = [];
+  let queued = 0;
+  // ``parts`` (in the AAD) is always the file's total; a ranged read just
+  // starts the count at ``startPart`` with the plaintext still ahead of it.
+  let plaintextRemaining = plaintextSize - (startPart - 1) * chunkSize;
+  let partNumber = startPart;
+  let streaming = false;
+
+  const takeAll = () => {
+    const out = new Uint8Array(queued);
+    let offset = 0;
+    for (const piece of queue) {
+      out.set(piece, offset);
+      offset += piece.length;
+    }
+    queue.length = 0;
+    queued = 0;
+    return out;
+  };
+  const enqueuePlain = (controller, plain) => {
+    controller.enqueue(plain);
+    if (!streaming) {
+      streaming = true;
+      notifyClients({ type: "encryption-download-streaming", fileId });
+    }
+  };
 
   return new TransformStream({
     transform: async (chunk, controller) => {
-      // Append the freshly-arrived bytes to whatever was left over from the
-      // last transform call. We can't decrypt until we have a full
-      // ciphertext chunk (or hit the file's end), since AES-GCM needs the
-      // tag to authenticate.
-      pending = concat(pending, chunk);
+      // We can't decrypt until we have a full ciphertext chunk (or hit the
+      // file's end), since AES-GCM needs the tag to authenticate.
+      const piece = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      queue.push(piece);
+      queued += piece.length;
 
       // While we still have full non-final chunks queued, decrypt them.
-      while (
-        plaintextRemaining > chunkSize &&
-        pending.length >= ciphertextChunkSize
-      ) {
-        const ct = pending.subarray(0, ciphertextChunkSize);
-        pending = pending.slice(ciphertextChunkSize);
+      while (plaintextRemaining > chunkSize && queued >= ciphertextChunkSize) {
+        const buffered = takeAll();
+        const ct = buffered.subarray(0, ciphertextChunkSize);
+        const rest = buffered.subarray(ciphertextChunkSize);
+        if (rest.length > 0) {
+          queue.push(rest);
+          queued = rest.length;
+        }
         const aad = encoder.encode(fileId + ":" + partNumber + ":" + parts);
         const plain = await decryptOne(cryptoKey, ct, aad);
-        controller.enqueue(plain);
+        enqueuePlain(controller, plain);
         plaintextRemaining -= plain.length;
         partNumber += 1;
       }
     },
     flush: async (controller) => {
-      // Last chunk: whatever's left in `pending` should be exactly
+      // Last chunk: whatever's left should be exactly
       // `plaintextRemaining + OVERHEAD` bytes. If not, the upstream stream
       // was truncated — propagate the failure so the browser surfaces a
       // partial download as an error. Zero-byte plaintext is not a special
       // case: the sender still emits one chunk (just IV + tag, OVERHEAD
       // bytes) so the recipient authenticates it too, discards the empty
       // plaintext, and catches a swapped-in nonsense trailing chunk.
+      const pending = takeAll();
       const expected = plaintextRemaining + OVERHEAD;
       if (pending.length !== expected) {
         controller.error(
@@ -281,7 +464,7 @@ function decryptStream(cryptoKey, chunkSize, plaintextSize, fileId) {
       }
       const aad = encoder.encode(fileId + ":" + partNumber + ":" + parts);
       const plain = await decryptOne(cryptoKey, pending, aad);
-      if (plain.length > 0) controller.enqueue(plain);
+      if (plain.length > 0) enqueuePlain(controller, plain);
       plaintextRemaining -= plain.length;
       if (plaintextRemaining !== 0) {
         controller.error(
@@ -307,13 +490,18 @@ async function decryptOne(key, ciphertextChunk, additionalData) {
   return new Uint8Array(plain);
 }
 
-function concat(a, b) {
-  if (a.length === 0) return b instanceof Uint8Array ? b : new Uint8Array(b);
-  const bArr = b instanceof Uint8Array ? b : new Uint8Array(b);
-  const out = new Uint8Array(a.length + bArr.length);
-  out.set(a, 0);
-  out.set(bArr, a.length);
-  return out;
+// Tell every open page of this origin something about a download in
+// flight. Used once per file, when its first decrypted bytes go out: that
+// is when the browser's download UI appears (Firefox only shows it once
+// body bytes arrive, Chrome on headers), so the page can stop showing
+// "preparing…" for that file.
+function notifyClients(message) {
+  self.clients
+    .matchAll({ type: "window", includeUncontrolled: true })
+    .then((clients) => {
+      for (const client of clients) client.postMessage(message);
+    })
+    .catch(() => {});
 }
 
 // RFC 5987 filename* with UTF-8 encoding so non-ASCII names survive

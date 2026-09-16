@@ -124,8 +124,11 @@ export async function registerEncryptionKey(
   keyFragment: string,
   files: DownloadTransferFile[],
   chunkSize: number,
+  // ISO date after which the SW may drop its stored copy of the key.
+  expiresAt?: string,
 ): Promise<void> {
   const keyBytes = base64UrlDecode(keyFragment);
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN;
   const filesPayload: ServiceWorkerFilePayload[] = files.map((f) => ({
     id: f.id,
     plaintextSize: f.plaintext_size ?? f.size,
@@ -175,6 +178,7 @@ export async function registerEncryptionKey(
       keyBytes,
       files: filesPayload,
       apiOrigin,
+      expiresAt: Number.isFinite(expiresAtMs) ? expiresAtMs : undefined,
     });
   });
 }
@@ -196,6 +200,28 @@ export function unregisterEncryptionKey(token: string): void {
     // The worker may have been terminated between the controller lookup
     // and the postMessage; nothing to do.
   }
+}
+
+// Subscribe to the SW's "first decrypted bytes of <fileId> are on their
+// way" notice (see notifyClients in sw.js). Returns the unsubscribe.
+export function onDownloadStreaming(
+  callback: (fileId: string) => void,
+): () => void {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return () => {};
+  }
+  const listener = (event: MessageEvent) => {
+    const data = event.data;
+    if (
+      data &&
+      data.type === "encryption-download-streaming" &&
+      typeof data.fileId === "string"
+    ) {
+      callback(data.fileId);
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", listener);
+  return () => navigator.serviceWorker.removeEventListener("message", listener);
 }
 
 // URL the SW intercepts to stream the decrypted bytes. The filename
