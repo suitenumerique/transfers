@@ -1425,7 +1425,9 @@
 
   &__auto-archive-alert,
   &__scan-alert,
-  &__encryption-error-alert {
+  &__encryption-error-alert,
+  &__owner-alert,
+  &__interrupted-alert {
     margin-bottom: var(--c--globals--spacings--md);
     text-align: start;
   }

@@ -227,8 +227,13 @@ On the recipient side, `DownloadView` resolves the key from whichever
 source applies — the backend (`transfer.encryption_key`, normal), the URL
 fragment (confidential link), or a paste box (confidential without a
 fragment) — hands it to the SW via `postMessage`, and (for the fragment
-case) strips it from the URL bar with `history.replaceState`. The SW
-holds the key in memory until the page unmounts (`encryption-unregister`).
+case) strips it from the URL bar with `history.replaceState`. The SW keeps
+the key in an in-memory registry and, because the browser terminates idle
+workers (Firefox after ~30 s), also in IndexedDB as a **non-extractable**
+`CryptoKey` (the raw bytes are never readable from storage) together with
+the file metadata and the transfer's expiry. A fresh worker instance
+reloads it from there. The entry is deleted on `encryption-unregister`
+(page unmount) and swept once expired.
 
 ## Upload pipeline
 
@@ -341,6 +346,7 @@ Page creates <iframe src="/_dl/<token>/<fileId>/<filename>">
     ▼
 sw.js handleDownload(token, fileId):
     1. REGISTRY.get(token) → { key, files: Map, apiOrigin }
+       (or loadEntry(token) from IndexedDB after a worker restart)
     2. fetch #1  → backend /api/.../downloads/.../download/?as=json
                    credentialed, records FILE_DOWNLOADED audit event,
                    returns { url: <presigned S3 URL> }, no-store
@@ -536,12 +542,38 @@ The Caddyfile pins:
 A successful XSS bypasses encryption entirely. The CSP is what stops an
 attacker from chaining a hostile script through a third-party origin.
 
+### Interrupted downloads
+
+The worker answers ranged requests with a 206 (chunks are independent
+AES-GCM blocks, so it reads S3 from the chunk holding the start offset
+and drops the plaintext before it) and advertises `Accept-Ranges` plus a
+per-file `ETag`, which is what a download manager needs to pause and
+resume. Chrome routes the resume through the worker and it works.
+
+Firefox's download manager cannot: its pause, resume and retry re-request
+the URL from the parent process with the system principal, outside any
+page, and such requests are never routed through a Service Worker
+(Firefox also refuses to resume an intercepted channel outright —
+`InterceptedHttpChannel::StartPump`). They land on the static server as
+a 404, and Firefox saves that body as the "completed" file (Vite answers
+404 on `/_dl/*` in dev to match Caddy, otherwise the saved file was
+`index.html`). Nothing the worker advertises changes this: Firefox
+enables Pause for a navigation-started download as soon as a `.part`
+file has bytes, whatever `Accept-Ranges` says. What the page can see is
+the interruption itself: pausing or cancelling cancels the response
+body, the worker posts an `encryption-download-interrupted` notice for
+that request id, and on Firefox the download page shows a warning
+naming the file and asking to click it again. On any browser, clicking
+the file again on the page restarts the download, and that works after
+the browser killed the worker because the key survives in IndexedDB.
+
 ### Service Worker scope
 
 `/sw.js` is served at the root with `Cache-Control: no-cache` so a new
 deploy's SW activates on the next page load. `DownloadView` sends
-`encryption-unregister` on unmount so cached keys don't linger across
-transfers in the same tab.
+`encryption-unregister` on unmount, which drops the key from the worker's
+registry and from its IndexedDB store; entries also expire with their
+transfer.
 
 ### Chunk size knob
 

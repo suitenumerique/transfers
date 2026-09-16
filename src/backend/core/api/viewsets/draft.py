@@ -738,7 +738,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # only one of the two must enqueue. Also resets a transient
                 # error to PENDING (the finalize gate expects that).
                 claimed = models.TransferFile.objects.filter(
-                    id=f.id, scan_submitted_at=f.scan_submitted_at
+                    id=f.id,
+                    scan_status=f.scan_status,
+                    scan_submitted_at=f.scan_submitted_at,
                 ).update(
                     scan_status=ScanStatus.PENDING,
                     scan_error_kind="",

@@ -198,9 +198,24 @@ class DownloadFileView(APIView):
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
-        denied = _denied_access_response(transfer)
-        if denied is not None:
-            return denied
+        # Resuming an interrupted download needs no special case on an
+        # active transfer. The one place the access check would wrongly
+        # refuse it is a one-shot transfer: its first full download flipped
+        # the row to PENDING_FILE_DELETION, but the bytes stay on S3 until
+        # ``pending_deletion_at`` precisely so in-flight downloads can
+        # finish. ``?resume=1`` (set by the decryption Service Worker on a
+        # ranged re-fetch) is let through during that grace window.
+        resuming = request.query_params.get("resume") == "1"
+        resume_grace = resuming and (
+            transfer.status == TransferStatus.PENDING_FILE_DELETION
+            and transfer.deactivation_reason == DeactivationReason.FIRST_DOWNLOAD
+            and transfer.pending_deletion_at is not None
+            and transfer.pending_deletion_at > timezone.now()
+        )
+        if not resume_grace:
+            denied = _denied_access_response(transfer)
+            if denied is not None:
+                return denied
 
         try:
             transfer_file = transfer.files.get(
@@ -239,6 +254,9 @@ class DownloadFileView(APIView):
             transfer_file.mime_type,
         )
 
+        # Journaled like any other access (the event marks the moment a
+        # presigned URL is handed out); a resume is flagged so the history
+        # can show it as the continuation it is rather than a new download.
         recipient = _resolve_recipient(transfer, request)
         recorded = _record_visitor_event(
             transfer,
@@ -247,6 +265,7 @@ class DownloadFileView(APIView):
             payload={
                 "file_id": str(transfer_file.id),
                 "filename": transfer_file.filename,
+                **({"resume": True} if resuming else {}),
             },
             recipient=recipient,
         )

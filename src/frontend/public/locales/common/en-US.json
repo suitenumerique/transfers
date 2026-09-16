@@ -138,6 +138,7 @@
   "Deactivated": "Deactivated",
   "Deactivate after all files are downloaded": "Deactivate after all files are downloaded",
   "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.": "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.",
+  "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.": "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.",
   "Single-use link. Deactivates after full download.": "Single-use link. Deactivates after full download.",
   "Single-use link. Deactivates after full download by another user.": "Single-use link. Deactivates after full download by another user.",
   "More information": "More information",
@@ -218,5 +219,6 @@
   "The upload failed. Remove the file and add it again.": "The upload failed. Remove the file and add it again.",
   "Something went wrong. Try again.": "Something went wrong. Try again.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "The service can't be reached right now. Check your connection, or try again in a moment.",
-  "Retry": "Retry"
+  "Retry": "Retry",
+  "Download resumed": "Download resumed"
 }

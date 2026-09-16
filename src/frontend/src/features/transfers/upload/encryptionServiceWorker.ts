@@ -48,6 +48,12 @@ export async function ensureEncryptionServiceWorker(): Promise<ServiceWorker | n
   const reg = existing ?? (await navigator.serviceWorker.register("/sw.js", {
     scope: "/",
   }));
+  // Fetch sw.js afresh (bypassing the HTTP cache) so a deployed change
+  // installs now; the worker self-claims on activate. The current worker
+  // keeps serving this visit either way, so no need to wait.
+  if (existing) {
+    void existing.update().catch(() => undefined);
+  }
   await navigator.serviceWorker.ready;
   // .controller can still be null on the very first registration in this
   // tab. Wait for the controllerchange event in that case so the page
@@ -199,9 +205,9 @@ export async function registerEncryptionKey(
 }
 
 // Best-effort key drop on unmount: tells the SW to forget this transfer's
-// key so it doesn't sit in worker memory after the user navigates away.
-// Failure to post is harmless — the worker will be terminated by the
-// browser eventually, and a fresh page load re-registers from scratch.
+// key — from its in-memory registry and from the IndexedDB copy it keeps
+// to survive being terminated. Failure to post is harmless: the stored
+// entry expires with the transfer, and a fresh page load re-registers.
 export function unregisterEncryptionKey(token: string): void {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     return;
@@ -219,13 +225,16 @@ export function unregisterEncryptionKey(token: string): void {
 
 export type DownloadNotice =
   | { kind: "streaming"; requestId: string; fileId: string }
-  | { kind: "failed"; requestId: string; fileId: string; status: number };
+  | { kind: "failed"; requestId: string; fileId: string; status: number }
+  | { kind: "interrupted"; requestId: string; fileId: string };
 
 // Subscribe to the SW's per-download notices (see notifyClients in
 // sw.js): "streaming" once a request's first decrypted bytes are on their
-// way, "failed" when it answered an error and nothing will stream. The
-// notices are broadcast to every page of the origin; callers match
-// ``requestId`` against their own clicks. Returns the unsubscribe.
+// way, "failed" when it answered an error and nothing will stream,
+// "interrupted" when the browser cancelled the stream midway (download
+// paused or cancelled from its download manager). The notices are
+// broadcast to every page of the origin; callers match ``requestId``
+// against their own clicks. Returns the unsubscribe.
 export function onDownloadNotice(
   callback: (notice: DownloadNotice) => void,
 ): () => void {
@@ -245,6 +254,8 @@ export function onDownloadNotice(
         fileId: data.fileId,
         status: typeof data.status === "number" ? data.status : 0,
       });
+    } else if (data.type === "encryption-download-interrupted") {
+      callback({ kind: "interrupted", requestId, fileId: data.fileId });
     }
   };
   navigator.serviceWorker.addEventListener("message", listener);

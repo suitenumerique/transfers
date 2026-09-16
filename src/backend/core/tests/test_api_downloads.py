@@ -9,7 +9,12 @@ from django.utils import timezone
 
 import pytest
 
-from core.enums import ScanStatus, TransferEventType, TransferStatus
+from core.enums import (
+    DeactivationReason,
+    ScanStatus,
+    TransferEventType,
+    TransferStatus,
+)
 from core.factories import TransferFactory, TransferFileFactory, UserFactory
 from core.models import TransferEvent
 from core.tests.conftest import assert_single_event
@@ -313,3 +318,81 @@ class TestRecipientAttribution:
         )
 
         assert delay.call_count == 0
+
+
+@pytest.mark.django_db
+class TestResumeOnOneShotTransfer:
+    """A one-shot transfer flips to PENDING_FILE_DELETION on the first full
+    download but keeps its bytes until ``pending_deletion_at``; the
+    Service Worker's ranged re-fetch (``?resume=1``) is let through in that
+    window (journaled like any access) and refused after it, and never on
+    a fresh download."""
+
+    def _one_shot_after_download(self, grace_left):
+        t = TransferFactory(auto_archive_on_download=True)
+        f = TransferFileFactory(
+            transfer=t, upload_completed_at=timezone.now(), scan_status="clean"
+        )
+        t.status = TransferStatus.PENDING_FILE_DELETION
+        t.deactivation_reason = DeactivationReason.FIRST_DOWNLOAD
+        t.deactivated_at = timezone.now()
+        t.pending_deletion_at = timezone.now() + grace_left
+        t.save()
+        return t, f
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    def test_resume_allowed_during_grace(self, _sign, api_client):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+        url = (
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
+        )
+
+        response = api_client.get(url)
+
+        assert response.status_code == 200
+        assert response.data["url"] == "https://s3/x"
+        # Journaled like any access, flagged as the continuation it is.
+        assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED, resume=True)
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    def test_resume_on_an_active_transfer_is_flagged_too(
+        self, _sign, api_client, transfer_with_file
+    ):
+        t = transfer_with_file
+        f = t.files.first()
+        url = (
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
+        )
+
+        assert api_client.get(url).status_code == 200
+        assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED, resume=True)
+
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    def test_plain_download_carries_no_resume_flag(
+        self, _sign, api_client, transfer_with_file
+    ):
+        t = transfer_with_file
+        f = t.files.first()
+
+        api_client.get(
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json"
+        )
+
+        event = TransferEvent.objects.get(
+            transfer_id=t.id, event_type=TransferEventType.FILE_DOWNLOADED
+        )
+        assert "resume" not in event.payload
+
+    def test_resume_refused_once_the_grace_is_over(self, api_client):
+        t, f = self._one_shot_after_download(-timedelta(minutes=1))
+        url = (
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
+        )
+
+        assert api_client.get(url).status_code == 403
+
+    def test_fresh_download_still_refused_during_grace(self, api_client):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+        url = f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json"
+
+        assert api_client.get(url).status_code == 403

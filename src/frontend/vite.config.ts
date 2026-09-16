@@ -4,11 +4,33 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { visualizer } from "rollup-plugin-visualizer";
 import path from "node:path";
 
+// /_dl/* only exists inside the decryption Service Worker. Caddy answers a
+// plain 404 when such a request reaches it (the worker didn't intercept:
+// hard reload, or the browser's download manager retrying outside any
+// page); Vite's SPA fallback would instead serve index.html as a 200,
+// which a download manager happily saves as a 1 kB "completed" file.
+// Match Caddy so dev shows the same failure prod would.
+const noSpaFallbackForDownloads = (): Plugin => ({
+  name: "transferts:no-spa-fallback-for-downloads",
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      if (req.url?.startsWith("/_dl/")) {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Not found: /_dl/ URLs are served by the decryption Service Worker.");
+        return;
+      }
+      next();
+    });
+  },
+});
+
 export default defineConfig({
   plugins: [
     // See ./tsr.config.json for tanstackRouter config
     tanstackRouter(),
     react(),
+    noSpaFallbackForDownloads(),
     // Opt-in bundle analyzer: emits bundle-stats.json next to the project
     // root when ANALYZE=1. Consumed by `npm run analyze` (see Makefile).
     process.env.ANALYZE === "1" &&
