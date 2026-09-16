@@ -232,8 +232,11 @@ the key in an in-memory registry and, because the browser terminates idle
 workers (Firefox after ~30 s), also in IndexedDB as a **non-extractable**
 `CryptoKey` (the raw bytes are never readable from storage) together with
 the file metadata and the transfer's expiry. A fresh worker instance
-reloads it from there. The entry is deleted on `encryption-unregister`
-(page unmount) and swept once expired.
+reloads it from there. The entry records the pages holding it (client
+ids; a page re-registers whenever it returns to the foreground): an
+`encryption-unregister` (page unmount) releases that page only, and the
+entry is deleted once its last live page has let go, or swept once
+expired.
 
 ## Upload pipeline
 
@@ -567,12 +570,30 @@ naming the file and asking to click it again. On any browser, clicking
 the file again on the page restarts the download, and that works after
 the browser killed the worker because the key survives in IndexedDB.
 
+A one-shot transfer (`auto_archive_on_download`) flips to
+`PENDING_FILE_DELETION` on the first download and refuses the link from
+then on, while the bytes stay on S3 until `pending_deletion_at` for
+in-flight downloads to finish. A resume must get through that refusal
+without reopening the link to everyone who has it, so every download URL
+the backend hands the worker (`?as=json`) comes with a **resume
+capability**: a `TimestampSigner` token bound to the transfer and file,
+valid for the grace window. The worker keeps it with the file entry (so
+it survives a worker restart) and sends it back as `?resume=<token>`
+when the request continues an earlier download — a ranged re-fetch by
+the download manager, or a click on a file the page knows was
+interrupted (`?resume=1` on the `/_dl/` URL). The backend lets a valid
+capability through during the grace window and journals the access as a
+resume (`payload.resume`); a bare `?resume=1` or a token for another
+file is a fresh download, refused like any other.
+
 ### Service Worker scope
 
 `/sw.js` is served at the root with `Cache-Control: no-cache` so a new
 deploy's SW activates on the next page load. `DownloadView` sends
-`encryption-unregister` on unmount, which drops the key from the worker's
-registry and from its IndexedDB store; entries also expire with their
+`encryption-unregister` on unmount, which releases this page's hold on
+the key; the worker drops it from its registry and its IndexedDB store
+once no live page holds it (client ids that vanished without releasing
+are pruned on every register/release). Entries also expire with their
 transfer.
 
 ### Chunk size knob

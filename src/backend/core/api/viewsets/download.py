@@ -6,7 +6,10 @@ their own transfer is recognised — those self-views are skipped from the
 recipient activity log.
 """
 
+from datetime import timedelta
+
 from django.conf import settings
+from django.core import signing
 from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.utils import timezone
@@ -28,6 +31,31 @@ from core.services.recipient_activity import files_downloaded_by
 from core.services.s3 import sign_download_url
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
+
+RESUME_TOKEN_SALT = "transfer-download-resume"
+
+
+def _resume_token(transfer, file_id) -> str:
+    """Capability handed out with a download URL: proves its holder already
+    obtained this file, so it may fetch it again to finish an interrupted
+    download — including on a one-shot transfer, during the grace window
+    that keeps the bytes on S3 after the first download. Signed and bound
+    to the transfer and file; it ages out with the grace window."""
+    return signing.TimestampSigner(salt=RESUME_TOKEN_SALT).sign(
+        f"{transfer.id}:{file_id}"
+    )
+
+
+def _resume_token_valid(token, transfer, file_id) -> bool:
+    if not token:
+        return False
+    try:
+        value = signing.TimestampSigner(salt=RESUME_TOKEN_SALT).unsign(
+            token, max_age=timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
+        )
+    except signing.BadSignature:
+        return False
+    return value == f"{transfer.id}:{file_id}"
 
 
 def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
@@ -203,9 +231,13 @@ class DownloadFileView(APIView):
         # refuse it is a one-shot transfer: its first full download flipped
         # the row to PENDING_FILE_DELETION, but the bytes stay on S3 until
         # ``pending_deletion_at`` precisely so in-flight downloads can
-        # finish. ``?resume=1`` (set by the decryption Service Worker on a
-        # ranged re-fetch) is let through during that grace window.
-        resuming = request.query_params.get("resume") == "1"
+        # finish. A request carrying the resume capability issued with an
+        # earlier download URL (``?resume=<token>``, sent by the decryption
+        # Service Worker when it re-fetches) is let through during that
+        # grace window; anyone else holding the link is still refused.
+        resuming = _resume_token_valid(
+            request.query_params.get("resume"), transfer, file_id
+        )
         resume_grace = resuming and (
             transfer.status == TransferStatus.PENDING_FILE_DELETION
             and transfer.deactivation_reason == DeactivationReason.FIRST_DOWNLOAD
@@ -322,7 +354,9 @@ class DownloadFileView(APIView):
         # download-credential-equivalent URL, so forbid every cache layer
         # (browser, CDN, intermediate proxy) from retaining it.
         if request.query_params.get("as") == "json":
-            response = Response({"url": url})
+            response = Response(
+                {"url": url, "resume": _resume_token(transfer, transfer_file.id)}
+            )
             response["Cache-Control"] = "no-store"
             return response
 

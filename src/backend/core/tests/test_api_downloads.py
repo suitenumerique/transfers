@@ -9,6 +9,7 @@ from django.utils import timezone
 
 import pytest
 
+from core.api.viewsets.download import _resume_token
 from core.enums import (
     DeactivationReason,
     ScanStatus,
@@ -169,7 +170,10 @@ class TestDownloadFileView:
             f"{DOWNLOADS_URL}/{t.public_token}/files/{tf.id}/download/?as=json"
         )
         assert response.status_code == 200
-        assert response.data == {"url": "https://s3.example.com/signed-get-url"}
+        assert response.data["url"] == "https://s3.example.com/signed-get-url"
+        # Alongside it, the capability the Service Worker sends back to
+        # resume this very file (see TestResumeOnOneShotTransfer).
+        assert response.data["resume"] == _resume_token(t, tf.id)
         # The presigned URL is short-lived and single-recipient — it must never
         # be cached by a proxy or the browser.
         assert response["Cache-Control"] == "no-store"
@@ -323,10 +327,12 @@ class TestRecipientAttribution:
 @pytest.mark.django_db
 class TestResumeOnOneShotTransfer:
     """A one-shot transfer flips to PENDING_FILE_DELETION on the first full
-    download but keeps its bytes until ``pending_deletion_at``; the
-    Service Worker's ranged re-fetch (``?resume=1``) is let through in that
-    window (journaled like any access) and refused after it, and never on
-    a fresh download."""
+    download but keeps its bytes until ``pending_deletion_at``. The Service
+    Worker's re-fetch carries the resume capability issued with the first
+    download URL (``?resume=<token>``): let through in that window
+    (journaled like any access, flagged), refused after it, and a request
+    without the capability — or with one bound to another file — is a
+    fresh download, refused like any other."""
 
     def _one_shot_after_download(self, grace_left):
         t = TransferFactory(auto_archive_on_download=True)
@@ -340,12 +346,17 @@ class TestResumeOnOneShotTransfer:
         t.save()
         return t, f
 
+    @staticmethod
+    def _resume_url(t, f, token):
+        return (
+            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/"
+            f"?as=json&resume={token}"
+        )
+
     @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
     def test_resume_allowed_during_grace(self, _sign, api_client):
         t, f = self._one_shot_after_download(timedelta(hours=1))
-        url = (
-            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
-        )
+        url = self._resume_url(t, f, _resume_token(t, f.id))
 
         response = api_client.get(url)
 
@@ -360,9 +371,7 @@ class TestResumeOnOneShotTransfer:
     ):
         t = transfer_with_file
         f = t.files.first()
-        url = (
-            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
-        )
+        url = self._resume_url(t, f, _resume_token(t, f.id))
 
         assert api_client.get(url).status_code == 200
         assert_single_event(t.id, TransferEventType.FILE_DOWNLOADED, resume=True)
@@ -385,14 +394,46 @@ class TestResumeOnOneShotTransfer:
 
     def test_resume_refused_once_the_grace_is_over(self, api_client):
         t, f = self._one_shot_after_download(-timedelta(minutes=1))
-        url = (
-            f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json&resume=1"
-        )
+        url = self._resume_url(t, f, _resume_token(t, f.id))
 
         assert api_client.get(url).status_code == 403
 
     def test_fresh_download_still_refused_during_grace(self, api_client):
         t, f = self._one_shot_after_download(timedelta(hours=1))
         url = f"{DOWNLOADS_URL}/{t.public_token}/files/{f.id}/download/?as=json"
+
+        assert api_client.get(url).status_code == 403
+
+    def test_resume_flag_without_the_capability_is_a_fresh_download(
+        self, api_client
+    ):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+
+        assert api_client.get(self._resume_url(t, f, "1")).status_code == 403
+        assert TransferEvent.objects.filter(transfer_id=t.id).count() == 0
+
+    def test_capability_is_bound_to_the_file(self, api_client):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+        other = TransferFileFactory(
+            transfer=t, upload_completed_at=timezone.now(), scan_status="clean"
+        )
+
+        url = self._resume_url(t, f, _resume_token(t, other.id))
+
+        assert api_client.get(url).status_code == 403
+
+    def test_capability_is_bound_to_the_transfer(self, api_client):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+        other_t, _ = self._one_shot_after_download(timedelta(hours=1))
+
+        url = self._resume_url(t, f, _resume_token(other_t, f.id))
+
+        assert api_client.get(url).status_code == 403
+
+    def test_tampered_capability_is_refused(self, api_client):
+        t, f = self._one_shot_after_download(timedelta(hours=1))
+        token = _resume_token(t, f.id)
+
+        url = self._resume_url(t, f, token[:-3] + "xyz")
 
         assert api_client.get(url).status_code == 403
