@@ -9,7 +9,7 @@ from django.utils import timezone
 
 import pytest
 
-from core.api.viewsets.download import _resume_token
+from core.api.viewsets.download import _resume_token, _resume_token_valid
 from core.enums import (
     DeactivationReason,
     ScanStatus,
@@ -173,7 +173,8 @@ class TestDownloadFileView:
         assert response.data["url"] == "https://s3.example.com/signed-get-url"
         # Alongside it, the capability the Service Worker sends back to
         # resume this very file (see TestResumeOnOneShotTransfer).
-        assert response.data["resume"] == _resume_token(t, tf.id)
+        assert _resume_token_valid(response.data["resume"], t, tf.id)
+        assert not _resume_token_valid(response.data["resume"], t, uuid.uuid4())
         # The presigned URL is short-lived and single-recipient — it must never
         # be cached by a proxy or the browser.
         assert response["Cache-Control"] == "no-store"

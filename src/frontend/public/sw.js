@@ -52,18 +52,43 @@ function openStore() {
 
 function storeRequest(mode, run) {
   // Small IDB helper: open, run one request in a transaction, resolve with
-  // its result. Storage failures are swallowed by callers — the in-memory
-  // registry still works for the life of this worker instance.
+  // its result once the transaction has committed (a write is only on
+  // disk then — the worker can be killed right after). Storage failures
+  // are swallowed by callers — the in-memory registry still works for the
+  // life of this worker instance.
   return openStore().then(
     (db) =>
       new Promise((resolve, reject) => {
         const tx = db.transaction(STORE, mode);
         const req = run(tx.objectStore(STORE));
-        req.onsuccess = () => resolve(req.result);
+        let result;
+        req.onsuccess = () => {
+          result = req.result;
+        };
         req.onerror = () => reject(req.error);
-        tx.oncomplete = () => db.close();
+        tx.onabort = () => reject(tx.error);
+        tx.oncomplete = () => {
+          db.close();
+          resolve(result);
+        };
       }),
   );
+}
+
+// Registrations and releases of one token run one at a time: each is a
+// read-modify-write over REGISTRY and the store with awaits in the middle
+// (load, live-client lookup), so two pages registering at once, or a
+// release racing a fresh registration, must not lose each other's
+// clients or delete what the other just wrote.
+const TOKEN_QUEUES = new Map();
+function serialized(token, work) {
+  const previous = TOKEN_QUEUES.get(token) || Promise.resolve();
+  const run = previous.then(work, work);
+  const settled = run.catch(() => {}).then(() => {
+    if (TOKEN_QUEUES.get(token) === settled) TOKEN_QUEUES.delete(token);
+  });
+  TOKEN_QUEUES.set(token, settled);
+  return run;
 }
 
 function persistEntry(token, entry) {
@@ -126,17 +151,19 @@ async function pruneClients(entry) {
 // transfer keep it: the entry only goes once its last client has released
 // it (or on expiry), so a download paused in one tab still resumes after
 // another tab of the same link was closed.
-async function releaseEntry(token, clientId) {
-  const entry = REGISTRY.get(token) || (await loadEntry(token));
-  if (!entry) return;
-  entry.clients.delete(clientId);
-  await pruneClients(entry);
-  if (entry.clients.size > 0) {
-    await persistEntry(token, entry);
-    return;
-  }
-  REGISTRY.delete(token);
-  await forgetEntry(token);
+function releaseEntry(token, clientId) {
+  return serialized(token, async () => {
+    const entry = REGISTRY.get(token) || (await loadEntry(token));
+    if (!entry) return;
+    entry.clients.delete(clientId);
+    await pruneClients(entry);
+    if (entry.clients.size > 0) {
+      await persistEntry(token, entry);
+      return;
+    }
+    REGISTRY.delete(token);
+    await forgetEntry(token);
+  });
 }
 
 async function sweepExpired() {
@@ -217,55 +244,57 @@ async function registerKey({ token, keyBytes, files, apiOrigin, expiresAt }, cli
     false,
     ["decrypt"],
   );
-  // A page re-registers on every return to the foreground and other tabs
-  // of the same link register too: what the earlier registrations
-  // accumulated — the pages holding the key, each file's resume
-  // capability — carries over.
-  const existing = REGISTRY.get(token) || (await loadEntry(token));
-  const fileMap = new Map();
-  for (const f of files) {
-    if (
-      !f ||
-      typeof f.id !== "string" ||
-      !f.id ||
-      typeof f.filename !== "string" ||
-      !Number.isInteger(f.plaintextSize) ||
-      f.plaintextSize <= 0 ||
-      !Number.isInteger(f.chunkSize) ||
-      f.chunkSize <= 0
-    ) {
-      // One bad entry drops the whole registration: partial state would let
-      // the page ack "ready" and then error only for the unlisted files,
-      // which is harder to reason about than a single loud failure.
-      throw new Error("Invalid file entry in encryption-register payload");
+  return serialized(token, async () => {
+    // A page re-registers on every return to the foreground and other tabs
+    // of the same link register too: what the earlier registrations
+    // accumulated — the pages holding the key, each file's resume
+    // capability — carries over.
+    const existing = REGISTRY.get(token) || (await loadEntry(token));
+    const fileMap = new Map();
+    for (const f of files) {
+      if (
+        !f ||
+        typeof f.id !== "string" ||
+        !f.id ||
+        typeof f.filename !== "string" ||
+        !Number.isInteger(f.plaintextSize) ||
+        f.plaintextSize <= 0 ||
+        !Number.isInteger(f.chunkSize) ||
+        f.chunkSize <= 0
+      ) {
+        // One bad entry drops the whole registration: partial state would let
+        // the page ack "ready" and then error only for the unlisted files,
+        // which is harder to reason about than a single loud failure.
+        throw new Error("Invalid file entry in encryption-register payload");
+      }
+      const known = existing && existing.files.get(f.id);
+      fileMap.set(f.id, {
+        plaintextSize: f.plaintextSize,
+        chunkSize: f.chunkSize,
+        filename: f.filename,
+        mimeType: typeof f.mimeType === "string" && f.mimeType
+          ? f.mimeType
+          : "application/octet-stream",
+        resumeToken: (known && known.resumeToken) || "",
+      });
     }
-    const known = existing && existing.files.get(f.id);
-    fileMap.set(f.id, {
-      plaintextSize: f.plaintextSize,
-      chunkSize: f.chunkSize,
-      filename: f.filename,
-      mimeType: typeof f.mimeType === "string" && f.mimeType
-        ? f.mimeType
-        : "application/octet-stream",
-      resumeToken: (known && known.resumeToken) || "",
-    });
-  }
-  const entry = {
-    key,
-    files: fileMap,
-    clients: new Set(existing ? existing.clients : []),
-    apiOrigin: typeof apiOrigin === "string" ? apiOrigin : "",
-    // Fallback: a transfer lives at most 30 days, so a payload without an
-    // expiry still ages out of the store.
-    expiresAt:
-      Number.isFinite(expiresAt) && expiresAt > 0
-        ? expiresAt
-        : Date.now() + 30 * 24 * 3600 * 1000,
-  };
-  await pruneClients(entry);
-  if (clientId) entry.clients.add(clientId);
-  REGISTRY.set(token, entry);
-  await persistEntry(token, entry);
+    const entry = {
+      key,
+      files: fileMap,
+      clients: new Set(existing ? existing.clients : []),
+      apiOrigin: typeof apiOrigin === "string" ? apiOrigin : "",
+      // Fallback: a transfer lives at most 30 days, so a payload without an
+      // expiry still ages out of the store.
+      expiresAt:
+        Number.isFinite(expiresAt) && expiresAt > 0
+          ? expiresAt
+          : Date.now() + 30 * 24 * 3600 * 1000,
+    };
+    await pruneClients(entry);
+    if (clientId) entry.clients.add(clientId);
+    REGISTRY.set(token, entry);
+    await persistEntry(token, entry);
+  });
 }
 
 self.addEventListener("fetch", (event) => {
@@ -377,8 +406,10 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
     return new Response("Backend returned no download URL.", { status: 502 });
   }
   if (typeof resumeToken === "string" && resumeToken !== meta.resumeToken) {
+    // Committed before the stream starts: past respondWith the worker can
+    // be killed at any time, and a resume after that needs the token.
     meta.resumeToken = resumeToken;
-    void persistEntry(token, entry);
+    await persistEntry(token, entry);
   }
   // A "Range: bytes=START-END" request is served as a 206: chunks are
   // independent AES-GCM blocks, so we fetch S3 from the chunk that holds
