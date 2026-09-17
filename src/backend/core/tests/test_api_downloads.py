@@ -404,9 +404,7 @@ class TestResumeOnOneShotTransfer:
 
         assert api_client.get(url).status_code == 403
 
-    def test_resume_flag_without_the_capability_is_a_fresh_download(
-        self, api_client
-    ):
+    def test_resume_flag_without_the_capability_is_a_fresh_download(self, api_client):
         t, f = self._one_shot_after_download(timedelta(hours=1))
 
         assert api_client.get(self._resume_url(t, f, "1")).status_code == 403

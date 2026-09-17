@@ -32,7 +32,10 @@ from core.services.s3 import sign_download_url
 
 TRANSFER_NOT_FOUND_BODY = {"detail": "Transfer not found.", "reason": "not_found"}
 
-RESUME_TOKEN_SALT = "transfer-download-resume"
+# Per-purpose namespace for the signature (Django's ``salt``, not a secret:
+# the secret is SECRET_KEY). Keeps a token signed for another use from
+# being accepted here.
+RESUME_SIGNATURE_NAMESPACE = "transfer-download-resume"
 
 
 def _resume_token(transfer, file_id) -> str:
@@ -41,7 +44,7 @@ def _resume_token(transfer, file_id) -> str:
     download — including on a one-shot transfer, during the grace window
     that keeps the bytes on S3 after the first download. Signed and bound
     to the transfer and file; it ages out with the grace window."""
-    return signing.TimestampSigner(salt=RESUME_TOKEN_SALT).sign(
+    return signing.TimestampSigner(salt=RESUME_SIGNATURE_NAMESPACE).sign(
         f"{transfer.id}:{file_id}"
     )
 
@@ -50,7 +53,7 @@ def _resume_token_valid(token, transfer, file_id) -> bool:
     if not token:
         return False
     try:
-        value = signing.TimestampSigner(salt=RESUME_TOKEN_SALT).unsign(
+        value = signing.TimestampSigner(salt=RESUME_SIGNATURE_NAMESPACE).unsign(
             token, max_age=timedelta(hours=settings.TRANSFER_PURGE_DELAY_HOURS)
         )
     except signing.BadSignature:
