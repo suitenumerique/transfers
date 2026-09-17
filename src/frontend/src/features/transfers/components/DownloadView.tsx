@@ -137,6 +137,11 @@ export function DownloadView({
         const fileId = requestsRef.current.get(notice.requestId);
         if (!fileId) return; // not ours
         if (notice.kind === "interrupted") {
+          // Also reached before any byte went out (the download cancelled
+          // while "preparing"): nothing will stream, so settle the click
+          // here too.
+          settle(notice.requestId);
+          dropIframe(notice.requestId);
           interruptedRef.current.add(fileId);
           if (IS_FIREFOX) {
             setInterruptedIds((prev) => new Set(prev).add(fileId));
