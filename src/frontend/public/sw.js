@@ -395,7 +395,13 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
     (continuing && meta.resumeToken
       ? `&resume=${encodeURIComponent(meta.resumeToken)}`
       : "");
-  const meta_resp = await fetch(backendUrl, { credentials: "include" });
+  // Never from the HTTP cache: each negotiation is an audited access,
+  // and an error answer (a 410 is cacheable by default) must not outlive
+  // the state it described.
+  const meta_resp = await fetch(backendUrl, {
+    credentials: "include",
+    cache: "no-store",
+  });
   if (!meta_resp.ok) {
     return new Response("Failed to negotiate download URL.", {
       status: meta_resp.status || 502,
@@ -467,15 +473,29 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
     // anyway because the URL is one-shot per click.
     "Cache-Control": "no-store",
   };
-  // The browser cancelling the body (download paused or cancelled from
-  // its download manager) is reported to the page: on Firefox the
-  // recipient must restart from the page, and this is the only signal
-  // the page ever gets of it.
-  const onCancel = () =>
-    notifyClients({ type: "encryption-download-interrupted", requestId, fileId });
+  // What happens to the body after the headers went out is reported to
+  // the page, which otherwise never hears of it: the browser cancelling
+  // it (download paused or cancelled from its download manager — on
+  // Firefox the recipient must restart from the page), or the stream
+  // failing (S3 dropped the connection, a chunk did not authenticate)
+  // before or after the first bytes, so the click does not stay pending.
+  const watched = (body) =>
+    watchStream(
+      body,
+      () =>
+        notifyClients({ type: "encryption-download-interrupted", requestId, fileId }),
+      (err) =>
+        notifyClients({
+          type: "encryption-download-failed",
+          requestId,
+          fileId,
+          status: 0,
+          message: err && err.message ? String(err.message) : String(err),
+        }),
+    );
   if (!range) {
     headers["Content-Length"] = String(meta.plaintextSize);
-    return new Response(watchCancel(decrypted, onCancel), { headers });
+    return new Response(watched(decrypted), { headers });
   }
   const skip = range.start - startChunk * meta.chunkSize;
   const length = range.end - range.start + 1;
@@ -483,21 +503,28 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   headers["Content-Length"] = String(length);
   headers["Content-Range"] =
     "bytes " + range.start + "-" + range.end + "/" + meta.plaintextSize;
-  return new Response(watchCancel(decrypted, onCancel), { status: 206, headers });
+  return new Response(watched(decrypted), { status: 206, headers });
 }
 
-// Pass ``readable`` through unchanged and call ``onCancel`` if the
-// consumer cancels it (a pipe forwards the cancel upstream, so the
-// decrypt transform and the S3 fetch stop too). A normal end-of-stream
-// or an upstream error is not a cancel.
-function watchCancel(readable, onCancel) {
+// Pass ``readable`` through unchanged; call ``onCancel`` if the consumer
+// cancels it (a pipe forwards the cancel upstream, so the decrypt
+// transform and the S3 fetch stop too) and ``onError`` if it fails
+// upstream (the error still propagates, so the browser fails the
+// download). A normal end-of-stream is neither.
+function watchStream(readable, onCancel, onError) {
   const reader = readable.getReader();
   return new ReadableStream({
     pull(controller) {
-      return reader.read().then(({ done, value }) => {
-        if (done) controller.close();
-        else controller.enqueue(value);
-      });
+      return reader.read().then(
+        ({ done, value }) => {
+          if (done) controller.close();
+          else controller.enqueue(value);
+        },
+        (err) => {
+          onError(err);
+          throw err;
+        },
+      );
     },
     cancel(reason) {
       onCancel();
