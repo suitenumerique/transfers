@@ -311,13 +311,27 @@ self.addEventListener("fetch", (event) => {
   // the page matches them to its own pending download and not to another
   // tab's (or an earlier click's) request for the same file.
   const requestId = url.searchParams.get("dl") || "";
+  // Every notice about this request goes out under the event's lifetime:
+  // the body transfer keeps the event pending, so waitUntil is allowed
+  // from the stream callbacks and the worker isn't torn down with a
+  // message still on its way. (Should the event be finished after all,
+  // the notice is still sent, just unprotected.)
+  const notify = (message) => {
+    const sent = notifyClients({ ...message, requestId, fileId });
+    try {
+      event.waitUntil(sent);
+    } catch {
+      // Event already settled: nothing to extend.
+    }
+    return sent;
+  };
   // Wrap in a top-level try/catch: an unhandled throw inside handleDownload
   // makes respondWith() reject, and Firefox reports that as an opaque
   // "ServiceWorker … encountered an unexpected error" with no way to know
   // whether it's a network hiccup, a decrypt failure, or a bug. A readable
   // Response with the message keeps diagnostics possible.
   event.respondWith(
-    handleDownload(token, fileId, recipientToken, requestId, event.request)
+    handleDownload(token, fileId, recipientToken, event.request, notify)
       .catch((err) => {
         const message =
           (err && err.message) || "Unexpected error while streaming the download.";
@@ -328,24 +342,16 @@ self.addEventListener("fetch", (event) => {
       })
       .then((response) => {
         // Nothing will stream for an error response: tell the page so it
-        // stops showing "preparing…" and drops the iframe. Kept alive by
-        // waitUntil so the worker isn't torn down before the message goes.
+        // stops showing "preparing…" and drops the iframe.
         if (response.status >= 400) {
-          event.waitUntil(
-            notifyClients({
-              type: "encryption-download-failed",
-              requestId,
-              fileId,
-              status: response.status,
-            }),
-          );
+          notify({ type: "encryption-download-failed", status: response.status });
         }
         return response;
       }),
   );
 });
 
-async function handleDownload(token, fileId, recipientToken, requestId, request) {
+async function handleDownload(token, fileId, recipientToken, request, notify) {
   const entry = REGISTRY.get(token) || (await loadEntry(token));
   if (!entry) {
     // Neither in memory nor in the store: the page never registered this
@@ -460,7 +466,7 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
       meta.plaintextSize,
       fileId,
       startChunk + 1,
-      requestId,
+      () => notify({ type: "encryption-download-streaming" }),
     ),
   );
   const headers = {
@@ -482,13 +488,10 @@ async function handleDownload(token, fileId, recipientToken, requestId, request)
   const watched = (body) =>
     watchStream(
       body,
-      () =>
-        notifyClients({ type: "encryption-download-interrupted", requestId, fileId }),
+      () => notify({ type: "encryption-download-interrupted" }),
       (err) =>
-        notifyClients({
+        notify({
           type: "encryption-download-failed",
-          requestId,
-          fileId,
           status: 0,
           message: err && err.message ? String(err.message) : String(err),
         }),
@@ -577,7 +580,7 @@ function decryptStream(
   plaintextSize,
   fileId,
   startPart = 1,
-  requestId = "",
+  onStreaming = () => {},
 ) {
   // Per-chunk ciphertext size on S3. The last chunk is shorter; we figure
   // out which one we're on by tracking how many plaintext bytes remain.
@@ -616,7 +619,7 @@ function decryptStream(
     controller.enqueue(plain);
     if (!streaming) {
       streaming = true;
-      notifyClients({ type: "encryption-download-streaming", requestId, fileId });
+      onStreaming();
     }
   };
 
