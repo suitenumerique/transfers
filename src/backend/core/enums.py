@@ -56,11 +56,11 @@ class ScanStatus(models.TextChoices):
     """Antivirus scan state of a file.
 
     A file is born ``PENDING`` and is only downloadable once it reaches
-    ``CLEAN``. ``INFECTED`` and ``ERROR`` are terminal blocks — the download
-    path fails closed on anything that isn't ``CLEAN`` or ``SKIPPED``.
-    ``SKIPPED`` means scanning was disabled on this instance: the file was
-    never scanned, so it carries no "clean" claim, but stays downloadable.
-    Transitions are driven by the clamav file-scanner webhook, never the user.
+    ``CLEAN`` or a scan-exempt status (``SKIPPED``, ``TOO_LARGE``,
+    ``UNSCANNABLE``): never scanned, so no "clean" claim, but downloadable
+    with a "not scanned" notice. ``INFECTED`` and ``ERROR`` are terminal
+    blocks — the download path fails closed on anything else. Transitions
+    are driven by the file-scanner webhook, never the user.
     """
 
     PENDING = "pending", "Pending"
@@ -72,6 +72,10 @@ class ScanStatus(models.TextChoices):
     # tighter). Not scanned, but still downloadable — like SKIPPED, with an
     # honest "too large to scan" label instead of a clean claim.
     TOO_LARGE = "too_large", "Too large to scan"
+    # The scanner ran and could not examine the file: an encrypted or
+    # unreadable container. A property of the file, so no retry; not a
+    # detection either. Downloadable like TOO_LARGE, with a warning.
+    UNSCANNABLE = "unscannable", "Could not be scanned"
 
 
 class SharingMode(models.TextChoices):
