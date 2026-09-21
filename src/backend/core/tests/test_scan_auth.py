@@ -26,12 +26,20 @@ def _keypair() -> tuple[str, str]:
     """Fresh Ed25519 keypair as unpadded base64url — the wire format the
     scanner's ``deploy/scripts/new-issuer.py`` emits."""
     key = Ed25519PrivateKey.generate()
-    private = base64.urlsafe_b64encode(
-        key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
-    ).rstrip(b"=").decode()
-    public = base64.urlsafe_b64encode(
-        key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    ).rstrip(b"=").decode()
+    private = (
+        base64.urlsafe_b64encode(
+            key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        )
+        .rstrip(b"=")
+        .decode()
+    )
+    public = (
+        base64.urlsafe_b64encode(
+            key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     return private, public
 
 
@@ -72,9 +80,7 @@ def test_mint_binds_body_hash_when_body_is_given(signing_setup):
     scanner rejects the token."""
     public = signing_setup
     body = b'{"url":"http://s/x","filename":"f"}'
-    token = scan_auth.mint_request_token(
-        "POST", "/api/v1.0/scan-async", body=body
-    )
+    token = scan_auth.mint_request_token("POST", "/api/v1.0/scan-async", body=body)
     claims = _verify(token, public)
     expected = (
         base64.urlsafe_b64encode(hashlib.sha256(body).digest()).rstrip(b"=").decode()

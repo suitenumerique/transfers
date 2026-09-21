@@ -742,6 +742,19 @@ export function TransferForm() {
                         </span>
                       </Tooltip>
                     )}
+                    {showScan && df.scanStatus === "unscannable" && (
+                      <Tooltip
+                        content={t(
+                          "This file could not be scanned (an encrypted or unreadable archive). It will be sent unscanned, and the recipient will be told.",
+                        )}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--warning">
+                          <Warning />
+                          {t("Not scanned")}
+                        </span>
+                      </Tooltip>
+                    )}
                   </>
                 );
                 const action = (

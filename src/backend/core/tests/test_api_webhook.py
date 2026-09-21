@@ -55,6 +55,61 @@ class TestScanResultWebhook:
         assert f.scan_status == ScanStatus.INFECTED
         assert f.scan_error_kind == ""
 
+    def test_per_engine_reports_are_logged(self, api_client):
+        """With several engines on a file, the log says which one said what —
+        the only place that detail is kept."""
+        f = self._file()
+        payload = {
+            "status": "done",
+            "malware": True,
+            "scanners": [
+                {"scanner": "clamav", "category": "malware", "kind": "clean"},
+                {
+                    "scanner": "exav",
+                    "category": "malware",
+                    "kind": "malware",
+                    "reason": "Eicar",
+                },
+                "garbage",
+            ],
+        }
+        with patch("core.api.viewsets.webhook.logger") as log:
+            _post(api_client, f.id, "s3cr3t", payload)
+        message = log.info.call_args.args[0] % log.info.call_args.args[1:]
+        assert message.endswith(" [clamav=clean, exav=malware:Eicar]")
+
+    def test_scan_ran_but_could_not_read_the_file(self, api_client):
+        """The scanner examined the file and could not read it (an encrypted
+        or unreadable archive): scan-exempt with a warning — no retry, no
+        detection, still downloadable."""
+        f = self._file()
+        payload = {
+            "status": "done",
+            "malware": None,
+            "error_kind": "file",
+            "error": "not fully scanned: exav (PASSWORD-PROTECTED)",
+            "scanners": [
+                {
+                    "scanner": "exav",
+                    "category": "malware",
+                    "kind": "unscannable",
+                    "reason": "PASSWORD-PROTECTED",
+                },
+            ],
+        }
+        resp = _post(api_client, f.id, "s3cr3t", payload)
+        assert resp.status_code == 200
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.UNSCANNABLE
+        assert f.scan_error_kind == ""
+
+    def test_unknown_verdict_without_file_blame_is_a_transient_error(self, api_client):
+        f = self._file()
+        _post(api_client, f.id, "s3cr3t", {"status": "done", "malware": None})
+        f.refresh_from_db()
+        assert f.scan_status == ScanStatus.ERROR
+        assert f.scan_error_kind == "transient"
+
     def test_error_file_kind(self, api_client):
         f = self._file()
         resp = _post(
@@ -204,7 +259,16 @@ class TestFinalizeScanGate:
         assert resp.data["reason"] == "scan_blocked"
         assert str(f.id) in resp.data["blocked_file_ids"]
 
-    def test_unscannable_blocks(self, user, authenticated_client):
+    def test_unscannable_file_finalizes_as_scan_exempt(
+        self, user, authenticated_client
+    ):
+        # An archive the scanner could not read goes out like a too-large
+        # file: not scanned, with the recipient warned.
+        draft, _ = self._draft_with_file(user, ScanStatus.UNSCANNABLE)
+        resp = self._finalize(authenticated_client, draft.id)
+        assert resp.status_code == 200
+
+    def test_file_error_blocks(self, user, authenticated_client):
         draft, f = self._draft_with_file(user, ScanStatus.ERROR, "file")
         resp = self._finalize(authenticated_client, draft.id)
         assert resp.status_code == 400

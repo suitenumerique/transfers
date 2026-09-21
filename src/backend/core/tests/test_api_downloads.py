@@ -96,6 +96,32 @@ class TestDownloadTransferView:
 
 @pytest.mark.django_db
 class TestDownloadFileView:
+    @pytest.mark.parametrize(
+        "scan_status, expected",
+        [
+            (ScanStatus.CLEAN, 302),
+            (ScanStatus.SKIPPED, 302),
+            (ScanStatus.TOO_LARGE, 302),
+            (ScanStatus.UNSCANNABLE, 302),
+            (ScanStatus.PENDING, 202),
+            (ScanStatus.INFECTED, 403),
+            (ScanStatus.ERROR, 403),
+        ],
+    )
+    @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
+    def test_scan_gate(self, _sign, api_client, transfer, scan_status, expected):
+        """Only a clean or scan-exempt file is handed out; the gate fails
+        closed on everything else."""
+        tf = TransferFileFactory(
+            transfer=transfer,
+            upload_completed_at=timezone.now(),
+            scan_status=scan_status,
+        )
+        response = api_client.get(
+            f"{DOWNLOADS_URL}/{transfer.public_token}/files/{tf.id}/download/"
+        )
+        assert response.status_code == expected
+
     @patch("core.api.viewsets.download.sign_download_url")
     def test_download_file_redirects(self, mock_sign, api_client, transfer_with_file):
         t = transfer_with_file
