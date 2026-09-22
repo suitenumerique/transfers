@@ -1,6 +1,14 @@
 {
 	auto_https off
 	admin off
+	servers {
+		# {client_ip} is the TCP peer, unless the peer is one of these
+		# proxies: then it comes from X-Forwarded-For, walked right to
+		# left to the first address that is not a trusted proxy
+		# (trusted_proxies_strict). A client-appended prefix never wins.
+		trusted_proxies static {$TRANSFERTS_FRONTEND_TRUSTED_PROXIES}
+		trusted_proxies_strict
+	}
 }
 
 :{$PORT} {
@@ -43,31 +51,40 @@
 		respond /__lbheartbeat__ 200
 		respond /__lbheartbeat__/ 200
 
-		# X-Forwarded-For is propagated as-is from Scalingo's edge router so
-		# the backend sees the real client IP. Setting {remote_host} here
-		# would overwrite it with the internal HAProxy peer (a 10.0.0.x
-		# address) and the audit log would lose the user's IP.
+		# The backend gets the client IP Caddy established (see the global
+		# trusted_proxies block): one address, never a client-written chain,
+		# and the audit log keeps the user's IP as long as the edge router
+		# is a trusted proxy.
 		reverse_proxy /__heartbeat__/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
+			header_up X-Forwarded-For {client_ip}
 		}
 
 		# Django backend proxy
 		reverse_proxy /api/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
+			header_up X-Forwarded-For {client_ip}
 		}
+
+		# Django admin IP allowlist. The default admits every client (no
+		# filtering); a CIDR list restricts the admin URL to those clients,
+		# as established above — a spoofed X-Forwarded-For does not pass.
+		@admin_denied {
+			path /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/*
+			not client_ip {$DJANGO_ADMIN_IP_ALLOWLIST:0.0.0.0/0 ::/0}
+		}
+		respond @admin_denied 403
 
 		redir /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/ 301
 
 		reverse_proxy /{$DJANGO_ADMIN_URL:admin}/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
+			header_up X-Forwarded-For {client_ip}
 		}
 
 		reverse_proxy /static/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-For {http.request.header.x-forwarded-for}
+			header_up X-Forwarded-For {client_ip}
 		}
 
 		# The E2E decryption Service Worker. Lives at the root so its default

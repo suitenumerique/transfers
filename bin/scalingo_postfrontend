@@ -12,9 +12,16 @@ mv src/frontend/dist build/frontend-out
 mv src/backend/* ./
 mkdir -p transferts_backend && touch transferts_backend/__init__.py
 
-# Download Caddy binary
-CADDY_VERSION="2.9.1"
-curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" | tar -xz -C bin/ caddy
+# Download Caddy binary, verified against the pinned checksum before it is
+# extracted. Same pin and CADDY_SHA256_AMD64 as src/frontend/Dockerfile;
+# move them together.
+CADDY_VERSION="2.11.4"
+CADDY_SHA256="527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9"
+CADDY_TGZ="$(mktemp)"
+curl -fsSL -o "${CADDY_TGZ}" "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+echo "${CADDY_SHA256}  ${CADDY_TGZ}" | sha256sum -c -
+tar -xzf "${CADDY_TGZ}" -C bin/ caddy
+rm -f "${CADDY_TGZ}"
 chmod +x bin/caddy
 
 # Copy Caddyfile (uses {$ENV} vars natively, no ERB needed)

@@ -16,7 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Create env files
         run: make create-env-files
       - name: Run backend linting
@@ -28,7 +30,9 @@ jobs:
       DOCKER_USER: 1001
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Create env files
         run: make create-env-files
       - name: Setup data directories
@@ -46,7 +50,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Create env files
         run: make create-env-files
       - name: Install frontend dependencies
@@ -60,7 +66,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Create env files
         run: make create-env-files
       - name: Install frontend dependencies
@@ -72,10 +80,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Create env files
         run: make create-env-files
       - name: Install frontend dependencies
         run: make install-frozen-front
       - name: Build frontend
         run: make build-front
+
+  test-front-distroless:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Builds the production frontend image and exercises Caddy on it:
+      # heartbeat, healthcheck, the admin IP allowlist and the trusted
+      # proxy handling of X-Forwarded-For.
+      - name: Smoke-test the frontend production image
+        run: make test-front-distroless
