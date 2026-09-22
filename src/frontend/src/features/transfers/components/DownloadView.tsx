@@ -403,7 +403,10 @@ export function DownloadView({
   // "skipped" = scanning disabled on this instance: never scanned, no badge,
   // but downloadable just like "clean".
   const isDownloadable = (s: ScanStatus) =>
-    s === "clean" || s === "skipped" || s === "too_large";
+    s === "clean" ||
+    s === "skipped" ||
+    s === "too_large" ||
+    s === "unscannable";
   const downloadableFiles = transfer.files.filter((f) =>
     isDownloadable(f.scan_status),
   );
@@ -493,15 +496,23 @@ export function DownloadView({
         </Tooltip>
       );
     }
-    if (status === "too_large" || status === "skipped") {
+    if (
+      status === "too_large" ||
+      status === "unscannable" ||
+      status === "skipped"
+    ) {
       const reason =
         status === "too_large"
           ? t("This file was not scanned for viruses because it is too large.")
-          : transfer.confidential
+          : status === "unscannable"
             ? t(
-                "Confidential transfer: this file is encrypted, so our antivirus couldn't check it.",
+                "This file was not scanned for viruses: it could not be examined (an encrypted or unreadable archive).",
               )
-            : t("This file was not scanned for viruses.");
+            : transfer.confidential
+              ? t(
+                  "Confidential transfer: this file is encrypted, so our antivirus couldn't check it.",
+                )
+              : t("This file was not scanned for viruses.");
       return (
         <Tooltip content={reason} placement="top">
           <span className="file-item__scan file-item__scan--warning">

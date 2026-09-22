@@ -79,7 +79,8 @@ export function TransferSuccess({
   const scanned =
     transfer.files.length > 0 &&
     transfer.files.every((f) => f.scan_status === "clean");
-  // Complement: at least one file left as skipped / too_large / errored, so
+  // Complement: at least one file left as skipped / too_large / unscannable
+  // / errored, so
   // some of what we shipped was never actually scanned. Warn the sender up
   // front — the per-file badges say it too, but on a multi-file transfer the
   // header alert makes it impossible to miss. Confidential transfers skip

@@ -503,6 +503,7 @@ class TransferFile(BaseModel):
         "transfer is not encrypted — UIs should fall back to ``size``.",
     )
     mime_type = models.CharField(max_length=255, blank=True, default="")
+
     s3_key = models.CharField(max_length=512)
 
     upload_id = models.CharField(
@@ -551,11 +552,11 @@ class TransferFile(BaseModel):
     )
 
     scan_status = models.CharField(
-        max_length=10,
+        max_length=16,
         choices=ScanStatus.choices,
         default=ScanStatus.PENDING,
         help_text="Antivirus scan state. A file is downloadable when CLEAN or "
-        "scan-exempt (SKIPPED / TOO_LARGE); the download path fails closed on "
+        "scan-exempt (SKIPPED / TOO_LARGE / UNSCANNABLE); the download path fails closed on "
         "anything else. Driven by the clamav file-scanner service's webhook "
         "callback.",
     )
@@ -619,6 +620,12 @@ class TransferFile(BaseModel):
 
     def __str__(self):
         return self.filename
+
+    @property
+    def scannable_size(self) -> int:
+        """Bytes the scanner examines: the plaintext of an encrypted file
+        (decrypted before scanning), the object itself otherwise."""
+        return self.plaintext_size if self.plaintext_size is not None else self.size
 
     @property
     def is_upload_complete(self) -> bool:

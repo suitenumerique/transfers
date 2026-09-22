@@ -8,6 +8,7 @@ import type { ScanStatus } from "@/features/api/types";
 const NOT_SCAN_VERIFIED: readonly ScanStatus[] = [
   "skipped",
   "too_large",
+  "unscannable",
   "error",
 ];
 

@@ -246,12 +246,21 @@ class Base(Configuration):
         environ_name="SCAN_JWT_TTL",
         environ_prefix=None,
     )
-    # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
-    # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
-    # sendable, but flagged "not scanned" rather than claimed clean. Keep this
-    # at or below the scanner's own max_url_size (2 GB).
+    # Engines the scanner runs on our files, comma-separated names known to
+    # the file-scanner (``clamav``, ``exav``, ...). Sent as ``scanners`` with
+    # every submission; empty ⇒ the scanner's own defaults. Naming several
+    # runs them all and a file is clean only if every engine cleared it.
+    SCAN_SCANNERS = values.Value("", environ_name="SCAN_SCANNERS", environ_prefix=None)
+    # Files whose content (the plaintext, for an encrypted file) is larger
+    # than this are NOT scanned. They get scan_status=TOO_LARGE: still
+    # sendable, but flagged "not scanned" rather than claimed clean. It is the
+    # scanner's MAX_URL_SIZE, which counts the same bytes (the wire gets the
+    # chunking overhead on top): keep the two equal. The default is the most
+    # clamav scans in one file (libclamav's INT_MAX - 2); a bigger file that
+    # the scanner does accept comes back UNSCANNABLE from clamav, or scanned
+    # by exav (SCAN_SCANNERS).
     SCAN_MAX_FILE_SIZE = values.PositiveIntegerValue(
-        2 * 1024 * 1024 * 1024,  # 2 GB
+        2**31 - 3,  # 2,147,483,645
         environ_name="SCAN_MAX_FILE_SIZE",
         environ_prefix=None,
     )

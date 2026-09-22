@@ -76,12 +76,30 @@ class ScanResultWebhookView(APIView):
             )
             return Response(status=200)
         logger.info(
-            "Scan result for file %s: %s%s",
+            "Scan result for file %s: %s%s%s",
             file_id,
             new_status,
             f" ({error_kind})" if error_kind else "",
+            self._engines_summary(payload),
         )
         return Response(status=200)
+
+    @staticmethod
+    def _engines_summary(payload) -> str:
+        """What each engine said, for the log: `` [clamav=clean, exav=malware:Sig]``.
+        Empty when the payload has no per-scanner report."""
+        reports = payload.get("scanners") if isinstance(payload, dict) else None
+        if not isinstance(reports, list):
+            return ""
+        parts = []
+        for report in reports:
+            if not isinstance(report, dict):
+                continue
+            entry = f"{report.get('scanner')}={report.get('kind')}"
+            if report.get("reason"):
+                entry += f":{report['reason']}"
+            parts.append(entry)
+        return f" [{', '.join(parts)}]" if parts else ""
 
     @staticmethod
     def _error_kind_from_payload(payload, status) -> str:
@@ -112,4 +130,9 @@ class ScanResultWebhookView(APIView):
             return ScanStatus.INFECTED
         if malware is False:
             return ScanStatus.CLEAN
+        if malware is None and payload.get("error_kind") == "file":
+            # The scan ran; the file itself (an encrypted or unreadable
+            # container) is why there is no verdict. Not a detection, and no
+            # retry will change it: scan-exempt, with a warning.
+            return ScanStatus.UNSCANNABLE
         return ScanStatus.ERROR

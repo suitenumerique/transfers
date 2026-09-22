@@ -243,12 +243,18 @@ export function TransferDetail({
         </Tooltip>
       );
     }
-    if (status === "too_large") {
+    if (status === "too_large" || status === "unscannable") {
       return (
         <Tooltip
-          content={t(
-            "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
-          )}
+          content={
+            status === "too_large"
+              ? t(
+                  "File too large to scan. The transfer can still be created, but the recipient will be told this file was not scanned.",
+                )
+              : t(
+                  "This file could not be scanned (an encrypted or unreadable archive). It was sent unscanned, and the recipient is told so.",
+                )
+          }
           placement="top"
         >
           <span className="file-item__scan file-item__scan--warning">
@@ -401,7 +407,8 @@ export function TransferDetail({
           const downloadable =
             file.scan_status === "clean" ||
             file.scan_status === "skipped" ||
-            file.scan_status === "too_large";
+            file.scan_status === "too_large" ||
+            file.scan_status === "unscannable";
           return (
             <FileItem
               key={file.id}

@@ -870,6 +870,7 @@ class TestDraftEncryption:
         The task runs for real here (not stubbed) so we observe the wire.
         """
         settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_SCANNERS = ""
         settings.CLAMAV_SERVICE_URL = "http://scanner"
         settings.SCAN_WEBHOOK_BASE_URL = "http://back"
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
@@ -923,10 +924,71 @@ class TestDraftEncryption:
         )
         # New endpoint: /api/v1.0/scan-async (was /v2/scan-async).
         assert mock_post.call_args.args[0].endswith("/api/v1.0/scan-async")
+        # No engine named (the default): the scanner applies its own.
+        assert "scanners" not in body
 
         tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
         assert tf.scan_status == ScanStatus.PENDING
         assert tf.scan_submitted_at is not None
+
+    def test_finalize_names_the_engines_from_settings(
+        self, patched_s3, authenticated_client, settings
+    ):
+        """SCAN_SCANNERS picks the engines the scanner runs on our files."""
+        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_SCANNERS = "clamav, exav"
+        settings.CLAMAV_SERVICE_URL = "http://scanner"
+        settings.SCAN_WEBHOOK_BASE_URL = "http://back"
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        from core.tasks import submit_scan_task
+
+        with (
+            patch(
+                "core.api.viewsets.draft.submit_scan_task.delay",
+                side_effect=submit_scan_task,
+            ),
+            patch(
+                "core.api.viewsets.draft.transaction.on_commit",
+                side_effect=lambda fn: fn(),
+            ),
+            patch("core.tasks.s3.sign_scan_url", return_value="http://s3/signed"),
+            patch("core.tasks.mint_request_token", return_value="test-jwt-token"),
+            patch("core.tasks.requests.post") as mock_post,
+        ):
+            mock_post.return_value.json.return_value = {"job_id": "j-1"}
+            _finalize(authenticated_client, initiate["draft_id"])
+
+        body = json.loads(mock_post.call_args.kwargs["data"])
+        assert body["scanners"] == ["clamav", "exav"]
+
+    @pytest.mark.parametrize(
+        "plaintext_size, expected",
+        [(1000, ScanStatus.PENDING), (1001, ScanStatus.TOO_LARGE)],
+    )
+    def test_scan_cap_applies_to_the_plaintext(
+        self, patched_s3, authenticated_client, settings, plaintext_size, expected
+    ):
+        """The cap is on what the scanner examines — the decrypted content,
+        which is what its MAX_URL_SIZE counts too — not on the ciphertext
+        object, larger by the GCM overhead."""
+        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_MAX_FILE_SIZE = 1000
+        initiate = _initiate_with_file(
+            authenticated_client, plaintext_size=plaintext_size
+        )
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
+        assert tf.size > 1000  # the ciphertext is over the cap either way
+        assert tf.scan_status == expected
 
     def test_draft_detail_reports_scan_not_submitted_before_send(
         self, patched_s3, authenticated_client, settings
@@ -2376,6 +2438,7 @@ class TestDraftRescan:
         infected = add(ScanStatus.INFECTED)
         file_err = add(ScanStatus.ERROR, "file")
         too_large = add(ScanStatus.TOO_LARGE)
+        unscannable = add(ScanStatus.UNSCANNABLE)
         skipped = add(ScanStatus.SKIPPED)
 
         submit_p, commit_p = self._patched()
@@ -2398,6 +2461,7 @@ class TestDraftRescan:
             (infected, ScanStatus.INFECTED),
             (file_err, ScanStatus.ERROR),
             (too_large, ScanStatus.TOO_LARGE),
+            (unscannable, ScanStatus.UNSCANNABLE),
             (skipped, ScanStatus.SKIPPED),
         ):
             f.refresh_from_db()

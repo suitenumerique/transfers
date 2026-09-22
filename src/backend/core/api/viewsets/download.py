@@ -274,6 +274,7 @@ class DownloadFileView(APIView):
             ScanStatus.CLEAN,
             ScanStatus.SKIPPED,
             ScanStatus.TOO_LARGE,
+            ScanStatus.UNSCANNABLE,
         ):
             return Response(
                 {
