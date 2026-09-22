@@ -159,13 +159,18 @@ keyed by transfer id) so the owner can rebuild the working link from
 their dashboard. Clearing browser data drops that copy — the transfer
 remains downloadable for anyone still holding the link.
 
-## Reverse proxy and `X-Forwarded-For`
+## Reverse proxy, client IP and the admin allowlist
 
-The audit log records the client IP. It is read from `X-Forwarded-For`
-by `XForwardedForMiddleware` (`src/backend/core/middlewares.py`), which
-takes the **rightmost** entry — the IP appended by the trusted edge
-proxy (Scalingo's router on production). The leftmost entry is
-client-controlled and spoofable.
+The audit log records the client IP, and the Django admin can be
+restricted to an IP allowlist. Both rely on the client IP that Caddy
+(`src/frontend/caddy/Caddyfile`, the production frontend image)
+establishes: the TCP peer, unless that peer is a trusted proxy — then
+the address in `X-Forwarded-For`, walked from the right to the first
+one that is not a trusted proxy (`trusted_proxies_strict`). A prefix a
+client writes into the header never wins. Caddy forwards that single
+address to the backend as `X-Forwarded-For`, where
+`XForwardedForMiddleware` (`src/backend/core/middlewares.py`, enabled
+by `USE_X_FORWARDED_FOR=True`) sets `REMOTE_ADDR` from it.
 
 In production the request chain is:
 
@@ -173,22 +178,15 @@ In production the request chain is:
 Client → Edge router (Scalingo) → HAProxy → Caddy → Gunicorn
 ```
 
-For this to work, **Caddy must propagate the incoming `X-Forwarded-For`
-header as-is**, not overwrite it. `src/frontend/caddy/Caddyfile`
-sets:
+| Variable | Default | Description |
+|---|---|---|
+| `TRANSFERTS_FRONTEND_TRUSTED_PROXIES` | _(empty: trust no proxy)_ | Space-separated CIDR list of the proxies whose `X-Forwarded-For` sets the client IP. On Scalingo, set `private_ranges`: the routers sit on private addresses that are not published, and the container port is only reachable through them. Do not use `private_ranges` where untrusted machines share the private network. **Unset on Scalingo, the audit log records the router's address instead of the user's.** |
+| `DJANGO_ADMIN_IP_ALLOWLIST` | `0.0.0.0/0 ::/0` (everyone) | Space-separated CIDR list of the client IPs admitted on the admin URL; Caddy answers 403 to the others. Leave it unset to keep the admin open — an empty value admits no one. |
+| `TRANSFERTS_FRONTEND_BACKEND_SERVER` | `localhost:8000` | `host:port` of the Django backend Caddy proxies `/api/*`, `/static/*` and the admin URL to. |
 
-```caddyfile
-header_up X-Forwarded-For {http.request.header.x-forwarded-for}
-```
-
-If you change it to `{remote_host}`, Caddy overwrites the chain with
-the address of its immediate peer (HAProxy, in the `10.0.0.x` range),
-and the audit log loses the real client IP. The comment block above
-the first `reverse_proxy` directive in the `Caddyfile` explains the
-two-hop topology.
-
-Set `USE_X_FORWARDED_FOR=True` in the production environment to
-activate the middleware.
+`make test-front-distroless` builds the production image and checks all
+of this against it (allow and deny, spoofed headers, trusted proxies);
+the CI runs it.
 
 ## La Suite integrations
 

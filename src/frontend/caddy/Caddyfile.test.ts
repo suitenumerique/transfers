@@ -61,3 +61,30 @@ describe("Caddyfile CSP", () => {
     expect(Object.values(csp).join(" ")).not.toMatch(/suite\.anct\.gouv\.fr/);
   });
 });
+
+describe("Caddyfile client IP", () => {
+  // The behaviour itself is exercised on the built image by
+  // bin/smoke-test-front; this pins the wiring that makes it hold.
+  it("hands the backend the client IP Caddy established, never the raw header", () => {
+    const forwarded = CADDYFILE.match(/header_up X-Forwarded-For (\S+)/g) ?? [];
+
+    expect(forwarded.length).toBeGreaterThan(0);
+    for (const line of forwarded) {
+      expect(line).toBe("header_up X-Forwarded-For {client_ip}");
+    }
+  });
+
+  it("only trusts the proxies the deployment names, right to left", () => {
+    expect(CADDYFILE).toMatch(
+      /trusted_proxies static \{\$TRANSFERTS_FRONTEND_TRUSTED_PROXIES\}/,
+    );
+    expect(CADDYFILE).toMatch(/^\s*trusted_proxies_strict\s*$/m);
+  });
+
+  it("gates the admin URL on the allowlist, open by default", () => {
+    expect(CADDYFILE).toMatch(
+      /not client_ip \{\$DJANGO_ADMIN_IP_ALLOWLIST:0\.0\.0\.0\/0 ::\/0\}/,
+    );
+    expect(CADDYFILE).toMatch(/respond @admin_denied 403/);
+  });
+});

@@ -244,6 +244,14 @@ build-front: ## build the frontend locally
 	@$(COMPOSE) run --rm --build frontend-tools npm run build
 .PHONY: build-front
 
+build-front-distroless: ## build the frontend production image (Caddy + static bundle)
+	@docker build --target runtime-prod -t transferts-frontend-distroless src/frontend/
+.PHONY: build-front-distroless
+
+test-front-distroless: build-front-distroless ## build and smoke-test the frontend production image
+	@bin/smoke-test-front transferts-frontend-distroless
+.PHONY: test-front-distroless
+
 # -- Misc
 
 clean: ## restore repository state as it was freshly cloned
