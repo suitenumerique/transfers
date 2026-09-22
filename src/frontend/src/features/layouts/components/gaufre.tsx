@@ -6,16 +6,16 @@ import { useConfig } from "@/features/providers/config";
 // Suite deployment neither pulls the third-party script nor lists services
 // belonging to another operator. The frontend's Caddy CSP must allow the
 // same two origins (TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
+//
+// The widget shows its first six services, the rest behind "more apps" —
+// the operator's API decides which six. That is the layout the other Suite
+// apps have, so leave showMoreLimit at its default.
 export function Gaufre() {
   const { LAGAUFRE } = useConfig();
 
   if (!LAGAUFRE) return null;
 
   return (
-    <LaGaufreV2
-      widgetPath={LAGAUFRE.widget_url}
-      apiUrl={LAGAUFRE.api_url}
-      showMoreLimit={100}
-    />
+    <LaGaufreV2 widgetPath={LAGAUFRE.widget_url} apiUrl={LAGAUFRE.api_url} />
   );
 }
