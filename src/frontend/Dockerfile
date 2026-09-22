@@ -33,7 +33,7 @@ COPY --from=frontend-build /home/frontend/dist /app
 # frontend-deps, frontend-build, and frontend-build-output entirely
 FROM ${FRONTEND_IMAGE} AS frontend-source
 
-FROM alpine:3.21 AS tools-download
+FROM alpine:3.24 AS tools-download
 ARG TARGETARCH
 
 ARG CADDY_VERSION=2.11.4

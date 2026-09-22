@@ -2,7 +2,7 @@
 FROM debian:trixie-slim AS base
 
 # Bump this to force an update of the apt repositories
-ENV MIN_UPDATE_DATE="2026-02-20"
+ENV MIN_UPDATE_DATE="2026-09-22"
 
 RUN <<EOR
 apt-get update
@@ -18,9 +18,8 @@ WORKDIR /app
 FROM base AS uv
 
 # Pin uv by SHA256 digest for supply chain security
-# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.10.4
-# https://github.com/astral-sh/uv/pkgs/container/uv/691717444?tag=0.10.4
-COPY --from=ghcr.io/astral-sh/uv@sha256:4cac394b6b72846f8a85a7a0e577c6d61d4e17fe2ccee65d9451a8b3c9efb4ac /uv /uvx /bin/
+# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.17
+COPY --from=ghcr.io/astral-sh/uv@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /uvx /bin/
 
 RUN <<EOR
 apt-get update
@@ -41,9 +40,13 @@ ENV UV_PYTHON_PREFERENCE=only-managed
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 ENV UV_PROJECT_ENVIRONMENT=/venv
 
+# The one place the interpreter version is written: the strip stage below
+# looks it up again, and the two drifting apart fails the build.
+ARG PYTHON_VERSION=3.14.7
+
 # Install Python via uv — integrity verified against SHA256 checksums embedded in the uv binary.
 # Uses python-build-standalone: most C deps (ssl, ffi, sqlite, zlib, lzma, bz2) are statically linked.
-RUN uv python install 3.14.3
+RUN uv python install ${PYTHON_VERSION}
 
 # ---- Production dependencies ----
 FROM uv AS base-with-deps
@@ -85,18 +88,19 @@ EOR
 FROM uv AS python-runtime
 RUN <<EOR
 set -e
-PYDIR=$(dirname $(dirname $(uv python find 3.14.3)))
+PYDIR=$(dirname $(dirname $(uv python find ${PYTHON_VERSION})))
+PYLIB=$PYDIR/lib/python${PYTHON_VERSION%.*}
 rm -rf \
     $PYDIR/bin/idle* $PYDIR/bin/pip* $PYDIR/bin/pydoc* $PYDIR/bin/*-config \
     $PYDIR/include $PYDIR/share \
     $PYDIR/lib/pkgconfig $PYDIR/lib/itcl* $PYDIR/lib/libtcl* \
     $PYDIR/lib/tcl* $PYDIR/lib/tk* $PYDIR/lib/thread* \
-    $PYDIR/lib/python3.14/idlelib \
-    $PYDIR/lib/python3.14/ensurepip \
-    $PYDIR/lib/python3.14/tkinter \
-    $PYDIR/lib/python3.14/turtledemo \
-    $PYDIR/lib/python3.14/lib-dynload/_tkinter* \
-    $PYDIR/lib/python3.14/lib-dynload/_ctypes_test* \
+    $PYLIB/idlelib \
+    $PYLIB/ensurepip \
+    $PYLIB/tkinter \
+    $PYLIB/turtledemo \
+    $PYLIB/lib-dynload/_tkinter* \
+    $PYLIB/lib-dynload/_ctypes_test* \
     /opt/python/.gitignore /opt/python/.lock /opt/python/.temp
 EOR
 
