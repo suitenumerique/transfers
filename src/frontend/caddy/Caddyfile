@@ -118,6 +118,14 @@
 			@html header Accept *text/html*
 			handle @html {
 				rewrite * /index.html
+				# Drop the browser's revalidation headers. file_server
+				# answers a conditional request by writing no body, while
+				# the status override below turns its 304 into a 200: the
+				# browser would get an empty 200 and render a blank page
+				# instead of the app — on every deep link whose index.html
+				# is already in cache, one reload out of two.
+				request_header -If-None-Match
+				request_header -If-Modified-Since
 				# 200, not the 404 we arrived with: this *is* the page for
 				# that URL as far as the browser, caches and crawlers go.
 				file_server {

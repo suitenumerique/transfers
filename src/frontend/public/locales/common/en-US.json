@@ -220,5 +220,7 @@
   "Something went wrong. Try again.": "Something went wrong. Try again.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "The service can't be reached right now. Check your connection, or try again in a moment.",
   "Retry": "Retry",
-  "Download resumed": "Download resumed"
+  "Download resumed": "Download resumed",
+  "Advanced options": "Advanced options",
+  "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially.": "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially."
 }

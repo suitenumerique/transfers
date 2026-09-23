@@ -59,21 +59,20 @@ export function DownloadView({
   // Every finalized transfer is encrypted; ``encryption_chunk_size`` is only
   // null for legacy plaintext transfers, which skip the SW decrypt path.
   const isEncrypted = transfer.encryption_chunk_size != null;
-  // Snapshot the fragment once, at mount, before the effect below strips it
-  // from the visible URL. Reading window.location.hash again after a rerun
-  // (a new ``transfer.files`` reference is enough) would see it already
-  // stripped and wrongly fall back to the paste screen.
-  const keyFragmentRef = useRef<string>(
-    typeof window !== "undefined"
-      ? window.location.hash.replace(/^#/, "")
-      : "",
+  // The fragment, read at mount and then held here: the effect below strips
+  // it from the visible URL, so reading window.location.hash again after a
+  // rerun (a new ``transfer.files`` reference is enough) would see it gone
+  // and wrongly fall back to the paste screen. State rather than a ref
+  // because it can also arrive later — see the hashchange listener below.
+  const [keyFragment, setKeyFragment] = useState<string>(() =>
+    typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "",
   );
   // The key we hand the SW. Non-confidential transfers get it from the
   // backend (``encryption_key``); confidential transfers get it from the URL
   // fragment or, if that's missing, from the recipient pasting it.
   const autoKey = !transfer.confidential
     ? transfer.encryption_key || null
-    : keyFragmentRef.current || null;
+    : keyFragment || null;
 
   // Decryption plumbing state: register the key with the SW before enabling
   // downloads. `ready` (go), `loading` (SW handshake), `need-key`
@@ -86,6 +85,20 @@ export function DownloadView({
     if (!autoKey) return "need-key";
     return "loading";
   });
+  // Pasting the full link again while the page is already open only changes
+  // the fragment, so the browser navigates within the document: nothing
+  // remounts and the key would go unread until a reload. Treat that hash
+  // like the one read at mount — it is the same link arriving twice.
+  useEffect(() => {
+    const onHashChange = () => {
+      const fragment = window.location.hash.replace(/^#/, "");
+      if (!fragment) return;
+      setKeyFragment(fragment);
+      setEncryptionState((state) => (state === "ready" ? state : "loading"));
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
   const [pastedKey, setPastedKey] = useState("");
   const [pasteError, setPasteError] = useState(false);
   // Files clicked whose first decrypted bytes haven't left the SW yet. The

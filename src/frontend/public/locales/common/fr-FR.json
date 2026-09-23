@@ -220,5 +220,7 @@
   "Something went wrong. Try again.": "Une erreur est survenue. Réessayez.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "Le service est injoignable pour le moment. Vérifiez votre connexion, ou réessayez dans un instant.",
   "Retry": "Réessayer",
-  "Download resumed": "Téléchargement repris"
+  "Download resumed": "Téléchargement repris",
+  "Advanced options": "Options avancées",
+  "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially.": "Ce transfert est déjà en cours d'envoi sans le mode confidentiel. Décochez l'option, ou recommencez un transfert pour l'envoyer en confidentiel."
 }

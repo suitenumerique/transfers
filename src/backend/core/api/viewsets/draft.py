@@ -421,6 +421,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             self._reject_bad_finalize_shape(
                 files, drive_files, browser_files, confidential
             )
+            self._reject_key_change(draft, metadata, confidential)
             self._park_encryption_key(draft, metadata, confidential)
 
             drive_response = self._process_drive_imports(drive_files)
@@ -471,6 +472,45 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 }
             )
 
+    def _reject_key_change(self, draft, metadata, confidential):
+        """Refuse a poll that contradicts the key already parked.
+
+        ``finalize`` is a poll loop and each call carries its own metadata,
+        so a later call can disagree with the one that parked the key.
+        Both ways are refused on the field the client sent:
+
+        - switching to confidential, which the
+          ``transfer_confidential_has_no_key`` constraint would catch, but
+          as an opaque ``__all__`` violation naming an internal constraint,
+          and only after the scan bookkeeping has run;
+        - sending a different key, which ``_park_encryption_key`` would
+          ignore: the transfer would go out encrypted under the first key
+          while the sender hands the recipients the second one.
+
+        A draft with no parked key has nothing to contradict — the first
+        call decides.
+        """
+        if not draft.encryption_key:
+            return
+        if confidential:
+            raise drf.exceptions.ValidationError(
+                {
+                    "confidential": (
+                        "This draft was already finalized without "
+                        "confidentiality and cannot switch to confidential."
+                    )
+                }
+            )
+        if metadata["encryption_key"] != draft.encryption_key:
+            raise drf.exceptions.ValidationError(
+                {
+                    "encryption_key": (
+                        "This draft was already finalized with a different "
+                        "key."
+                    )
+                }
+            )
+
     def _park_encryption_key(self, draft, metadata, confidential):
         """Park the key on the draft so background workers (Drive import,
         scan submit) read it from the DB rather than receiving it as a
@@ -481,6 +521,26 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         if not confidential and not draft.encryption_key:
             draft.encryption_key = metadata["encryption_key"]
             draft.save(update_fields=["encryption_key", "updated_at"])
+
+    @staticmethod
+    def _enqueue_drive_import(file_id):
+        """Queue the import task, clearing ``import_started_at`` when the
+        broker refuses the job.
+
+        The callback runs after the commit, so the timestamp is already
+        durable while the task is not: the next poll skips the file (it
+        only enqueues while ``import_started_at`` is None) and the draft
+        would sit at 202 until the abandoned-draft cleanup a day later.
+        The reset is its own write — the transaction is over by now — and
+        the error still propagates, so the client sees the failure.
+        """
+        try:
+            import_drive_file_task.delay(file_id)
+        except Exception:
+            models.TransferFile.objects.filter(id=file_id).update(
+                import_started_at=None, updated_at=timezone.now()
+            )
+            raise
 
     def _process_drive_imports(self, drive_files):
         """Drive imports run at finalize (needs the key). The first call
@@ -526,7 +586,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 f.import_started_at = timezone.now()
                 f.save(update_fields=["import_started_at", "updated_at"])
                 transaction.on_commit(
-                    lambda fid=str(f.id): import_drive_file_task.delay(fid)
+                    lambda fid=str(f.id): self._enqueue_drive_import(fid)
                 )
             still_importing.append(f)
 
