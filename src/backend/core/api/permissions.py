@@ -54,7 +54,7 @@ class DraftUploadEntitlementPermission(permissions.BasePermission):
     """Require ``can_access`` before draft actions that perform multipart upload work."""
 
     _UPLOAD_ACTIONS = frozenset(
-        {"add_file", "sign_part", "complete_upload", "finalize"}
+        {"add_file", "sign_part", "complete_upload", "finalize", "rescan"}
     )
 
     def has_permission(self, request, view):

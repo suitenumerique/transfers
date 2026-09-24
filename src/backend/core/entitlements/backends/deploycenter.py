@@ -86,6 +86,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
                 params["siret"] = siret
 
         if "siret" not in params:
+            logger.error("DeployCenter entitlements lookup has no siret to send")
             raise EntitlementsUnavailableError(
                 "DeployCenter entitlements require a `siret` query parameter. "
                 "Provide it via OIDC userinfo → User.claims (and OIDC_STORE_CLAIMS), "
@@ -98,7 +99,16 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
             params=params,
             headers={"X-Service-Auth": f"Bearer {self.api_key}"},
             timeout=(2, 5),
+            # requests drops Authorization on a cross-host redirect but keeps
+            # custom headers, so following one would hand X-Service-Auth to
+            # whatever host DeployCenter points at.
+            allow_redirects=False,
         )
+        if response.is_redirect or response.is_permanent_redirect:
+            raise requests.HTTPError(
+                f"DeployCenter answered with a redirect ({response.status_code})",
+                response=response,
+            )
         response.raise_for_status()
         return response.json()
 
@@ -130,7 +140,7 @@ class DeployCenterEntitlementsBackend(EntitlementsBackend):
             if entry is not None:
                 logger.warning("DeployCenter unreachable, serving stale entitlements")
                 return entry["payload"]
-            logger.warning(
+            logger.error(
                 "DeployCenter entitlements fetch failed: %s", type(exc).__name__
             )
             raise EntitlementsUnavailableError(

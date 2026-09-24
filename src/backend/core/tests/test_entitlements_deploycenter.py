@@ -164,6 +164,26 @@ def test_missing_siret_raises():
         _backend().fetch_entitlements(user)
 
 
+@responses.activate
+def test_redirect_is_refused_without_a_second_credentialed_request():
+    """A redirect must never carry X-Service-Auth to the host it points at."""
+    responses.add(
+        responses.GET,
+        DEPLOYCENTER_URL,
+        status=302,
+        headers={"Location": "https://elsewhere.test/entitlements/"},
+    )
+    user = UserFactory()
+    user.claims = {"siret": "12345678901234"}
+
+    with pytest.raises(EntitlementsUnavailableError):
+        _backend().can_access(user)
+
+    # Exactly one request went out: the redirect was refused, not followed.
+    assert len(responses.calls) == 1
+    assert responses.calls[0].request.url.startswith(DEPLOYCENTER_URL)
+
+
 def test_missing_base_url_parameter():
     """Missing base_url parameter should raise an exception."""
     with pytest.raises(TypeError):
