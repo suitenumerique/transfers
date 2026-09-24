@@ -815,6 +815,18 @@
     }
   }
 
+  // What the closed fold would otherwise hide: the settings that are on,
+  // read as a quiet aside next to the toggle's own label.
+  &__advanced-active {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 400;
+    font-size: var(--c--globals--font--sizes--xs);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
   &__advanced-list {
     display: flex;
     flex-direction: column;

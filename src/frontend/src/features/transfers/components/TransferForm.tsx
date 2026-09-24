@@ -538,6 +538,20 @@ export function TransferForm() {
   }));
   const currentExpiryLabel = t("{{count}} days", { count: expiresInDays });
 
+  // The optional settings currently on. They all default to off, but the
+  // fold can be closed again once one is turned on — and a closed fold that
+  // hides a setting the form is about to submit is a setting the sender
+  // can't check before sending. The toggle names them instead.
+  const activeAdvanced = [
+    config.TRANSFER_CONFIDENTIAL_ENABLED && draft.confidential
+      ? t("Confidential transfer")
+      : null,
+    autoArchiveOnDownload ? t("Deactivate after all files are downloaded") : null,
+    sharingMode === "email" && notifyOnDownload
+      ? t("Email me when a recipient downloads the files")
+      : null,
+  ].filter((label): label is string => label !== null);
+
   // Submit button stays disabled during both submit phases. To back out
   // of an armed auto-create, the user clicks Delete/Cancel on a file row
   // (those stay enabled while awaitingUploads, and their handler disarms
@@ -903,8 +917,10 @@ export function TransferForm() {
 
           {/* One fold for every optional setting: the form shows what a
               transfer needs and keeps the rest a click away. All three
-              default to off, and the only way to turn one on is in here,
-              so a closed fold never hides an active setting. */}
+              default to off, but the fold closes again just as freely as it
+              opens, so a closed one lists whatever is active: no setting
+              reaches the send button without the sender being able to see
+              it. */}
           <div className="transfer-form__advanced">
             <button
               type="button"
@@ -919,6 +935,11 @@ export function TransferForm() {
                 }
               />
               <span>{t("Advanced options")}</span>
+              {!advancedOpen && activeAdvanced.length > 0 && (
+                <span className="transfer-form__advanced-active">
+                  {activeAdvanced.join(" · ")}
+                </span>
+              )}
             </button>
             {advancedOpen && (
               <div

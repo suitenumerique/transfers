@@ -523,24 +523,34 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             draft.save(update_fields=["encryption_key", "updated_at"])
 
     @staticmethod
-    def _enqueue_drive_import(file_id):
-        """Queue the import task, clearing ``import_started_at`` when the
-        broker refuses the job.
+    def _enqueue_drive_imports(file_ids):
+        """Queue the import tasks, clearing ``import_started_at`` on every
+        file the broker refused.
 
-        The callback runs after the commit, so the timestamp is already
-        durable while the task is not: the next poll skips the file (it
-        only enqueues while ``import_started_at`` is None) and the draft
-        would sit at 202 until the abandoned-draft cleanup a day later.
-        The reset is its own write — the transaction is over by now — and
-        the error still propagates, so the client sees the failure.
+        The callback runs after the commit, so the timestamps are already
+        durable while the tasks are not: the next poll skips a file that has
+        one (it only enqueues while ``import_started_at`` is None) and the
+        draft would sit at 202 until the abandoned-draft cleanup a day later.
+        The reset is its own write — the transaction is over by now — and the
+        first error is re-raised once every id has been tried, so the client
+        sees the failure without the files behind it being stranded.
+
+        One callback for the whole batch, deliberately: ``on_commit`` runs
+        callbacks in order and **stops at the first one that raises**
+        (``robust=False``), so a callback per file would leave every file
+        after the failing one with a durable timestamp and no task.
         """
-        try:
-            import_drive_file_task.delay(file_id)
-        except Exception:
-            models.TransferFile.objects.filter(id=file_id).update(
-                import_started_at=None, updated_at=timezone.now()
-            )
-            raise
+        failures = []
+        for file_id in file_ids:
+            try:
+                import_drive_file_task.delay(file_id)
+            except Exception as exc:
+                failures.append((file_id, exc))
+        if failures:
+            models.TransferFile.objects.filter(
+                id__in=[file_id for file_id, _ in failures]
+            ).update(import_started_at=None, updated_at=timezone.now())
+            raise failures[0][1]
 
     def _process_drive_imports(self, drive_files):
         """Drive imports run at finalize (needs the key). The first call
@@ -576,6 +586,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             )
 
         still_importing = []
+        starting = []
         for f in drive_files:
             if f.upload_completed_at is not None:
                 continue
@@ -585,10 +596,11 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # re-enqueuing while the task spins up its MPU.
                 f.import_started_at = timezone.now()
                 f.save(update_fields=["import_started_at", "updated_at"])
-                transaction.on_commit(
-                    lambda fid=str(f.id): self._enqueue_drive_import(fid)
-                )
+                starting.append(str(f.id))
             still_importing.append(f)
+        if starting:
+            # One callback for the batch — see ``_enqueue_drive_imports``.
+            transaction.on_commit(lambda ids=starting: self._enqueue_drive_imports(ids))
 
         if still_importing:
             return drf.response.Response(

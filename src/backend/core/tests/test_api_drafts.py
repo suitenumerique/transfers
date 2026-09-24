@@ -1226,6 +1226,91 @@ class TestDraftEncryption:
         tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
         assert tf.import_started_at is None
 
+    def test_drive_import_enqueue_failure_reopens_every_file(
+        self, patched_s3, authenticated_client
+    ):
+        """``on_commit`` stops at the first callback that raises, so the whole
+        batch is enqueued from a single callback: a broker that refuses the
+        first file must not strand the ones behind it with a durable
+        ``import_started_at`` and no task — that draft would answer 202 until
+        the abandoned-draft cleanup a day later."""
+        first = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert first.status_code == 201, first.data
+        second = _add_file(
+            authenticated_client,
+            draft_id=first.data["draft_id"],
+            filename="b.bin",
+            plaintext_size=1024,
+            source_url="https://drive.example.com/y",
+        )
+        assert second.status_code == 201, second.data
+
+        from django.test import TestCase as _TC
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task.delay",
+                side_effect=RuntimeError("broker down"),
+            ) as delay,
+            pytest.raises(RuntimeError),
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            _finalize(authenticated_client, first.data["draft_id"])
+
+        # Every id was tried, and every file is enqueueable again.
+        assert delay.call_count == 2
+        for resp in (first, second):
+            tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
+            assert tf.import_started_at is None
+
+    def test_drive_import_enqueue_failure_spares_the_files_that_landed(
+        self, patched_s3, authenticated_client
+    ):
+        """One refusal doesn't reopen a file whose task *is* queued: resetting
+        it would have the next poll enqueue a second import of the same
+        file."""
+        first = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        second = _add_file(
+            authenticated_client,
+            draft_id=first.data["draft_id"],
+            filename="b.bin",
+            plaintext_size=1024,
+            source_url="https://drive.example.com/y",
+        )
+
+        from django.test import TestCase as _TC
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task.delay",
+                side_effect=[RuntimeError("broker down"), None],
+            ),
+            pytest.raises(RuntimeError),
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            _finalize(authenticated_client, first.data["draft_id"])
+
+        assert (
+            TransferFile.objects.get(
+                id=first.data["transfer_file_id"]
+            ).import_started_at
+            is None
+        )
+        assert (
+            TransferFile.objects.get(
+                id=second.data["transfer_file_id"]
+            ).import_started_at
+            is not None
+        )
+
     def test_finalize_poll_does_not_re_enqueue_import(
         self, patched_s3, authenticated_client
     ):
