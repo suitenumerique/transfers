@@ -1,4 +1,10 @@
 {
+  "Access denied": "Access denied",
+  "This service is not included in your operator's offer.": "This service is not included in your operator's offer.",
+  "Service temporarily unavailable": "Service temporarily unavailable",
+  "We could not verify your access rights. Please try again in a moment.": "We could not verify your access rights. Please try again in a moment.",
+  "Sign-in failed": "Sign-in failed",
+  "Something went wrong while signing you in. Please try again.": "Something went wrong while signing you in. Please try again.",
   "A virus was detected. This transfer was blocked and not sent.": "A virus was detected. This transfer was blocked and not sent.",
   "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.": "The decryption key isn't available on this device and can't be recovered. If you didn't copy it when you created the transfer, your recipients won't be able to open the files.",
   "Something went wrong. Please try again.": "Something went wrong. Please try again.",
