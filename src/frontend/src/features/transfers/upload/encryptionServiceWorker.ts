@@ -27,6 +27,11 @@ const CONTROLLER_WAIT_MS = 2_000;
 // usually completes in tens of milliseconds; if we don't see an ack inside
 // 5s, something is broken (worker terminated, message lost, etc.).
 const REGISTER_ACK_WAIT_MS = 5_000;
+// Tags each registration so its ack can't be taken for another's: two
+// overlapping registrations of the same token (a new key arriving while the
+// previous handshake is in flight) would otherwise both resolve on the
+// first ack, and the newer one would report ready before its key is in.
+let registerRequestSeq = 0;
 // Session flag: a hard-reload (Ctrl+Shift+R / Cmd+Shift+R) deliberately
 // bypasses the SW for that navigation — the SW is still *registered*, just
 // not *controlling* the page, and no ``controllerchange`` will ever fire
@@ -167,6 +172,7 @@ export async function registerEncryptionKey(
   const apiOrigin =
     (import.meta.env.NEXT_PUBLIC_API_ORIGIN as string | undefined) ?? "";
 
+  const requestId = ++registerRequestSeq;
   await new Promise<void>((resolve, reject) => {
     const cleanup = () => {
       navigator.serviceWorker.removeEventListener("message", listener);
@@ -174,6 +180,15 @@ export async function registerEncryptionKey(
     };
     const listener = (event: MessageEvent) => {
       if (!event.data || event.data.token !== token) return;
+      // A worker from before this change still controls the page until it
+      // updates, and its acks carry no request id: take those as ours rather
+      // than time out every registration until then.
+      if (
+        event.data.requestId !== undefined &&
+        event.data.requestId !== requestId
+      ) {
+        return;
+      }
       if (event.data.type === "encryption-register-ack") {
         cleanup();
         resolve();
@@ -196,6 +211,7 @@ export async function registerEncryptionKey(
     sw.postMessage({
       type: "encryption-register",
       token,
+      requestId,
       keyBytes,
       files: filesPayload,
       apiOrigin,

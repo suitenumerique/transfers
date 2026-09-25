@@ -118,7 +118,9 @@ export function DownloadView({
       // without this bump the effect would not rerun, and the spinner we
       // are about to show would never resolve.
       setRegisterAttempt((n) => n + 1);
-      setEncryptionState((state) => (state === "ready" ? state : "loading"));
+      // Even from `ready`: the key in the SW is about to be replaced, and a
+      // click before the new handshake lands would re-register the old one.
+      setEncryptionState("loading");
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);

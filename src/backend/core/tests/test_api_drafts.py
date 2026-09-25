@@ -1288,10 +1288,16 @@ class TestDraftEncryption:
 
         from django.test import TestCase as _TC
 
+        # Refuse by id, not by call order: ``draft.files`` has no ordering,
+        # so the database may hand back either file first.
+        def refuse_first(file_id):
+            if str(file_id) == str(first.data["transfer_file_id"]):
+                raise RuntimeError("broker down")
+
         with (
             patch(
                 "core.api.viewsets.draft.import_drive_file_task.delay",
-                side_effect=[RuntimeError("broker down"), None],
+                side_effect=refuse_first,
             ),
             pytest.raises(RuntimeError),
             _TC.captureOnCommitCallbacks(execute=True),
