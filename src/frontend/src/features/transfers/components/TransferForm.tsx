@@ -3,7 +3,7 @@ import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Checkbox, Input, LabelledBox, Switch, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Info, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
 import type { SharingMode } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
@@ -160,6 +160,8 @@ export function TransferForm() {
   // time that recipient has downloaded every file.
   const [notifyOnDownload, setNotifyOnDownload] = useState(false);
   const expiryMenu = useDropdownMenu();
+  // Every optional setting lives behind one fold (see the form body).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Abort the draft on unmount so dropping a file and navigating away doesn't
   // leave bytes hanging in S3 for 24h (the server cleanup cron catches it
@@ -493,6 +495,23 @@ export function TransferForm() {
         );
         return;
       }
+      // The backend refuses confidentiality on a draft whose key it already
+      // parked: the send is under way without it, and switching now would
+      // claim a confidentiality we did not keep. Name the two ways out
+      // rather than letting the catch-all say "an error occurred". The
+      // field error is a bare string here — DRF only wraps it in a list
+      // when a serializer raises it, and this one comes from the view.
+      if (
+        err instanceof ApiError &&
+        Boolean((err.body as { confidential?: unknown })?.confidential)
+      ) {
+        showOtherError(
+          t(
+            "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially.",
+          ),
+        );
+        return;
+      }
       if (err instanceof Error && err.message === "finalize_timeout") {
         showOtherError(
           t("The transfer is taking too long to finalize. Please try again."),
@@ -543,6 +562,64 @@ export function TransferForm() {
     anyScanError ||
     draft.scanTimedOut ||
     (sharingMode === "email" && recipients.length === 0 && !hasValidPending);
+
+  // The optional settings this form can offer right now. Link mode has no
+  // download receipt, and the instance may have turned confidential
+  // transfers off, so there can be zero, one or two of them.
+  const moreOptions = [
+    sharingMode === "email" && (
+      <Checkbox
+        key="notify"
+        label={t("Email me when a recipient downloads the files")}
+        checked={notifyOnDownload}
+        onChange={(e) => setNotifyOnDownload(e.currentTarget.checked)}
+        disabled={busy}
+      />
+    ),
+    // Confidential toggle. Free to flip until send: every transfer is
+    // encrypted, and this only decides whether the decryption key reaches
+    // our servers. Greyed while a Drive file is present (Drive imports need
+    // the key server-side). Hidden entirely when the instance opted out
+    // (TRANSFER_CONFIDENTIAL_ENABLED=false) — the backend rejects a
+    // confidential finalize there too.
+    config.TRANSFER_CONFIDENTIAL_ENABLED && (
+      <div
+        key="confidential"
+        className="transfer-form__confidential"
+        title={
+          busy
+            ? t("Cannot change mode while sending.")
+            : hasDriveFile
+              ? t("Remove the Drive import to make this transfer confidential.")
+              : undefined
+        }
+      >
+        <Switch
+          label={t("Confidential transfer")}
+          labelSide="right"
+          checked={draft.confidential}
+          onChange={(e) => {
+            draft.setConfidential(e.currentTarget.checked);
+            draft.cancelSubmit();
+          }}
+          disabled={busy || hasDriveFile}
+        />
+        {/* Always shown, not only once switched on: the sender needs to
+            know what the option costs (a key to pass on) before choosing
+            it. The confirmation screen repeats the "other channel than
+            email" advice next to the key. */}
+        <p className="transfer-form__mode-hint transfer-form__confidential-hint">
+          {sharingMode === "email"
+            ? t(
+                "Recommended for sensitive data. After sending, a decryption key will be shown: pass it on to your recipients so they can open the files.",
+              )
+            : t(
+                "Recommended for sensitive data. The decryption key stays in the link and never reaches our servers: anyone with the full link can open the files.",
+              )}
+        </p>
+      </div>
+    ),
+  ].filter(Boolean);
 
   return (
     <form onSubmit={handleSubmit} className="transfer-form">
@@ -828,64 +905,6 @@ export function TransferForm() {
             </button>
           </div>
 
-          {/* Confidential toggle. Free to flip until send: every transfer is
-              encrypted, and this only decides whether the decryption key
-              reaches our servers. Greyed while a Drive file is present (Drive
-              imports need the key server-side). Hidden entirely when the
-              instance opted out (TRANSFER_CONFIDENTIAL_ENABLED=false) — the
-              backend rejects a confidential finalize there too. */}
-          {config.TRANSFER_CONFIDENTIAL_ENABLED && (
-          <div
-            className="transfer-form__confidential"
-            title={
-              busy
-                ? t("Cannot change mode while sending.")
-                : hasDriveFile
-                  ? t(
-                      "Remove the Drive import to make this transfer confidential.",
-                    )
-                  : undefined
-            }
-          >
-            <div className="transfer-form__confidential-row">
-              <Switch
-                label={t("Confidential transfer")}
-                checked={draft.confidential}
-                onChange={(e) => {
-                  draft.setConfidential(e.currentTarget.checked);
-                  draft.cancelSubmit();
-                }}
-                disabled={busy || hasDriveFile}
-              />
-              <Tooltip
-                content={t(
-                  "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.",
-                )}
-                placement="left"
-              >
-                <button
-                  type="button"
-                  className="transfer-form__auto-archive-help"
-                  aria-label={t("More information")}
-                >
-                  <Info />
-                </button>
-              </Tooltip>
-            </div>
-            {draft.confidential && (
-              <p className="transfer-form__mode-hint">
-                {sharingMode === "email"
-                  ? t(
-                      "The email will contain only the link. You'll have to pass the decryption key on yourself, through a channel other than email (SMS, instant messaging, in person…). We never see it and can't recover it.",
-                    )
-                  : t(
-                      "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.",
-                    )}
-              </p>
-            )}
-          </div>
-          )}
-
           {sharingMode === "email" && (
             <LabelledBox label={t("Send to")} variant="classic">
               <RecipientInput
@@ -940,56 +959,46 @@ export function TransferForm() {
             </DropdownMenu>
           </div>
 
-          <div className="transfer-form__auto-archive">
-            <Checkbox
-              label={t("Deactivate after all files are downloaded")}
-              checked={autoArchiveOnDownload}
-              onChange={(e) =>
-                setAutoArchiveOnDownload(e.currentTarget.checked)
-              }
-              disabled={busy}
-            />
-            <Tooltip
-              content={t(
-                "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.",
-              )}
-              placement="left"
-            >
-              <button
-                type="button"
-                className="transfer-form__auto-archive-help"
-                aria-label={t("More information")}
-              >
-                <Info />
-              </button>
-            </Tooltip>
-          </div>
+          {/* Kept out of the fold: whether the link outlives its first
+              full download is a core choice of the transfer, not a detail. */}
+          <Checkbox
+            label={t("Deactivate after all files are downloaded")}
+            checked={autoArchiveOnDownload}
+            onChange={(e) => setAutoArchiveOnDownload(e.currentTarget.checked)}
+            disabled={busy}
+          />
 
-          {sharingMode === "email" && (
-            <div className="transfer-form__auto-archive">
-              <Checkbox
-                label={t(
-                  "Email me when a recipient downloads the files",
-                )}
-                checked={notifyOnDownload}
-                onChange={(e) => setNotifyOnDownload(e.currentTarget.checked)}
-                disabled={busy}
+          {/* A lone option sits inline: a fold that opens onto a single
+              setting is a click for nothing. */}
+          {moreOptions.length === 1 && moreOptions}
+
+          {/* One fold for the optional settings: the form shows what a
+              transfer needs and keeps the rest a click away. */}
+          {moreOptions.length > 1 && (
+          <div className="transfer-form__advanced">
+            <button
+              type="button"
+              className="transfer-form__advanced-toggle"
+              aria-expanded={advancedOpen}
+              aria-controls="transfer-form-advanced"
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              <Icon
+                name={
+                  advancedOpen ? "keyboard_arrow_down" : "keyboard_arrow_right"
+                }
               />
-              <Tooltip
-                content={t(
-                  "One email per recipient: as soon as they have downloaded every file, or about an hour after their first download if they stopped partway (it lists what they took). Only the links sent by email can be attributed — a copied link can't tell who used it.",
-                )}
-                placement="left"
+              <span>{t("More options")}</span>
+            </button>
+            {advancedOpen && (
+              <div
+                id="transfer-form-advanced"
+                className="transfer-form__advanced-list"
               >
-                <button
-                  type="button"
-                  className="transfer-form__auto-archive-help"
-                  aria-label={t("More information")}
-                >
-                  <Info />
-                </button>
-              </Tooltip>
-            </div>
+                {moreOptions}
+              </div>
+            )}
+          </div>
           )}
 
           {/* All submit-time callouts grouped in one block above the button

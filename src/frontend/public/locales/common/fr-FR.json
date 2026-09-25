@@ -151,7 +151,6 @@
   "Transfer expired": "Transfert expiré",
   "Transfer deactivated": "Transfert désactivé",
   "Deactivate after all files are downloaded": "Désactiver après téléchargement complet",
-  "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.": "Dès que chaque fichier a été téléchargé au moins une fois, le transfert est automatiquement désactivé : le lien de téléchargement cesse de fonctionner et les fichiers sont supprimés de nos serveurs.",
   "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.": "Le téléchargement de {{names}} a été interrompu. Sur Firefox, « Reprendre » et « Réessayer » depuis le panneau des téléchargements ne fonctionnent pas : cliquez à nouveau sur le fichier ici pour le relancer.",
   "Single-use link. Deactivates after full download.": "Lien à usage unique. Se désactive après téléchargement complet.",
   "Single-use link. Deactivates after full download by another user.": "Lien à usage unique. Se désactive après téléchargement complet par un autre utilisateur.",
@@ -177,9 +176,8 @@
   "Total size exceeds the limit of {{max}}.": "La taille totale dépasse la limite de {{max}}.",
   "Cannot change mode while sending.": "Impossible de changer de mode pendant l'envoi.",
   "Confidential transfer": "Transfert confidentiel",
-  "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.": "Les fichiers sont toujours chiffrés dans votre navigateur. Le mode confidentiel garde la clé de déchiffrement entièrement hors de nos serveurs : le destinataire la fournit depuis le lien ou la reçoit de vous séparément.",
-  "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.": "La clé de déchiffrement reste dans le lien et n'atteint jamais nos serveurs. Toute personne disposant du lien complet peut ouvrir les fichiers ; nous ne pouvons pas la récupérer.",
-  "The email will contain only the link. You'll have to pass the decryption key on yourself, through a channel other than email (SMS, instant messaging, in person…). We never see it and can't recover it.": "Le courriel ne contiendra que le lien. Vous devrez transmettre la clé de déchiffrement vous-même, par un autre canal que le courriel (SMS, messagerie instantanée, de vive voix…). Nous ne la voyons jamais et ne pouvons pas la récupérer.",
+  "Recommended for sensitive data. After sending, a decryption key will be shown: pass it on to your recipients so they can open the files.": "Recommandé pour les données sensibles. Après l'envoi, une clé de déchiffrement s'affichera : transmettez-la aux destinataires pour qu'ils puissent ouvrir les fichiers.",
+  "Recommended for sensitive data. The decryption key stays in the link and never reaches our servers: anyone with the full link can open the files.": "Recommandé pour les données sensibles. La clé de déchiffrement reste dans le lien et n'atteint jamais nos serveurs : toute personne disposant du lien complet peut ouvrir les fichiers.",
   "Remove the Drive import to make this transfer confidential.": "Retirez l'import depuis Fichiers pour rendre ce transfert confidentiel.",
   "Confidential file": "Fichier confidentiel",
   "Confidential": "Confidentiel",
@@ -212,7 +210,6 @@
   "Your recipients have": "Vos destinataires ont",
   "Some emails couldn't be sent. Open the transfer page to retry.": "Certains courriels n'ont pas pu être envoyés. Ouvrez la page du transfert pour réessayer.",
   "Email me when a recipient downloads the files": "Me prévenir par courriel quand un destinataire télécharge les fichiers",
-  "One email per recipient: as soon as they have downloaded every file, or about an hour after their first download if they stopped partway (it lists what they took). Only the links sent by email can be attributed — a copied link can't tell who used it.": "Un courriel par destinataire : dès qu'il a téléchargé tous les fichiers, ou environ une heure après son premier téléchargement s'il s'est arrêté en route (le courriel précise ce qu'il a pris). Seuls les liens envoyés par courriel sont attribuables : un lien copié ne permet pas de savoir qui l'a utilisé.",
   "You are signed in as the sender: your own visits and downloads are not recorded, so this recipient's status won't change and no download receipt will be sent. Open the link in a private window to test it.": "Vous êtes connecté en tant qu'expéditeur : vos propres visites et téléchargements ne sont pas enregistrés, le statut de ce destinataire ne changera pas et aucun accusé de téléchargement ne sera envoyé. Ouvrez le lien dans une fenêtre privée pour tester.",
   "Can't reach the server. Check your connection and try again.": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
   "The server ran into an error. Try again in a moment.": "Le serveur a rencontré une erreur. Réessayez dans un instant.",
@@ -220,5 +217,7 @@
   "Something went wrong. Try again.": "Une erreur est survenue. Réessayez.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "Le service est injoignable pour le moment. Vérifiez votre connexion, ou réessayez dans un instant.",
   "Retry": "Réessayer",
-  "Download resumed": "Téléchargement repris"
+  "Download resumed": "Téléchargement repris",
+  "More options": "Plus d'options",
+  "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially.": "Ce transfert est déjà en cours d'envoi sans le mode confidentiel. Décochez l'option, ou recommencez un transfert pour l'envoyer en confidentiel."
 }

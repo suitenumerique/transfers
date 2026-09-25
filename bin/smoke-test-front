@@ -122,6 +122,28 @@ echo "ok: lprobe healthcheck"
 # allowlist problem.
 assert_code 200 "api proxy" "$BASE/api/hello"
 
+# SPA fallback. A deep link has no file on disk, so it comes back through
+# handle_errors, which rewrites to index.html. The regression this guards
+# is a blank page rather than a wrong status: file_server answers a
+# revalidation by writing no body, and the status override turns its 304
+# into a 200 — a browser holding index.html in cache then gets an empty
+# 200 on one reload out of two, and renders nothing.
+assert_code 200 "SPA deep link" -H 'Accept: text/html' "$BASE/t/smoke-token"
+DEEP_ETAG=$(curl -s -o /dev/null -D - --connect-timeout 3 --max-time 10 \
+  -H 'Accept: text/html' "$BASE/t/smoke-token" | sed -n 's/^[Ee][Tt]ag: //p' | tr -d '\r')
+[ -n "$DEEP_ETAG" ] || fail "SPA deep link: no ETag to revalidate with"
+DEEP_SIZE=$(curl -s -o /dev/null -w '%{size_download}' --connect-timeout 3 --max-time 10 \
+  -H 'Accept: text/html' -H "If-None-Match: ${DEEP_ETAG}" "$BASE/t/smoke-token" || true)
+[ "${DEEP_SIZE:-0}" -gt 0 ] \
+  || fail "SPA deep link revalidated: empty body, the browser would show a blank page"
+echo "ok: SPA deep link revalidated (${DEEP_SIZE} bytes)"
+
+# Those URLs only exist inside the decryption Service Worker, so one
+# reaching Caddy means the worker didn't intercept it: a bare 404 says so
+# where a silent index.html in a hidden iframe wouldn't.
+assert_code 404 "download URL kept out of the SPA fallback" \
+  -H 'Accept: text/html' "$BASE/_dl/smoke-token/file-id"
+
 # Backward compatibility: no allowlist -> admin reaches the stub.
 assert_code 200 "default admin passthrough" "$BASE/admin/"
 

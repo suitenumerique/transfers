@@ -859,6 +859,58 @@ class TestDraftEncryption:
         assert transfer.confidential is True
         assert transfer.encryption_key == ""
 
+    def test_finalize_cannot_switch_to_confidential_after_parking_key(
+        self, patched_s3, authenticated_client, settings
+    ):
+        """``finalize`` is a poll loop, and a later call can carry metadata
+        that contradicts the one which parked the key. Switching to
+        confidential then is refused on the field, not by the database
+        constraint behind it."""
+        settings.CLAMAV_SCAN_ENABLED = True
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        # Scan still pending: 202, and the key is parked on the draft.
+        pending = _finalize(authenticated_client, initiate["draft_id"])
+        assert pending.status_code == 202, pending.data
+        draft = TransferDraft.objects.get(id=initiate["draft_id"])
+        assert draft.encryption_key == VALID_KEY
+
+        resp = _finalize(
+            authenticated_client, initiate["draft_id"], confidential=True
+        )
+        assert resp.status_code == 400, resp.data
+        # A view-raised field error stays a bare string on the wire (a
+        # serializer's would be a list) — the form keys on that shape.
+        assert isinstance(resp.data["confidential"], str)
+        assert Transfer.objects.count() == 0
+
+    def test_finalize_rejects_a_key_that_changed_between_polls(
+        self, patched_s3, authenticated_client, settings
+    ):
+        """A second key is refused rather than ignored: the transfer would go
+        out under the parked one while the sender hands out the other."""
+        settings.CLAMAV_SCAN_ENABLED = True
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        pending = _finalize(authenticated_client, initiate["draft_id"])
+        assert pending.status_code == 202, pending.data
+
+        resp = _finalize(
+            authenticated_client, initiate["draft_id"], encryption_key="B" * 43
+        )
+        assert resp.status_code == 400, resp.data
+        assert isinstance(resp.data["encryption_key"], str)
+        draft = TransferDraft.objects.get(id=initiate["draft_id"])
+        assert draft.encryption_key == VALID_KEY
+
     def test_finalize_submits_scan_with_decryption_params(
         self, patched_s3, authenticated_client, settings
     ):
@@ -1145,6 +1197,125 @@ class TestDraftEncryption:
         assert draft.encryption_key == VALID_KEY
         # No transfer yet — it's created only once the import lands.
         assert Transfer.objects.count() == 0
+
+    def test_drive_import_enqueue_failure_reopens_the_file(
+        self, patched_s3, authenticated_client
+    ):
+        """The enqueue runs after the commit, so ``import_started_at`` is
+        already durable when the broker refuses the job. Left set, it would
+        make every later poll skip the file — the draft would answer 202
+        until the abandoned-draft cleanup. Clearing it reopens the retry."""
+        resp = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert resp.status_code == 201, resp.data
+        from django.test import TestCase as _TC
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task.delay",
+                side_effect=RuntimeError("broker down"),
+            ),
+            pytest.raises(RuntimeError),
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            _finalize(authenticated_client, resp.data["draft_id"])
+
+        tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
+        assert tf.import_started_at is None
+
+    def test_drive_import_enqueue_failure_reopens_every_file(
+        self, patched_s3, authenticated_client
+    ):
+        """``on_commit`` stops at the first callback that raises, so the whole
+        batch is enqueued from a single callback: a broker that refuses the
+        first file must not strand the ones behind it with a durable
+        ``import_started_at`` and no task — that draft would answer 202 until
+        the abandoned-draft cleanup a day later."""
+        first = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        assert first.status_code == 201, first.data
+        second = _add_file(
+            authenticated_client,
+            draft_id=first.data["draft_id"],
+            filename="b.bin",
+            plaintext_size=1024,
+            source_url="https://drive.example.com/y",
+        )
+        assert second.status_code == 201, second.data
+
+        from django.test import TestCase as _TC
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task.delay",
+                side_effect=RuntimeError("broker down"),
+            ) as delay,
+            pytest.raises(RuntimeError),
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            _finalize(authenticated_client, first.data["draft_id"])
+
+        # Every id was tried, and every file is enqueueable again.
+        assert delay.call_count == 2
+        for resp in (first, second):
+            tf = TransferFile.objects.get(id=resp.data["transfer_file_id"])
+            assert tf.import_started_at is None
+
+    def test_drive_import_enqueue_failure_spares_the_files_that_landed(
+        self, patched_s3, authenticated_client
+    ):
+        """One refusal doesn't reopen a file whose task *is* queued: resetting
+        it would have the next poll enqueue a second import of the same
+        file."""
+        first = _add_file(
+            authenticated_client,
+            plaintext_size=1024,
+            source_url="https://drive.example.com/x",
+        )
+        second = _add_file(
+            authenticated_client,
+            draft_id=first.data["draft_id"],
+            filename="b.bin",
+            plaintext_size=1024,
+            source_url="https://drive.example.com/y",
+        )
+
+        from django.test import TestCase as _TC
+
+        # Refuse by id, not by call order: ``draft.files`` has no ordering,
+        # so the database may hand back either file first.
+        def refuse_first(file_id):
+            if str(file_id) == str(first.data["transfer_file_id"]):
+                raise RuntimeError("broker down")
+
+        with (
+            patch(
+                "core.api.viewsets.draft.import_drive_file_task.delay",
+                side_effect=refuse_first,
+            ),
+            pytest.raises(RuntimeError),
+            _TC.captureOnCommitCallbacks(execute=True),
+        ):
+            _finalize(authenticated_client, first.data["draft_id"])
+
+        assert (
+            TransferFile.objects.get(
+                id=first.data["transfer_file_id"]
+            ).import_started_at
+            is None
+        )
+        assert (
+            TransferFile.objects.get(
+                id=second.data["transfer_file_id"]
+            ).import_started_at
+            is not None
+        )
 
     def test_finalize_poll_does_not_re_enqueue_import(
         self, patched_s3, authenticated_client

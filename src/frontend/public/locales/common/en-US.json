@@ -137,7 +137,6 @@
   "Transfer deactivated": "Transfer deactivated",
   "Deactivated": "Deactivated",
   "Deactivate after all files are downloaded": "Deactivate after all files are downloaded",
-  "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.": "Once every file has been downloaded at least once, the transfer is automatically deactivated: the download link stops working and the files are wiped from our servers.",
   "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.": "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.",
   "Single-use link. Deactivates after full download.": "Single-use link. Deactivates after full download.",
   "Single-use link. Deactivates after full download by another user.": "Single-use link. Deactivates after full download by another user.",
@@ -178,9 +177,8 @@
   "This link will no longer work and files will be deleted.": "This link will no longer work and files will be deleted.",
   "Cannot change mode while sending.": "Cannot change mode while sending.",
   "Confidential transfer": "Confidential transfer",
-  "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.": "Files are always encrypted in your browser. Confidential keeps the decryption key off our servers entirely — the recipient supplies it from the link or receives it from you separately.",
-  "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.": "The decryption key stays in the link and never reaches our servers. Anyone with the full link can open the files; we can't recover it.",
-  "The email will contain only the link. You'll have to pass the decryption key on yourself, through a channel other than email (SMS, instant messaging, in person…). We never see it and can't recover it.": "The email will contain only the link. You'll have to pass the decryption key on yourself, through a channel other than email (SMS, instant messaging, in person…). We never see it and can't recover it.",
+  "Recommended for sensitive data. After sending, a decryption key will be shown: pass it on to your recipients so they can open the files.": "Recommended for sensitive data. After sending, a decryption key will be shown: pass it on to your recipients so they can open the files.",
+  "Recommended for sensitive data. The decryption key stays in the link and never reaches our servers: anyone with the full link can open the files.": "Recommended for sensitive data. The decryption key stays in the link and never reaches our servers: anyone with the full link can open the files.",
   "Remove the Drive import to make this transfer confidential.": "Remove the Drive import to make this transfer confidential.",
   "Confidential file": "Confidential file",
   "Confidential": "Confidential",
@@ -212,7 +210,6 @@
   "Your recipients have": "Your recipients have",
   "Some emails couldn't be sent. Open the transfer page to retry.": "Some emails couldn't be sent. Open the transfer page to retry.",
   "Email me when a recipient downloads the files": "Email me when a recipient downloads the files",
-  "One email per recipient: as soon as they have downloaded every file, or about an hour after their first download if they stopped partway (it lists what they took). Only the links sent by email can be attributed — a copied link can't tell who used it.": "One email per recipient: as soon as they have downloaded every file, or about an hour after their first download if they stopped partway (it lists what they took). Only the links sent by email can be attributed — a copied link can't tell who used it.",
   "You are signed in as the sender: your own visits and downloads are not recorded, so this recipient's status won't change and no download receipt will be sent. Open the link in a private window to test it.": "You are signed in as the sender: your own visits and downloads are not recorded, so this recipient's status won't change and no download receipt will be sent. Open the link in a private window to test it.",
   "Can't reach the server. Check your connection and try again.": "Can't reach the server. Check your connection and try again.",
   "The server ran into an error. Try again in a moment.": "The server ran into an error. Try again in a moment.",
@@ -220,5 +217,7 @@
   "Something went wrong. Try again.": "Something went wrong. Try again.",
   "The service can't be reached right now. Check your connection, or try again in a moment.": "The service can't be reached right now. Check your connection, or try again in a moment.",
   "Retry": "Retry",
-  "Download resumed": "Download resumed"
+  "Download resumed": "Download resumed",
+  "More options": "More options",
+  "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially.": "This transfer is already being sent without confidentiality. Uncheck the option, or start a new transfer to send it confidentially."
 }

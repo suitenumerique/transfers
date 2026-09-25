@@ -423,8 +423,13 @@
     }
   }
 
+  // The "Date" and "By" headers put a 14px icon and a 6px gap before their
+  // label, so the cells under them take the same offset and every column
+  // reads as header-label over value — the first column gets there the
+  // other way round, by padding its header past the row's 32px tile.
   &__history-date,
   &__history-actor {
+    padding-left: calc(14px + 6px);
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
@@ -533,43 +538,6 @@
     &:disabled {
       opacity: 0.5;
       cursor: not-allowed;
-    }
-  }
-}
-
-// One-shot option — aligns the checkbox and its info tooltip trigger inline.
-.transfer-form__auto-archive {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-
-  &-help {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--c--globals--spacings--2xs);
-    border: 0;
-    background: transparent;
-    border-radius: 50%;
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-    cursor: help;
-    line-height: 0;
-
-    svg {
-      width: 20px;
-      height: 20px;
-    }
-
-    &:hover,
-    &:focus-visible {
-      color: var(--c--contextuals--content--semantic--neutral--primary);
-      background: rgba(0, 0, 0, 0.04);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
-      outline-offset: 1px;
     }
   }
 }
@@ -782,11 +750,45 @@
     gap: var(--c--globals--spacings--2xs);
   }
 
-  &__confidential-row {
+  // Lines the subtitle up with the Switch's label: Cunningham's track
+  // (46px) plus its label gap (8px).
+  &__confidential-hint {
+    padding-left: 3.375rem;
+  }
+
+  // Advanced options — the fold holding every optional setting. Closed it
+  // is a single line, so the form reads as "files, who, title, send".
+  &__advanced {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--xs);
+  }
+
+  &__advanced-toggle {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: var(--c--globals--spacings--2xs);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 700;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+
+    &:focus-visible {
+      outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+  }
+
+  // Indented under the toggle so the fold's options read as its children.
+  &__advanced-list {
+    display: flex;
+    flex-direction: column;
     gap: var(--c--globals--spacings--xs);
+    padding-left: var(--c--globals--spacings--base);
   }
 
   &__mode-hint {
