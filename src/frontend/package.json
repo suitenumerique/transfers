@@ -71,5 +71,9 @@
     "@rollup/rollup-linux-x64-gnu": "4.57.1",
     "@rollup/rollup-linux-x64-musl": "4.57.1"
   },
-  "overrides": {}
+  "overrides": {
+    "react-aria": "3.49.0",
+    "react-stately": "3.47.0",
+    "@internationalized/date": "3.12.2"
+  }
 }

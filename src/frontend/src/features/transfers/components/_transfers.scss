@@ -542,44 +542,6 @@
   }
 }
 
-// One option — its checkbox on the left, its info tooltip trigger on the right.
-.transfer-form__option-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--c--globals--spacings--xs);
-}
-
-.transfer-form__option-help {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--c--globals--spacings--2xs);
-  border: 0;
-  background: transparent;
-  border-radius: 50%;
-  color: var(--c--contextuals--content--semantic--neutral--secondary);
-  cursor: help;
-  line-height: 0;
-
-  svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  &:hover,
-  &:focus-visible {
-    color: var(--c--contextuals--content--semantic--neutral--primary);
-    background: rgba(0, 0, 0, 0.04);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
-    outline-offset: 1px;
-  }
-}
-
 // Recipient Input (chip-based email input) — mirrors Cunningham's
 // `c__input__wrapper--classic` border/radius/color tokens so the box reads
 // visually identical to sibling Input/Select fields.
@@ -788,6 +750,12 @@
     gap: var(--c--globals--spacings--2xs);
   }
 
+  // Lines the subtitle up with the Switch's label: Cunningham's track
+  // (46px) plus its label gap (8px).
+  &__confidential-hint {
+    padding-left: 3.375rem;
+  }
+
   // Advanced options — the fold holding every optional setting. Closed it
   // is a single line, so the form reads as "files, who, title, send".
   &__advanced {
@@ -815,22 +783,12 @@
     }
   }
 
-  // What the closed fold would otherwise hide: the settings that are on,
-  // read as a quiet aside next to the toggle's own label.
-  &__advanced-active {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 400;
-    font-size: var(--c--globals--font--sizes--xs);
-    color: var(--c--contextuals--content--semantic--neutral--secondary);
-  }
-
+  // Indented under the toggle so the fold's options read as its children.
   &__advanced-list {
     display: flex;
     flex-direction: column;
     gap: var(--c--globals--spacings--xs);
+    padding-left: var(--c--globals--spacings--base);
   }
 
   &__mode-hint {

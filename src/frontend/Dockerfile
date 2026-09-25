@@ -12,7 +12,10 @@ RUN mkdir -p /tmp/npm-cache && chown -R ${DOCKER_USER} /tmp/npm-cache /home/fron
 # Install deps and run all npm commands as the user running the container
 USER ${DOCKER_USER}
 COPY --chown=${DOCKER_USER} package*.json ./
-RUN npm install
+# npm ci installs exactly what package-lock.json pins. The npm cache lives in
+# a BuildKit cache mount so rebuilds reuse downloaded tarballs without
+# shipping them in the image layer.
+RUN --mount=type=cache,target=/tmp/npm-cache,mode=0777 npm ci --no-audit --no-fund
 
 FROM frontend-deps AS frontend-build
 
