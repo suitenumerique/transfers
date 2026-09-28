@@ -62,6 +62,31 @@ describe("Caddyfile CSP", () => {
   });
 });
 
+describe("Caddyfile cache policy", () => {
+  // A hashed URL names its own content, so it can be kept forever. Everything
+  // else keeps its URL across deploys and must be revalidated — the
+  // translations above all: they are fetched at runtime from a stable path,
+  // so a cached catalogue outliving a deploy makes the app render the key it
+  // cannot find, i.e. English text in a French page.
+  it("caches hashed assets for a year and revalidates everything else", () => {
+    expect(CADDYFILE).toMatch(/@immutable path \/assets\/\*/);
+    expect(CADDYFILE).toMatch(
+      /header @immutable Cache-Control "public, max-age=31536000, immutable"/,
+    );
+    expect(CADDYFILE).toMatch(/@revalidate not path \/assets\/\*/);
+    expect(CADDYFILE).toMatch(/header @revalidate Cache-Control "no-cache"/);
+  });
+
+  it("leaves no stable-URL file cacheable without revalidation", () => {
+    // The rule is deny-by-default on purpose: naming the exposed paths one by
+    // one is what let /locales/ ship unprotected in the first place. Anything
+    // added to public/ later is covered without a second thought.
+    const immutablePaths = CADDYFILE.match(/@immutable path (\S+)/)?.[1];
+
+    expect(immutablePaths).toBe("/assets/*");
+  });
+});
+
 describe("Caddyfile client IP", () => {
   // The behaviour itself is exercised on the built image by
   // bin/smoke-test-front; this pins the wiring that makes it hold.

@@ -12,15 +12,30 @@ EOR
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
+# Where the app keeps what it writes and what was collected for it. Settings
+# derive STATIC_ROOT and MEDIA_ROOT from it, so the build and the runtime must
+# agree: collectstatic writes the manifest under $DJANGO_DATA_DIR/static, and
+# Django looks for it in the same place. Carried as ENV, not ARG, precisely so
+# it survives into the running container — an ARG would not, and Django would
+# fall back to BASE_DIR/data and raise "Missing staticfiles manifest entry" on
+# the first {% static %} it renders, which in practice means every admin page.
+# Still a default: compose env files and `-e` override it as usual.
+ARG DATA_DIR=/data
+ENV DJANGO_DATA_DIR=${DATA_DIR}
+
 WORKDIR /app
 
 # ---- uv + managed Python + build system deps ----
 FROM base AS uv
 
 # Pin uv by SHA256 digest for supply chain security
-# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.10.4
-# https://github.com/astral-sh/uv/pkgs/container/uv/691717444?tag=0.10.4
-COPY --from=ghcr.io/astral-sh/uv@sha256:4cac394b6b72846f8a85a7a0e577c6d61d4e17fe2ccee65d9451a8b3c9efb4ac /uv /uvx /bin/
+# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.19
+# https://github.com/astral-sh/uv/releases/tag/0.12.19
+#
+# uv carries the SHA256 of every Python build it can install, so the Python
+# version below cannot move without it: 0.10.4 had no 3.14.7 and failed the
+# build with "No download found for request".
+COPY --from=ghcr.io/astral-sh/uv@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 /uv /uvx /bin/
 
 RUN <<EOR
 apt-get update
@@ -43,7 +58,7 @@ ENV UV_PROJECT_ENVIRONMENT=/venv
 
 # Install Python via uv — integrity verified against SHA256 checksums embedded in the uv binary.
 # Uses python-build-standalone: most C deps (ssl, ffi, sqlite, zlib, lzma, bz2) are statically linked.
-RUN uv python install 3.14.3
+RUN uv python install 3.14.7
 
 # ---- Production dependencies ----
 FROM uv AS base-with-deps
@@ -61,31 +76,25 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-proj
 
 # ---- Static file collector ----
 FROM base-with-deps AS link-collector
-ARG STATIC_ROOT=/data/static
 
 # Copy application (see .dockerignore)
 COPY . /app/
 
 WORKDIR /app
 
-# collectstatic
-# Settings derive STATIC_ROOT from DJANGO_DATA_DIR, which is only set by the
-# compose env files at *run* time — during the build it would fall back to
-# /app/data/static and the COPY --from=link-collector below would find
-# nothing. Pin it from the STATIC_ROOT arg so both agree.
+# collectstatic — writes under $DJANGO_DATA_DIR/static, inherited from base.
 RUN <<EOR
 set -eu
-DJANGO_DATA_DIR="$(dirname ${STATIC_ROOT})" \
-    DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput
+DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput
 # Replace duplicated file by a symlink to decrease the overall size of the final image
-rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${STATIC_ROOT}
+rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${DJANGO_DATA_DIR}/static
 EOR
 
 # ---- Strip Python for production (remove pip, idle, tkinter, tcl, headers, tests) ----
 FROM uv AS python-runtime
 RUN <<EOR
 set -e
-PYDIR=$(dirname $(dirname $(uv python find 3.14.3)))
+PYDIR=$(dirname $(dirname $(uv python find 3.14.7)))
 rm -rf \
     $PYDIR/bin/idle* $PYDIR/bin/pip* $PYDIR/bin/pydoc* $PYDIR/bin/*-config \
     $PYDIR/include $PYDIR/share \
@@ -160,11 +169,10 @@ RUN rm -rf \
 
 # ---- Production runtime ----
 FROM runtime-base AS runtime-prod
-ARG STATIC_ROOT=/data/static
 
 COPY --from=python-runtime /opt/python /opt/python
 COPY --from=base-with-deps /venv /venv
-COPY --from=link-collector ${STATIC_ROOT} ${STATIC_ROOT}
+COPY --from=link-collector ${DJANGO_DATA_DIR}/static ${DJANGO_DATA_DIR}/static
 COPY --from=app-prod /app/ /app/
 
 # The default command runs gunicorn WSGI server
@@ -189,7 +197,9 @@ RUN mkdir -p /shared-libs/usr/lib /shared-libs/usr/share/misc && \
 # Uses cc-debian13 (C runtime only) + python-build-standalone from uv.
 # Debug with: docker run --entrypoint='' gcr.io/distroless/cc-debian13:debug-nonroot sh
 FROM gcr.io/distroless/cc-debian13:nonroot AS runtime-distroless-prod
-ARG STATIC_ROOT=/data/static
+# Not derived from ``base``, so it does not inherit the variable above.
+ARG DATA_DIR=/data
+ENV DJANGO_DATA_DIR=${DATA_DIR}
 
 WORKDIR /app
 
@@ -200,7 +210,7 @@ COPY --from=base-with-deps /venv /venv
 # libmagic shared library + magic database
 COPY --from=shared-libs /shared-libs/ /
 # Static files
-COPY --from=link-collector ${STATIC_ROOT} ${STATIC_ROOT}
+COPY --from=link-collector ${DJANGO_DATA_DIR}/static ${DJANGO_DATA_DIR}/static
 # Application code
 COPY --from=app-prod /app/ /app/
 
