@@ -46,6 +46,7 @@ env.d/terraform
 # npm
 node_modules
 src/frontend/dist/
+src/frontend/.next/
 tsconfig.tsbuildinfo
 src/frontend/.config
 src/frontend/src/routes.gen.ts

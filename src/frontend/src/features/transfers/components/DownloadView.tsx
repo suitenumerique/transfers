@@ -59,21 +59,20 @@ export function DownloadView({
   // Every finalized transfer is encrypted; ``encryption_chunk_size`` is only
   // null for legacy plaintext transfers, which skip the SW decrypt path.
   const isEncrypted = transfer.encryption_chunk_size != null;
-  // Snapshot the fragment once, at mount, before the effect below strips it
-  // from the visible URL. Reading window.location.hash again after a rerun
-  // (a new ``transfer.files`` reference is enough) would see it already
-  // stripped and wrongly fall back to the paste screen.
-  const keyFragmentRef = useRef<string>(
-    typeof window !== "undefined"
-      ? window.location.hash.replace(/^#/, "")
-      : "",
+  // The fragment, read at mount and then held here: the effect below strips
+  // it from the visible URL, so reading window.location.hash again after a
+  // rerun (a new ``transfer.files`` reference is enough) would see it gone
+  // and wrongly fall back to the paste screen. State rather than a ref
+  // because it can also arrive later — see the hashchange listener below.
+  const [keyFragment, setKeyFragment] = useState<string>(() =>
+    typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "",
   );
   // The key we hand the SW. Non-confidential transfers get it from the
   // backend (``encryption_key``); confidential transfers get it from the URL
   // fragment or, if that's missing, from the recipient pasting it.
   const autoKey = !transfer.confidential
     ? transfer.encryption_key || null
-    : keyFragmentRef.current || null;
+    : keyFragment || null;
 
   // Decryption plumbing state: register the key with the SW before enabling
   // downloads. `ready` (go), `loading` (SW handshake), `need-key`
@@ -86,6 +85,46 @@ export function DownloadView({
     if (!autoKey) return "need-key";
     return "loading";
   });
+  // Snapshot the URL on first render, *before* the effect strips the
+  // fragment. The "copy link" pill keeps this complete value so a forwarding
+  // recipient still gets a working link, while the visible URL bar no longer
+  // leaks the key. Refreshed by the hashchange handler below — a link that
+  // arrives after mount is just as much the link to forward.
+  const initialUrlRef = useRef<string>(
+    typeof window !== "undefined" ? stripRecipientToken(window.location.href) : "",
+  );
+  const downloadUrl = initialUrlRef.current;
+  // Counts registration attempts, so re-arriving at the *same* key is still
+  // an attempt. State, not a ref: it sits in the registration effect's
+  // dependencies, and changing a ref would not rerun it.
+  const [registerAttempt, setRegisterAttempt] = useState(0);
+  // Pasting the full link again while the page is already open only changes
+  // the fragment, so the browser navigates within the document: nothing
+  // remounts and the key would go unread until a reload. Treat that hash
+  // like the one read at mount — it is the same link arriving twice.
+  useEffect(() => {
+    const onHashChange = () => {
+      // Only a confidential transfer takes its key from the fragment; for
+      // any other one a hash change is someone else's navigation, and
+      // flipping to `loading` here would hide the UI for a registration
+      // that is never retried.
+      if (!transfer.confidential) return;
+      const fragment = window.location.hash.replace(/^#/, "");
+      if (!fragment) return;
+      initialUrlRef.current = stripRecipientToken(window.location.href);
+      setKeyFragment(fragment);
+      // Re-pasting the link after a failed handshake sends the same
+      // fragment, so `keyFragment` doesn't change and `autoKey` with it:
+      // without this bump the effect would not rerun, and the spinner we
+      // are about to show would never resolve.
+      setRegisterAttempt((n) => n + 1);
+      // Even from `ready`: the key in the SW is about to be replaced, and a
+      // click before the new handshake lands would re-register the old one.
+      setEncryptionState("loading");
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [transfer.confidential]);
   const [pastedKey, setPastedKey] = useState("");
   const [pasteError, setPasteError] = useState(false);
   // Files clicked whose first decrypted bytes haven't left the SW yet. The
@@ -188,14 +227,6 @@ export function DownloadView({
     0,
   );
   const expired = useDeadlineFlag(transfer.expires_at);
-  // Snapshot the original URL on first render, *before* the effect strips the
-  // fragment. The "copy link" pill keeps this complete value so a forwarding
-  // recipient still gets a working link, while the visible URL bar no longer
-  // leaks the key.
-  const initialUrlRef = useRef<string>(
-    typeof window !== "undefined" ? stripRecipientToken(window.location.href) : "",
-  );
-  const downloadUrl = initialUrlRef.current;
 
   // The raw key string that's currently registered with the SW. Kept in a
   // ref (not state) so it survives re-renders without causing them, and so
@@ -295,7 +326,15 @@ export function DownloadView({
     return () => {
       cancelled = true;
     };
-  }, [isEncrypted, autoKey, transfer.confidential, transfer.encryption_chunk_size, transfer.files, token]);
+  }, [
+    isEncrypted,
+    autoKey,
+    registerAttempt,
+    transfer.confidential,
+    transfer.encryption_chunk_size,
+    transfer.files,
+    token,
+  ]);
 
   // Unmount-only. Deliberately not in the [token] effect below: that
   // cleanup also runs on an in-place token change (SPA navigation from one

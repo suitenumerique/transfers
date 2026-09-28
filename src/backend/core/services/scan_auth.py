@@ -16,9 +16,10 @@ import base64
 import hashlib
 import time
 
+from django.conf import settings
+
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from django.conf import settings
 
 
 def _load_signing_key() -> Ed25519PrivateKey:

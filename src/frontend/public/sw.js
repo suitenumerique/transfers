@@ -205,6 +205,8 @@ self.addEventListener("message", (event) => {
           event.source.postMessage({
             type: "encryption-register-ack",
             token: data.token,
+            // Echoed so the page matches this ack to its own registration.
+            requestId: data.requestId,
           });
         }
       })
@@ -213,6 +215,7 @@ self.addEventListener("message", (event) => {
           event.source.postMessage({
             type: "encryption-register-error",
             token: data.token,
+            requestId: data.requestId,
             message: err && err.message ? String(err.message) : "register failed",
           });
         }

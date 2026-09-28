@@ -87,16 +87,28 @@
 			header_up X-Forwarded-For {client_ip}
 		}
 
-		# The E2E decryption Service Worker. Lives at the root so its default
-		# scope covers /_dl/<token>/<file_id>/... — no Service-Worker-Allowed
-		# header needed. Disable caching so a new deploy's SW takes over at
-		# the next page load instead of riding the browser's default 24h
-		# max-age.
-		@sw path /sw.js
-		handle @sw {
-			header Cache-Control "no-cache"
-			file_server
-		}
+		# Cache policy, by whether the URL names its own content. Vite hashes
+		# everything under /assets/, so a changed file is a changed URL and the
+		# old one can never be served by mistake: cache it for a year.
+		#
+		# Everything else keeps a stable URL across deploys — index.html, the
+		# manifest, the images, /sw.js, and the runtime-loaded translations
+		# under /locales/. Without a directive a browser does not skip caching,
+		# it *guesses* a lifetime from the file's age, so a deploy leaves new
+		# JS talking to whatever the browser still holds. For the translations
+		# that means the app asking for a key its cached catalogue does not
+		# have yet and rendering the key itself — an English string in a French
+		# page — and for /sw.js an old decryption worker outliving the deploy.
+		# ``no-cache`` still caches: it only forbids reuse without asking, so
+		# the browser revalidates and Caddy answers 304 when nothing moved.
+		#
+		# Same split as suitenumerique/messages, which serves its locales the
+		# same way.
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+		@revalidate not path /assets/*
+		header @revalidate Cache-Control "no-cache"
 
 		# Serve static assets. Missing files fall through to handle_errors
 		# below, which applies the SPA fallback for document navigations only.
@@ -118,6 +130,14 @@
 			@html header Accept *text/html*
 			handle @html {
 				rewrite * /index.html
+				# Drop the browser's revalidation headers. file_server
+				# answers a conditional request by writing no body, while
+				# the status override below turns its 304 into a 200: the
+				# browser would get an empty 200 and render a blank page
+				# instead of the app — on every deep link whose index.html
+				# is already in cache, one reload out of two.
+				request_header -If-None-Match
+				request_header -If-Modified-Since
 				# 200, not the 404 we arrived with: this *is* the page for
 				# that URL as far as the browser, caches and crawlers go.
 				file_server {
