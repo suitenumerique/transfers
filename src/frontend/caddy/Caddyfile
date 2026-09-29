@@ -46,6 +46,20 @@
 		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN}; font-src 'self' data:; connect-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERTS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	}
 
+	# Access log. Caddy writes none unless asked, which is why everything it
+	# answers on its own — an admin allowlist refusal, an alias redirect, a
+	# static 404 — left no trace anywhere: those never reach Django, whose
+	# log was the only one we had.
+	log {
+		output stdout
+		format console
+	}
+
+	# Probes only, for volume: lprobe and the platform poll on a loop, each
+	# line carrying the whole response header block.
+	@probes path /__lbheartbeat__ /__lbheartbeat__/ /__heartbeat__ /__heartbeat__/*
+	log_skip @probes
+
 	route {
 		# Health checks
 		respond /__lbheartbeat__ 200
@@ -87,23 +101,14 @@
 			header_up X-Forwarded-For {client_ip}
 		}
 
-		# Cache policy, by whether the URL names its own content. Vite hashes
-		# everything under /assets/, so a changed file is a changed URL and the
-		# old one can never be served by mistake: cache it for a year.
-		#
-		# Everything else keeps a stable URL across deploys — index.html, the
-		# manifest, the images, /sw.js, and the runtime-loaded translations
-		# under /locales/. Without a directive a browser does not skip caching,
-		# it *guesses* a lifetime from the file's age, so a deploy leaves new
-		# JS talking to whatever the browser still holds. For the translations
-		# that means the app asking for a key its cached catalogue does not
-		# have yet and rendering the key itself — an English string in a French
-		# page — and for /sw.js an old decryption worker outliving the deploy.
-		# ``no-cache`` still caches: it only forbids reuse without asking, so
-		# the browser revalidates and Caddy answers 304 when nothing moved.
-		#
-		# Same split as suitenumerique/messages, which serves its locales the
-		# same way.
+		# Cache by whether the URL names its own content. Vite hashes
+		# /assets/, so a changed file is a changed URL: keep it a year.
+		# Everything else has a stable URL across deploys — index.html, the
+		# manifest, /sw.js, the runtime-loaded /locales/ — and with no
+		# directive a browser guesses a lifetime rather than skipping the
+		# cache, leaving new JS on a stale catalogue. ``no-cache`` still
+		# caches, it just revalidates first. Same split as
+		# suitenumerique/messages.
 		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
 
