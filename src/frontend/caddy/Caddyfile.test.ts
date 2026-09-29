@@ -62,6 +62,35 @@ describe("Caddyfile CSP", () => {
   });
 });
 
+describe("Caddyfile access log", () => {
+  it("logs, since Caddy writes nothing unless asked", () => {
+    // What Caddy answers on its own never reaches Django: an allowlist
+    // refusal, an alias redirect, a static 404. Without this the only log is
+    // the backend's, and those requests are invisible in it.
+    expect(CADDYFILE).toMatch(/\blog \{/);
+    expect(CADDYFILE).toMatch(/output stdout/);
+    // console, not json: these lines are read by a human in journalctl.
+    expect(CADDYFILE).toMatch(/format console/);
+  });
+
+  it("keeps the healthcheck probes out of the log", () => {
+    // lprobe polls the container check on a loop and the platform polls the
+    // backend's; logged, they bury the requests someone actually wants to
+    // read, each one carrying the whole response header block.
+    // Both spellings of each: Django answers the bare path and the slashed
+    // one alike, and whoever polls picks either.
+    const probes = CADDYFILE.match(/@probes path (.+)/)?.[1] ?? "";
+
+    expect(probes.trim().split(/\s+/)).toEqual([
+      "/__lbheartbeat__",
+      "/__lbheartbeat__/",
+      "/__heartbeat__",
+      "/__heartbeat__/*",
+    ]);
+    expect(CADDYFILE).toMatch(/log_skip @probes/);
+  });
+});
+
 describe("Caddyfile cache policy", () => {
   // A hashed URL names its own content, so it can be kept forever. Everything
   // else keeps its URL across deploys and must be revalidated — the
