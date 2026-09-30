@@ -658,6 +658,21 @@ def send_recipient_invitations_task(transfer_id):
     except Transfer.DoesNotExist:
         return
 
+    # An expired transfer's link is already dead, so an invitation for it
+    # would promise a download that cannot happen. The window is real: the
+    # expiry sweep is periodic, so a transfer sits expired-but-ACTIVE until
+    # it fires, and ``/resend/`` only gates on the status. ``is_expired``
+    # is the timing-only check the model documents for exactly this.
+    #
+    # The completion stamp is repeated rather than skipped: the sender's
+    # screen polls on it to leave its "sending…" state, and would wait
+    # forever otherwise.
+    if transfer.is_expired:
+        logger.info("Skipped invitations for expired transfer %s", transfer_id)
+        transfer.notifications_completed_at = timezone.now()
+        transfer.save(update_fields=["notifications_completed_at", "updated_at"])
+        return
+
     # One SMTP session for the whole batch. ``EmailMessage.send()`` with no
     # connection opens a fresh one per message — TCP + TLS + AUTH against
     # the relay, several hundred ms each — which is what made a transfer
@@ -676,7 +691,24 @@ def send_recipient_invitations_task(transfer_id):
             transfer_id,
         )
     try:
-        for recipient in transfer.recipients.filter(email_sent_at__isnull=True):
+        # Ordered: TransferRecipient has no Meta.ordering, so the database
+        # is free to return rows however it likes. Invitations then go out
+        # in an order that changes between runs — harmless in production,
+        # but it makes any test that pins which recipient failed flaky, and
+        # it denies the sender the order they typed.
+        for recipient in transfer.recipients.filter(
+            email_sent_at__isnull=True
+        ).order_by("created_at"):
+            # Rechecked per recipient: a long batch can cross the deadline
+            # mid-loop, and the mail floors its countdown at "1 jour" — so a
+            # late send would promise a day the link no longer has.
+            if transfer.is_expired:
+                logger.info(
+                    "Transfer %s expired mid-batch; stopped before recipient %s",
+                    transfer_id,
+                    recipient.id,
+                )
+                break
             try:
                 send_recipient_invitation(transfer, recipient, connection=connection)
                 recipient.email_sent_at = timezone.now()

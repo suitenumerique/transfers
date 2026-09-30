@@ -41,7 +41,7 @@
   {# Expiry line #}
   <tr>
     <td align="center" style="padding:24px 32px 8px;font-size:14px;color:#25252f;">
-      Le lien est valable jusqu'au <strong>{{ expires_date }}</strong> à <strong>{{ expires_time }}</strong>
+      Le lien est valable <strong>{{ expires_in_days }} jour{{ expires_in_days|pluralize }}</strong>
     </td>
   </tr>
 {% endblock %}
