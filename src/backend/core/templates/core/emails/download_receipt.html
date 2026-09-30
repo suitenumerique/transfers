@@ -6,7 +6,7 @@
   <tr>
     <td style="padding:0 32px 24px;font-size:15px;line-height:1.5;color:#25252f;">
       <strong>{{ recipient_email }}</strong>
-      {% if complete %}a téléchargé les fichiers de votre transfert{% else %}a téléchargé <strong>{{ downloaded_count }} {% if downloaded_count == 1 %}fichier{% else %}fichiers{% endif %} sur {{ total_count }}</strong> de votre transfert{% endif %}{% if transfer.title %} : <strong><em>{{ transfer.title }}</em></strong>{% endif %}, le <strong>{{ downloaded_date }}</strong> à <strong>{{ downloaded_time }}</strong>.
+      {% if complete %}a téléchargé les fichiers de votre transfert{% else %}a téléchargé <strong>{{ downloaded_count }} {% if downloaded_count == 1 %}fichier{% else %}fichiers{% endif %} sur {{ total_count }}</strong> de votre transfert{% endif %}{% if transfer.title %} : <strong><em>{{ transfer.title }}</em></strong>{% endif %}.
     </td>
   </tr>
 

@@ -879,9 +879,7 @@ class TestDraftEncryption:
         draft = TransferDraft.objects.get(id=initiate["draft_id"])
         assert draft.encryption_key == VALID_KEY
 
-        resp = _finalize(
-            authenticated_client, initiate["draft_id"], confidential=True
-        )
+        resp = _finalize(authenticated_client, initiate["draft_id"], confidential=True)
         assert resp.status_code == 400, resp.data
         # A view-raised field error stays a bare string on the wire (a
         # serializer's would be a list) — the form keys on that shape.

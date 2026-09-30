@@ -505,8 +505,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             raise drf.exceptions.ValidationError(
                 {
                     "encryption_key": (
-                        "This draft was already finalized with a different "
-                        "key."
+                        "This draft was already finalized with a different key."
                     )
                 }
             )

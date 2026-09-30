@@ -1,6 +1,7 @@
 """send_recipient_invitations_task: one SMTP session per batch, per-recipient
 failure isolation, and the completion stamp the frontend polls on."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.core import mail
@@ -51,6 +52,66 @@ def test_batch_shares_one_mail_connection():
         ).count()
         == 5
     )
+
+
+def test_a_transfer_expiring_mid_batch_stops_before_the_next_recipient():
+    """The entry check only covers transfers already dead when the task
+    starts. A slow relay makes the batch long enough to cross the deadline
+    inside the loop — and the mail floors its countdown at "1 jour", so a
+    late send would not merely carry a dead link, it would promise a day
+    the link no longer has."""
+    transfer = _transfer_with_recipients(3)
+
+    def expire_after_the_first(transfer, recipient, connection=None):
+        transfer.expires_at = timezone.now() - timedelta(minutes=1)
+
+    with (
+        patch("core.tasks.get_connection", return_value=MagicMock()),
+        patch(
+            "core.tasks.send_recipient_invitation", side_effect=expire_after_the_first
+        ) as send,
+    ):
+        send_recipient_invitations_task(str(transfer.id))
+
+    assert send.call_count == 1
+    # The two skipped recipients keep email_sent_at NULL, so extending the
+    # deadline and resending still reaches them.
+    assert (
+        TransferRecipient.objects.filter(
+            transfer=transfer, email_sent_at__isnull=True
+        ).count()
+        == 2
+    )
+    # The stamp still lands: the sender's screen polls on it.
+    transfer.refresh_from_db()
+    assert transfer.notifications_completed_at is not None
+
+
+def test_an_expired_transfer_sends_nothing_but_still_completes():
+    """The expiry sweep is periodic, so a transfer sits expired-but-ACTIVE
+    until it fires — and ``/resend/`` only gates on the status. Inviting
+    someone then would hand them a link that is already dead. The stamp
+    still lands: the sender's screen polls on it, and would otherwise wait
+    on a send that is never coming."""
+    transfer = _transfer_with_recipients(2)
+    transfer.expires_at = timezone.now() - timedelta(minutes=1)
+    transfer.save(update_fields=["expires_at", "updated_at"])
+    connection = MagicMock()
+
+    with patch("core.tasks.get_connection", return_value=connection) as get_conn:
+        send_recipient_invitations_task(str(transfer.id))
+
+    assert get_conn.call_count == 0
+    assert connection.send_messages.call_count == 0
+    assert not mail.outbox
+    # Nothing was marked sent, so a later resend on a revived transfer still
+    # has work to do.
+    assert not TransferRecipient.objects.filter(
+        transfer=transfer, email_sent_at__isnull=False
+    ).exists()
+
+    transfer.refresh_from_db()
+    assert transfer.notifications_completed_at is not None
 
 
 def test_one_failed_send_does_not_sink_the_batch():

@@ -2,11 +2,12 @@
 
 import json
 import logging
+import math
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils import formats, timezone
+from django.utils import timezone
 
 from core.services.recipient_activity import activity_for
 
@@ -130,7 +131,15 @@ def send_recipient_invitation(transfer, recipient, connection=None):
     download_url = f"{base_url}/t/{transfer.public_token}?r={recipient.token}"
     files = list(transfer.files.all())
     total_size = sum(f.size for f in files)
-    expires_at = timezone.localtime(transfer.expires_at)
+    # Days rather than a deadline: a date needs a timezone to be right, and
+    # the reader's is unknowable here — an agent in Cayenne is three hours
+    # from Paris. Counted from now, not from creation, so a resend does not
+    # promise the days the first send had. Rounded up, so the last few hours
+    # read as "1 jour" instead of "0".
+    expires_in_days = max(
+        1,
+        math.ceil((transfer.expires_at - timezone.now()).total_seconds() / 86400),
+    )
 
     subject = f"{sender_name} vous a envoyé des fichiers"
     ctx = {
@@ -141,8 +150,7 @@ def send_recipient_invitation(transfer, recipient, connection=None):
         "sender_email": sender_email,
         "files": files,
         "total_size": total_size,
-        "expires_date": formats.date_format(expires_at, "d/m/Y"),
-        "expires_time": expires_at.strftime("%Hh%M"),
+        "expires_in_days": expires_in_days,
         "banner_label": "Nouveau transfert partagé avec vous.",
         "banner_icon": "&#x21C5;",
         "verb_label": "vous a transféré",
@@ -181,7 +189,6 @@ def send_download_receipt(transfer, recipient, connection=None):
         f.downloaded = str(f.id) in activity.downloaded_file_ids
     downloaded_count = sum(1 for f in files if f.downloaded)
     complete = downloaded_count >= len(files)
-    downloaded_at = timezone.localtime(activity.downloaded_at or timezone.now())
     detail_url = f"{base_url}/transfers/{transfer.id}"
 
     if complete:
@@ -201,8 +208,6 @@ def send_download_receipt(transfer, recipient, connection=None):
         "complete": complete,
         "downloaded_count": downloaded_count,
         "total_count": len(files),
-        "downloaded_date": formats.date_format(downloaded_at, "d/m/Y"),
-        "downloaded_time": downloaded_at.strftime("%Hh%M"),
         "banner_label": "Vos fichiers ont été téléchargés.",
         "banner_icon": "&#x2B07;",
         "cta_url": detail_url,

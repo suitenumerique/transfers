@@ -146,9 +146,7 @@ class TransferViewSet(
             # is not a pattern that needs investigation. Include the
             # transfer id for correlation; no user identifier here (actor
             # attribution stays in the audit pipeline).
-            logger.info(
-                "Refused hard-delete of ACTIVE transfer %s", instance.id
-            )
+            logger.info("Refused hard-delete of ACTIVE transfer %s", instance.id)
             raise drf.exceptions.ValidationError(
                 {
                     "status": (

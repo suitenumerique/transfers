@@ -346,7 +346,16 @@ class Base(Configuration):
             ("en-us", "English"),
         )
     )
-    TIME_ZONE = "UTC"
+    # What users read, not what is stored: USE_TZ keeps the database in UTC
+    # and this only decides how a datetime is rendered. UTC was showing in
+    # every notification email, where an expiry hour two off is worse than
+    # useless. Configurable because the default is only right for metropolitan
+    # France — an overseas deployment sets DJANGO_TIME_ZONE to its own. It is
+    # also the default of ``User.timezone``, so new accounts inherit something
+    # sensible for the day that field is actually read.
+    TIME_ZONE = values.Value(
+        "Europe/Paris", environ_name="DJANGO_TIME_ZONE", environ_prefix=None
+    )
     USE_I18N = False
     USE_TZ = True
 

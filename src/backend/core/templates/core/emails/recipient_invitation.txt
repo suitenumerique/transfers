@@ -5,7 +5,7 @@
 {{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %} · {{ total_size|humanize_size }}
 {% for file in files %}- {{ file.filename }} · {{ file.size|humanize_size }}
 {% endfor %}
-Le lien est valable jusqu'au {{ expires_date }} à {{ expires_time }}.
+Le lien est valable {{ expires_in_days }} jour{{ expires_in_days|pluralize }}.
 
 Télécharger les fichiers : {{ download_url }}
 
