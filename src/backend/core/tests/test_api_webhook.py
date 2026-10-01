@@ -148,6 +148,9 @@ class TestScanResultWebhook:
         _post(api_client, f.id, "s3cr3t", _done("flagged", reason="nsfw"))
         f.refresh_from_db()
         assert f.scan_status == ScanStatus.ERROR
+        # Permanent, unlike a word we have never heard of: the scan concluded,
+        # so /rescan/ must not re-arm it forever.
+        assert f.scan_error_kind == "file"
 
     @pytest.mark.parametrize("kind", [[], {}, 3, None])
     def test_a_non_string_verdict_word_fails_closed(self, api_client, kind):

@@ -252,11 +252,9 @@ class Base(Configuration):
     # runs them all and a file is clean only if every engine cleared it.
     SCAN_SCANNERS = values.Value("", environ_name="SCAN_SCANNERS", environ_prefix=None)
     # The file-scanner API version we submit to and read callbacks in — its
-    # versioning, not ours (``API_VERSION`` above is this service's own, and
-    # moving it would move our public routes). ``v2.0`` reports a verdict per
-    # category; ``v1.0`` is the flat tri-state that preceded it, which this
-    # service no longer parses. A callback stamped with anything else is acked
-    # and the scan re-submitted — see the scan-result webhook.
+    # versioning, not ours (``API_VERSION`` routes our own public endpoints).
+    # ``v2.0`` reports a verdict per category; ``v1.0`` is the flat tri-state
+    # that preceded it, which this service no longer parses.
     SCAN_API_VERSION = values.Value(
         "v2.0", environ_name="SCAN_API_VERSION", environ_prefix=None
     )

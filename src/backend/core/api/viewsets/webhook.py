@@ -101,8 +101,27 @@ class ScanResultWebhookView(APIView):
             parts.append(entry)
         return f" [{', '.join(parts)}]" if parts else ""
 
+    # Verdict words the scanner sends that this version has no status for.
+    # Unlike a word we have never heard of, these are known to be terminal.
+    _UNMAPPABLE_VERDICTS = ("flagged",)
+
     @staticmethod
-    def _error_kind_from_payload(payload, status) -> str:
+    def _verdict_kind(payload):
+        """The malware axis's verdict word, or None when the body has none.
+
+        A non-string ``kind`` (a list, an object) is unhashable: looking it up
+        in a dict would raise and answer 500, which the scanner reads as a
+        failed delivery and retries until it dead-letters.
+        """
+        verdicts = payload.get("verdicts")
+        verdict = verdicts.get("malware") if isinstance(verdicts, dict) else None
+        if not isinstance(verdict, dict):
+            return None
+        kind = verdict.get("kind")
+        return kind if isinstance(kind, str) else None
+
+    @classmethod
+    def _error_kind_from_payload(cls, payload, status) -> str:
         """Sub-classify an ERROR as 'file' (unscannable — the user must remove
         it) or 'transient' (retryable). Ambiguous bodies default to transient
         so a passing outage isn't blamed on the file; empty for non-error
@@ -116,6 +135,10 @@ class ScanResultWebhookView(APIView):
         """
         if status != ScanStatus.ERROR or not isinstance(payload, dict):
             return ""
+        # A verdict we cannot map is still a verdict: the scan concluded, so a
+        # retry returns the same word. Permanent, or /rescan/ loops on it.
+        if cls._verdict_kind(payload) in cls._UNMAPPABLE_VERDICTS:
+            return "file"
         kind = payload.get("error_kind")
         return kind if kind in ("transient", "file") else "transient"
 
@@ -158,16 +181,7 @@ class ScanResultWebhookView(APIView):
             # The job never reached a verdict (the file couldn't be fetched, or
             # no deciding engine was up). Nothing in the body is worth reading.
             return ScanStatus.ERROR
-        verdicts = payload.get("verdicts")
-        verdict = verdicts.get("malware") if isinstance(verdicts, dict) else None
-        if not isinstance(verdict, dict):
-            return ScanStatus.ERROR
-        kind = verdict.get("kind")
-        # A non-string ``kind`` (a list, an object) is unhashable: looking it
-        # up would raise and answer 500, which the scanner reads as a failed
-        # delivery and retries until it dead-letters, leaving the file
-        # PENDING for the reaper to re-submit. Malformed means ERROR here,
-        # like every other body we cannot read.
-        if not isinstance(kind, str):
+        kind = cls._verdict_kind(payload)
+        if kind is None:
             return ScanStatus.ERROR
         return cls._VERDICT_STATUS.get(kind, ScanStatus.ERROR)
