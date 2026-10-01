@@ -483,7 +483,7 @@ def submit_scan_task(self, transfer_file_id):
     # bytes we POST, so `requests` must ship the same bytes (``data=``, not
     # ``json=``, so it doesn't re-serialise and drift the hash).
     body = json.dumps(payload, separators=(",", ":")).encode()
-    scan_path = f"/api/{settings.API_VERSION}/scan-async"
+    scan_path = f"/api/{settings.SCAN_API_VERSION}/scan-async"
     token = mint_request_token("POST", scan_path, body)
     try:
         response = requests.post(

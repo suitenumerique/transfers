@@ -972,8 +972,11 @@ class TestDraftEncryption:
             mock_post.call_args.kwargs["headers"]["Authorization"]
             == "Bearer test-jwt-token"
         )
-        # New endpoint: /api/v1.0/scan-async (was /v2/scan-async).
-        assert mock_post.call_args.args[0].endswith("/api/v1.0/scan-async")
+        # The scanner's version, not ours: SCAN_API_VERSION is what builds
+        # this path, and it is v2 — the one that answers with per-category
+        # verdicts. Pinned rather than read from settings, so moving the
+        # default is a decision someone has to make here too.
+        assert mock_post.call_args.args[0].endswith("/api/v2.0/scan-async")
         # No engine named (the default): the scanner applies its own.
         assert "scanners" not in body
 
@@ -1753,7 +1756,7 @@ class TestSubmitScanTask:
             scanner_post.call_args.kwargs["headers"]["Authorization"]
             == "Bearer test-jwt-token"
         )
-        assert scanner_post.call_args.args[0] == ("http://scanner/api/v1.0/scan-async")
+        assert scanner_post.call_args.args[0] == ("http://scanner/api/v2.0/scan-async")
 
     def test_defers_when_key_not_yet_known(self, user, settings):
         """Upload is done but the user hasn't hit Send, so no key has reached us.

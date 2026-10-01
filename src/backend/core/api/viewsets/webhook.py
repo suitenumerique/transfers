@@ -1,4 +1,4 @@
-"""Inbound webhook from the clamav file-scanner service.
+"""Inbound webhook from the file-scanner service.
 
 The scanner POSTs the result of an asynchronous scan here once it finishes.
 The endpoint is unauthenticated in the Django sense (the scanner has no
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ScanResultWebhookView(APIView):
     """POST /webhooks/scan-result/?file_id=<uuid>&secret=<token>
 
-    Body is the scanner's job payload: ``{status, malware, reason, ...}``.
+    Body is the scanner's job payload: ``{status, verdicts, scanners, ...}``.
     """
 
     permission_classes = [AllowAny]
@@ -107,32 +107,67 @@ class ScanResultWebhookView(APIView):
         it) or 'transient' (retryable). Ambiguous bodies default to transient
         so a passing outage isn't blamed on the file; empty for non-error
         statuses so a recovered file clears any stale kind.
+
+        That default carries the ``error`` verdict: the scan ran, so the body
+        has ``status: "done"`` and no ``error_kind`` at all — and an engine
+        that failed is exactly the transient case. Only a *pre-scan* failure
+        (bad host, download error, undecryptable file) sends ``error_kind``
+        itself, and only it can say ``file``.
         """
         if status != ScanStatus.ERROR or not isinstance(payload, dict):
             return ""
         kind = payload.get("error_kind")
         return kind if kind in ("transient", "file") else "transient"
 
-    @staticmethod
-    def _status_from_payload(payload) -> str:
+    # The scanner's verdict for the malware axis → this file's scan status.
+    # ``flagged`` (a content-policy hit) is left out on purpose: INFECTED
+    # would call it a virus. It falls through below, blocking without naming.
+    _VERDICT_STATUS = {
+        "clean": ScanStatus.CLEAN,
+        "malware": ScanStatus.INFECTED,
+        # The scan ran; the file itself (an encrypted or unreadable container)
+        # is why there is no answer. Not a detection, and no retry will change
+        # it: scan-exempt, with a warning.
+        "partial": ScanStatus.UNSCANNABLE,
+        "error": ScanStatus.ERROR,
+    }
+
+    @classmethod
+    def _status_from_payload(cls, payload) -> str:
         """Map the scanner's payload onto a ``ScanStatus``.
 
-        Fails closed: an ``error`` status, or any malformed/ambiguous body,
-        maps to ERROR rather than CLEAN so a botched scan never unlocks a
-        download.
+        The malware axis arrives as ``verdicts.malware.kind``, in the words the
+        engines themselves use — ``clean`` / ``malware`` / ``partial`` /
+        ``error``. It replaces the flat ``malware`` tri-state, which the
+        scanner no longer sends at all: only the verdict separates "this
+        file cannot be read" (permanent, the sender must drop it) from "the
+        engines failed" (retryable).
+
+        Fails closed throughout: a job-level ``error``, a verdict word we don't
+        know, a body carrying no verdict at all, or any malformed one maps to
+        ERROR rather than CLEAN, so a botched scan never unlocks a download.
+        A scanner too old to report verdicts therefore blocks every file it
+        answers for, and this version blocks every file a newer scanner
+        answers for. That cuts both ways by design: there is no deployment
+        order that spans the change, so the two services ship together and
+        the gap is a short refusal of every scan, never a silent pass.
         """
         if not isinstance(payload, dict):
             return ScanStatus.ERROR
         if payload.get("status") == "error":
+            # The job never reached a verdict (the file couldn't be fetched, or
+            # no deciding engine was up). Nothing in the body is worth reading.
             return ScanStatus.ERROR
-        malware = payload.get("malware")
-        if malware is True:
-            return ScanStatus.INFECTED
-        if malware is False:
-            return ScanStatus.CLEAN
-        if malware is None and payload.get("error_kind") == "file":
-            # The scan ran; the file itself (an encrypted or unreadable
-            # container) is why there is no verdict. Not a detection, and no
-            # retry will change it: scan-exempt, with a warning.
-            return ScanStatus.UNSCANNABLE
-        return ScanStatus.ERROR
+        verdicts = payload.get("verdicts")
+        verdict = verdicts.get("malware") if isinstance(verdicts, dict) else None
+        if not isinstance(verdict, dict):
+            return ScanStatus.ERROR
+        kind = verdict.get("kind")
+        # A non-string ``kind`` (a list, an object) is unhashable: looking it
+        # up would raise and answer 500, which the scanner reads as a failed
+        # delivery and retries until it dead-letters, leaving the file
+        # PENDING for the reaper to re-submit. Malformed means ERROR here,
+        # like every other body we cannot read.
+        if not isinstance(kind, str):
+            return ScanStatus.ERROR
+        return cls._VERDICT_STATUS.get(kind, ScanStatus.ERROR)
