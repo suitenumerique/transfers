@@ -124,7 +124,10 @@ export type ScanStatus =
   | "infected"
   | "error"
   | "skipped"
-  | "too_large";
+  | "too_large"
+  // The scanner could not examine the file (an encrypted or unreadable
+  // container): not scanned, downloadable with a warning, like too_large.
+  | "unscannable";
 
 // Set only when scan_status is "error". "file" = the file itself can't be
 // scanned (remove it); "transient" = an infra hiccup a retry may clear.

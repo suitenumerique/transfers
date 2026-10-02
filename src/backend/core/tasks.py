@@ -334,7 +334,7 @@ def import_drive_file_task(transfer_file_id):
         if not settings.CLAMAV_SCAN_ENABLED:
             tf.scan_status = ScanStatus.SKIPPED
             update_fields.append("scan_status")
-        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
+        elif tf.scannable_size > settings.SCAN_MAX_FILE_SIZE:
             tf.scan_status = ScanStatus.TOO_LARGE
             update_fields.append("scan_status")
         tf.save(update_fields=update_fields)
@@ -475,12 +475,15 @@ def submit_scan_task(self, transfer_file_id):
     }
     if encryption_params:
         payload["encryption"] = encryption_params
+    scanners = [s.strip() for s in settings.SCAN_SCANNERS.split(",") if s.strip()]
+    if scanners:
+        payload["scanners"] = scanners
 
     # Serialise once: the JWT ``bh`` claim binds the SHA-256 of the exact
     # bytes we POST, so `requests` must ship the same bytes (``data=``, not
     # ``json=``, so it doesn't re-serialise and drift the hash).
     body = json.dumps(payload, separators=(",", ":")).encode()
-    scan_path = f"/api/{settings.API_VERSION}/scan-async"
+    scan_path = f"/api/{settings.SCAN_API_VERSION}/scan-async"
     token = mint_request_token("POST", scan_path, body)
     try:
         response = requests.post(
