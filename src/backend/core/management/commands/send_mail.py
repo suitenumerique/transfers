@@ -16,7 +16,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--from", dest="from_email", required=True)
         parser.add_argument("--to", dest="to_emails", nargs="+", required=True)
-        parser.add_argument("--subject", default="Test email from Transferts")
+        parser.add_argument("--subject", default="Test email from Transfers")
         parser.add_argument("--body", default="This is a test email.")
 
     def handle(self, *args, **options):

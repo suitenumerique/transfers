@@ -10,7 +10,7 @@
 # Requires: docker, curl, python3.
 set -o errexit -o nounset -o pipefail
 
-IMAGE="${1:-transferts-frontend-distroless}"
+IMAGE="${1:-transfers-frontend-distroless}"
 BASE=http://127.0.0.1:8080
 CID=""
 STUB_PID=""
@@ -21,7 +21,7 @@ if docker network inspect bridge >/dev/null 2>&1; then
   NET_MODE=bridge
   STUB_BIND=0.0.0.0
   RUN_FLAGS=(-p 8080:8080 --add-host=host.docker.internal:host-gateway
-    -e TRANSFERTS_FRONTEND_BACKEND_SERVER=host.docker.internal:8000)
+    -e TRANSFERS_FRONTEND_BACKEND_SERVER=host.docker.internal:8000)
 else
   NET_MODE=host
   STUB_BIND=127.0.0.1
@@ -174,7 +174,7 @@ stop_container
 
 # Trusted proxy: XFF from a trusted peer sets client_ip.
 start_container \
-  -e "TRANSFERTS_FRONTEND_TRUSTED_PROXIES=$CLIENT_CIDR" \
+  -e "TRANSFERS_FRONTEND_TRUSTED_PROXIES=$CLIENT_CIDR" \
   -e 'DJANGO_ADMIN_IP_ALLOWLIST=192.0.2.0/24'
 assert_code 200 "trusted proxy: XFF accepted" -H 'X-Forwarded-For: 192.0.2.10' "$BASE/admin/"
 # trusted_proxies_strict: the rightmost untrusted address wins, so a
@@ -187,7 +187,7 @@ stop_container
 # private_ranges is the documented Scalingo value; the client IP is a
 # loopback or private bridge address in both modes, so it is trusted.
 start_container \
-  -e 'TRANSFERTS_FRONTEND_TRUSTED_PROXIES=private_ranges' \
+  -e 'TRANSFERS_FRONTEND_TRUSTED_PROXIES=private_ranges' \
   -e 'DJANGO_ADMIN_IP_ALLOWLIST=192.0.2.0/24'
 assert_code 200 "private_ranges: XFF accepted" -H 'X-Forwarded-For: 192.0.2.10' "$BASE/admin/"
 stop_container

@@ -1,4 +1,4 @@
-"""Permission handlers for the transferts core app."""
+"""Permission handlers for the transfers core app."""
 
 from rest_framework import permissions
 

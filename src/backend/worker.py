@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Background task worker for Transferts."""
+"""Background task worker for Transfers."""
 
 import argparse
 import logging
 import os
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transferts.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transfers.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
 
 # Override $APP if set by the host (e.g. Scalingo)
@@ -15,13 +15,13 @@ from configurations.importer import install  # pylint: disable=wrong-import-posi
 
 install(check_options=True)
 
-from transferts.celery_app import app  # pylint: disable=wrong-import-position
+from transfers.celery_app import app  # pylint: disable=wrong-import-position
 
 DEFAULT_QUEUES = ["default"]
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Start the Transferts worker.")
+    parser = argparse.ArgumentParser(description="Start the Transfers worker.")
     parser.add_argument("--queues", "-Q", type=str, default=None)
     parser.add_argument("--concurrency", "-c", type=int, default=None)
     parser.add_argument("--disable-scheduler", action="store_true")

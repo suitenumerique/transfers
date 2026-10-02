@@ -1,4 +1,4 @@
-"""Transferts core API."""
+"""Transfers core API."""
 
 import logging
 

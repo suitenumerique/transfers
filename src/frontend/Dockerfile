@@ -78,8 +78,8 @@ COPY --from=frontend-source /app /app
 COPY caddy/Caddyfile /etc/caddy/Caddyfile
 
 ENV PORT=8080
-ENV TRANSFERTS_FRONTEND_ROOT=/app
-ENV TRANSFERTS_FRONTEND_BACKEND_SERVER=localhost:8000
+ENV TRANSFERS_FRONTEND_ROOT=/app
+ENV TRANSFERS_FRONTEND_BACKEND_SERVER=localhost:8000
 ENV DJANGO_ADMIN_URL=admin
 
 ENTRYPOINT ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

@@ -11,7 +11,7 @@ import path from "node:path";
 // which a download manager happily saves as a 1 kB "completed" file.
 // Match Caddy so dev shows the same failure prod would.
 const noSpaFallbackForDownloads = (): Plugin => ({
-  name: "transferts:no-spa-fallback-for-downloads",
+  name: "transfers:no-spa-fallback-for-downloads",
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
       if (req.url?.startsWith("/_dl/")) {

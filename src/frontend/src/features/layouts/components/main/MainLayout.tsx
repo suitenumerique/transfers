@@ -23,7 +23,7 @@ export function MainLayout({ children }: PropsWithChildren) {
       hideLeftPanelOnDesktop
       icon={
         <Link to="/" aria-label={t("Home")}>
-          <img src="/images/transferts-logo.svg" alt="Transferts" height={40} />
+          <img src="/images/transfers-logo.svg" alt="Transferts" height={40} />
         </Link>
       }
       rightHeaderContent={

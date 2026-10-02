@@ -28,7 +28,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
           aria-label={t("Transferts")}
         >
           <img
-            src="/images/transferts-logo.svg"
+            src="/images/transfers-logo.svg"
             alt="Transferts"
             height={36}
           />

@@ -25,7 +25,7 @@ Services:
 - Keycloak (dev OIDC): http://localhost:8902 (`admin` / `admin`)
 
 **Signing in:** open the frontend, click _Sign in_, and use a seeded test user
-(`agent@collectivite.fr` / `transferts`). Dev runs the real OIDC flow against a
+(`agent@collectivite.fr` / `transfers`). Dev runs the real OIDC flow against a
 local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/authentication.md).
 
 ## Configurable limits
@@ -70,13 +70,13 @@ project is open source — a self-hosted instance must not end up sending
 them by default. Everything below is therefore deployment-supplied (the
 same convention as [docs](https://github.com/suitenumerique/docs) and
 [drive](https://github.com/suitenumerique/drive)); with nothing set, emails
-carry the Transferts wordmark in the header and no footer logo.
+carry the Transfers wordmark in the header and no footer logo.
 
 | Variable | Effect |
 |---|---|
-| `DJANGO_EMAIL_LOGO_IMG` | Absolute URL of the header logo. Empty ⇒ the shipped Transferts wordmark. A custom logo is rendered 40px high at its natural width. |
+| `DJANGO_EMAIL_LOGO_IMG` | Absolute URL of the header logo. Empty ⇒ the shipped Transfers wordmark. A custom logo is rendered 40px high at its natural width. |
 | `DJANGO_EMAIL_FOOTER_LOGOS` | JSON list of footer logos, e.g. `[{"url":"https://…/rf.png","alt":"République Française","width":80,"height":44}]`. `width`/`height` are CSS px and optional. Empty ⇒ no footer logo (never a broken image). |
-| `DJANGO_EMAIL_FROM` | Sender address (default `transferts@example.com`). |
+| `DJANGO_EMAIL_FROM` | Sender address (default `transfers@example.com`). |
 | `TERMS_URL` | Terms-of-use link in the email footer (omitted when empty). |
 | `HELP_URL` | Help link on the sidebar and the recipient page (hidden when empty). |
 
@@ -110,7 +110,7 @@ trigger fires first wins.
 
 ## Background jobs (Celery beat)
 
-Schedule is defined in `src/backend/transferts/celery_app.py`.
+Schedule is defined in `src/backend/transfers/celery_app.py`.
 
 | Task | Cadence | Effect |
 |---|---|---|
@@ -180,9 +180,9 @@ Client → Edge router (Scalingo) → HAProxy → Caddy → Gunicorn
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRANSFERTS_FRONTEND_TRUSTED_PROXIES` | _(empty: trust no proxy)_ | Space-separated CIDR list of the proxies whose `X-Forwarded-For` sets the client IP. On Scalingo, set `private_ranges`: the routers sit on private addresses that are not published, and the container port is only reachable through them. Do not use `private_ranges` where untrusted machines share the private network. **Unset on Scalingo, the audit log records the router's address instead of the user's.** |
+| `TRANSFERS_FRONTEND_TRUSTED_PROXIES` | _(empty: trust no proxy)_ | Space-separated CIDR list of the proxies whose `X-Forwarded-For` sets the client IP. On Scalingo, set `private_ranges`: the routers sit on private addresses that are not published, and the container port is only reachable through them. Do not use `private_ranges` where untrusted machines share the private network. **Unset on Scalingo, the audit log records the router's address instead of the user's.** |
 | `DJANGO_ADMIN_IP_ALLOWLIST` | `0.0.0.0/0 ::/0` (everyone) | Space-separated CIDR list of the client IPs admitted on the admin URL; Caddy answers 403 to the others. Leave it unset to keep the admin open — an empty value admits no one. |
-| `TRANSFERTS_FRONTEND_BACKEND_SERVER` | `localhost:8000` | `host:port` of the Django backend Caddy proxies `/api/*`, `/static/*` and the admin URL to. |
+| `TRANSFERS_FRONTEND_BACKEND_SERVER` | `localhost:8000` | `host:port` of the Django backend Caddy proxies `/api/*`, `/static/*` and the admin URL to. |
 
 `make test-front-distroless` builds the production image and checks all
 of this against it (allow and deny, spoofed headers, trusted proxies);
@@ -194,7 +194,7 @@ the CI runs it.
 
 Instances can optionally allow users to attach files from a [Drive](https://github.com/suitenumerique/drive) instance. When enabled, an "Attach from Drive" button appears in the transfer form. Files are downloaded client-side (using the user's Drive session) and uploaded through the regular multipart flow — no reference to Drive is stored.
 
-**Transferts side** — set these environment variables:
+**Transfers side** — set these environment variables:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -203,7 +203,7 @@ Instances can optionally allow users to attach files from a [Drive](https://gith
 | `DRIVE_API_URL` | No | `/api/v1.0` | Path (or absolute URL) to the Drive API |
 | `DRIVE_APP_NAME` | No | `Drive` | Display name shown in UI labels |
 
-**Drive side** — the Drive instance must allow the Transferts origin:
+**Drive side** — the Drive instance must allow the Transfers origin:
 
 ```env
 CORS_ALLOWED_ORIGINS=[..., "https://transferts.example.gouv.fr"]

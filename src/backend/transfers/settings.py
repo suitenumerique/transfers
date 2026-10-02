@@ -1,4 +1,4 @@
-"""Django settings for the Transferts project."""
+"""Django settings for the Transfers project."""
 
 import logging
 import os
@@ -56,8 +56,8 @@ class Base(Configuration):
     )
 
     # Application definition
-    ROOT_URLCONF = "transferts.urls"
-    WSGI_APPLICATION = "transferts.wsgi.application"
+    ROOT_URLCONF = "transfers.urls"
+    WSGI_APPLICATION = "transfers.wsgi.application"
 
     # Database
     DATABASES = {
@@ -70,7 +70,7 @@ class Base(Configuration):
                 environ_prefix=None,
             ),
             "NAME": values.Value(
-                "transferts", environ_name="DB_NAME", environ_prefix=None
+                "transfers", environ_name="DB_NAME", environ_prefix=None
             ),
             "USER": values.Value("dbuser", environ_name="DB_USER", environ_prefix=None),
             "PASSWORD": values.Value(
@@ -122,7 +122,7 @@ class Base(Configuration):
     # ``storages["default"].bucket_name``) resolves to the same bucket the
     # hand-rolled boto3 client in ``core/services/s3.py`` uses.
     AWS_STORAGE_BUCKET_NAME = values.Value(
-        "transferts", environ_name="AWS_STORAGE_BUCKET_NAME", environ_prefix=None
+        "transfers", environ_name="AWS_STORAGE_BUCKET_NAME", environ_prefix=None
     )
 
     # Transfers
@@ -231,7 +231,7 @@ class Base(Configuration):
     # scanner's logs and its ``api_client`` metric. Must match the caller
     # name registered on the scanner side (``JWT_ISSUER_KEYS``).
     SCAN_JWT_ISSUER = values.Value(
-        "transferts", environ_name="SCAN_JWT_ISSUER", environ_prefix=None
+        "transfers", environ_name="SCAN_JWT_ISSUER", environ_prefix=None
     )
     # ``aud`` claim on every scan-submit JWT. Must match the scanner's
     # configured ``JWT_AUDIENCE`` (default ``file-scanner``).
@@ -441,8 +441,8 @@ class Base(Configuration):
     }
 
     SPECTACULAR_SETTINGS = {
-        "TITLE": "Transferts API",
-        "DESCRIPTION": "API for the Transferts file sharing service.",
+        "TITLE": "Transfers API",
+        "DESCRIPTION": "API for the Transfers file sharing service.",
         "VERSION": "1.0.0",
         "SERVE_INCLUDE_SCHEMA": False,
         "COMPONENT_SPLIT_REQUEST": True,
@@ -509,7 +509,7 @@ class Base(Configuration):
     # territoriale deployment injects its own values via st-ansible. Same
     # convention as docs and drive (``EMAIL_LOGO_IMG`` / ``EMAIL_FROM``).
     #
-    # Header logo URL. Empty ⇒ falls back to the Transferts wordmark shipped
+    # Header logo URL. Empty ⇒ falls back to the Transfers wordmark shipped
     # in the frontend's ``public/images`` (the product's own mark, fine to
     # distribute). A custom logo is rendered at 40px high with its natural
     # width; supply a 1x asset if Outlook desktop sizing matters to you.
@@ -532,7 +532,7 @@ class Base(Configuration):
     # key drive and docs read. The Django setting keeps its standard name since
     # EmailMultiAlternatives resolves the sender from DEFAULT_FROM_EMAIL.
     DEFAULT_FROM_EMAIL = values.Value(
-        "transferts@example.com",
+        "transfers@example.com",
         environ_name="DJANGO_EMAIL_FROM",
         environ_prefix=None,
     )
@@ -545,7 +545,7 @@ class Base(Configuration):
         "RS256", environ_name="OIDC_RP_SIGN_ALGO", environ_prefix=None
     )
     OIDC_RP_CLIENT_ID = values.Value(
-        "transferts", environ_name="OIDC_RP_CLIENT_ID", environ_prefix=None
+        "transfers", environ_name="OIDC_RP_CLIENT_ID", environ_prefix=None
     )
     OIDC_RP_CLIENT_SECRET = values.Value(
         None, environ_name="OIDC_RP_CLIENT_SECRET", environ_prefix=None
@@ -754,7 +754,7 @@ class Development(Base):
     )
     DEBUG = True
 
-    SESSION_COOKIE_NAME = "transferts_sessionid"
+    SESSION_COOKIE_NAME = "transfers_sessionid"
 
     USE_SWAGGER = True
     SESSION_CACHE_ALIAS = "session"

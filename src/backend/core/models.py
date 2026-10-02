@@ -1,4 +1,4 @@
-"""Models for the transferts core application."""
+"""Models for the transfers core application."""
 
 import logging
 import secrets

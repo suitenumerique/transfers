@@ -1,5 +1,5 @@
 """
-WSGI config for the transferts project.
+WSGI config for the transfers project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
@@ -28,7 +28,7 @@ except ImportError:
     pass
 # pylint: enable=all
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transferts.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transfers.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
 
 application = get_wsgi_application()

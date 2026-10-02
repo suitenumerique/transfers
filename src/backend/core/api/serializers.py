@@ -1,4 +1,4 @@
-"""Client serializers for the transferts core app."""
+"""Client serializers for the transfers core app."""
 
 import re
 

@@ -1731,7 +1731,7 @@ wheels = [
 ]
 
 [[package]]
-name = "transferts-backend"
+name = "transfers-backend"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

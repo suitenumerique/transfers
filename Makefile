@@ -245,11 +245,11 @@ build-front: ## build the frontend locally
 .PHONY: build-front
 
 build-front-distroless: ## build the frontend production image (Caddy + static bundle)
-	@docker build --target runtime-prod -t transferts-frontend-distroless src/frontend/
+	@docker build --target runtime-prod -t transfers-frontend-distroless src/frontend/
 .PHONY: build-front-distroless
 
 test-front-distroless: build-front-distroless ## build and smoke-test the frontend production image
-	@bin/smoke-test-front transferts-frontend-distroless
+	@bin/smoke-test-front transfers-frontend-distroless
 .PHONY: test-front-distroless
 
 # -- Misc
@@ -259,7 +259,7 @@ clean: ## restore repository state as it was freshly cloned
 .PHONY: clean
 
 help:
-	@echo "$(BOLD)Transferts Makefile$(RESET)"
+	@echo "$(BOLD)Transfers Makefile$(RESET)"
 	@echo "Please use 'make $(BOLD)target$(RESET)' where $(BOLD)target$(RESET) is one of:"
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "$(GREEN)%-30s$(RESET) %s\n", $$1, $$2}'
 .PHONY: help

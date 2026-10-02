@@ -10,7 +10,7 @@ mkdir -p build/
 mv src/frontend/dist build/frontend-out
 
 mv src/backend/* ./
-mkdir -p transferts_backend && touch transferts_backend/__init__.py
+mkdir -p transfers_backend && touch transfers_backend/__init__.py
 
 # Download Caddy binary, verified against the pinned checksum before it is
 # extracted. Same pin and CADDY_SHA256_AMD64 as src/frontend/Dockerfile;

@@ -1,4 +1,4 @@
-"""Custom middleware for the transferts application."""
+"""Custom middleware for the transfers application."""
 
 
 class XForwardedForMiddleware:

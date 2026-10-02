@@ -1,4 +1,4 @@
-"""Authentication URLs for the transferts core app."""
+"""Authentication URLs for the transfers core app."""
 
 from django.urls import include, path
 

@@ -77,11 +77,11 @@ function DownloadPage() {
           className="download-page__brand"
           aria-label={t("Transferts")}
         >
-          {/* The bundled "transferts-logo.svg" is the wordmark — icon +
-              "Transferts" text already inside the SVG. Don't double up
-              with a sibling label or you get two "Transferts" strings. */}
+          {/* The bundled "transfers-logo.svg" is the wordmark — icon +
+              "Transfers" text already inside the SVG. Don't double up
+              with a sibling label or you get two "Transfers" strings. */}
           <img
-            src="/images/transferts-logo.svg"
+            src="/images/transfers-logo.svg"
             alt="Transferts"
             height={36}
           />
