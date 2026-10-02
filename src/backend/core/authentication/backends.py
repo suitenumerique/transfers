@@ -1,4 +1,4 @@
-"""Authentication Backends for the transferts core app."""
+"""Authentication Backends for the transfers core app."""
 
 import logging
 

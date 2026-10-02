@@ -1,4 +1,4 @@
-"""S3 client factory and multipart upload helpers for the transferts bucket.
+"""S3 client factory and multipart upload helpers for the transfers bucket.
 
 Two-tier helper API:
 

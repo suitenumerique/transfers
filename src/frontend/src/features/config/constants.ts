@@ -2,5 +2,5 @@
 export const DEFAULT_PAGE_SIZE = 20;
 
 // Session storage keys
-export const APP_STORAGE_PREFIX = "transferts_";
+export const APP_STORAGE_PREFIX = "transfers_";
 

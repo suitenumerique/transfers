@@ -6,13 +6,13 @@
 		# proxies: then it comes from X-Forwarded-For, walked right to
 		# left to the first address that is not a trusted proxy
 		# (trusted_proxies_strict). A client-appended prefix never wins.
-		trusted_proxies static {$TRANSFERTS_FRONTEND_TRUSTED_PROXIES}
+		trusted_proxies static {$TRANSFERS_FRONTEND_TRUSTED_PROXIES}
 		trusted_proxies_strict
 	}
 }
 
 :{$PORT} {
-	root * {$TRANSFERTS_FRONTEND_ROOT:/app}
+	root * {$TRANSFERS_FRONTEND_ROOT:/app}
 
 	# Security headers on every response Caddy emits (HTML + assets). The
 	# Django backend sets its own on /api/* responses; these cover the
@@ -41,9 +41,9 @@
 		# empty (widget off); set them to the script host and the services API
 		# host of your Suite operator, matching the backend's
 		# LAGAUFRE_WIDGET_URL / LAGAUFRE_API_URL. For La Suite territoriale:
-		#   TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN=https://static.suite.anct.gouv.fr
-		#   TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN=https://operateurs.suite.anct.gouv.fr
-		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN}; font-src 'self' data:; connect-src 'self' {$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERTS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		#   TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN=https://static.suite.anct.gouv.fr
+		#   TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN=https://operateurs.suite.anct.gouv.fr
+		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN}; font-src 'self' data:; connect-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	}
 
 	# Access log. Caddy writes none unless asked, which is why everything it
@@ -69,13 +69,13 @@
 		# trusted_proxies block): one address, never a client-written chain,
 		# and the audit log keeps the user's IP as long as the edge router
 		# is a trusted proxy.
-		reverse_proxy /__heartbeat__/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
+		reverse_proxy /__heartbeat__/* {$TRANSFERS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {client_ip}
 		}
 
 		# Django backend proxy
-		reverse_proxy /api/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
+		reverse_proxy /api/* {$TRANSFERS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {client_ip}
 		}
@@ -91,12 +91,12 @@
 
 		redir /{$DJANGO_ADMIN_URL:admin} /{$DJANGO_ADMIN_URL:admin}/ 301
 
-		reverse_proxy /{$DJANGO_ADMIN_URL:admin}/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
+		reverse_proxy /{$DJANGO_ADMIN_URL:admin}/* {$TRANSFERS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {client_ip}
 		}
 
-		reverse_proxy /static/* {$TRANSFERTS_FRONTEND_BACKEND_SERVER:localhost:8000} {
+		reverse_proxy /static/* {$TRANSFERS_FRONTEND_BACKEND_SERVER:localhost:8000} {
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-For {client_ip}
 		}

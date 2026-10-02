@@ -176,7 +176,7 @@ COPY --from=link-collector ${DJANGO_DATA_DIR}/static ${DJANGO_DATA_DIR}/static
 COPY --from=app-prod /app/ /app/
 
 # The default command runs gunicorn WSGI server
-CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transferts.wsgi:application"]
+CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transfers.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
   CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
@@ -221,7 +221,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Distroless has no ldconfig — tell the dynamic linker where to find libmagic
 ENV LD_LIBRARY_PATH=/usr/lib
 
-CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transferts.wsgi:application"]
+CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transfers.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
   CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]

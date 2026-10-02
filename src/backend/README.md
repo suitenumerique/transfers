@@ -1,4 +1,4 @@
-# Transferts backend
+# Transfers backend
 
 Django + DRF service that owns the data model, API, S3 storage,
 authentication and Celery jobs. Single Django app: `core`.
@@ -75,7 +75,7 @@ All paths are prefixed by `/api/{API_VERSION}/` (e.g. `/api/v1.0/`).
 
 ### Scheduled (Celery beat)
 
-Schedule defined in `transferts/celery_app.py`. See also the
+Schedule defined in `transfers/celery_app.py`. See also the
 [Background jobs table](../../README.md#background-jobs-celery-beat)
 in the root README.
 

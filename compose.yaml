@@ -1,4 +1,4 @@
-name: transferts
+name: transfers
 
 services:
   postgresql:
@@ -28,7 +28,7 @@ services:
   objectstorage:
     image: rustfs/rustfs:1.0.0-alpha.83
     environment:
-      - RUSTFS_ACCESS_KEY=transferts
+      - RUSTFS_ACCESS_KEY=transfers
       - RUSTFS_SECRET_KEY=password
       - RUSTFS_CONSOLE_ENABLE=true
       - RUSTFS_ADDRESS=0.0.0.0:9000
@@ -194,7 +194,7 @@ services:
       - ./src/backend:/app
     ports:
       - "8983:8803"
-    command: celery -A transferts.celery_app flower --port=8803
+    command: celery -A transfers.celery_app flower --port=8803
 
   frontend-base:
     user: "${DOCKER_USER:-1000}"

@@ -1,5 +1,5 @@
 {
-  "realm": "transferts",
+  "realm": "transfers",
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": false,
@@ -8,14 +8,14 @@
   "accessTokenLifespan": 3600,
   "clients": [
     {
-      "clientId": "transferts",
+      "clientId": "transfers",
       "name": "Transferts (local dev)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "secret": "transferts-dev-secret",
+      "secret": "transfers-dev-secret",
       "redirectUris": [
         "http://localhost:8980/*",
         "http://localhost:8981/*",
@@ -42,7 +42,7 @@
       "firstName": "Agent",
       "lastName": "Dev",
       "credentials": [
-        { "type": "password", "value": "transferts", "temporary": false }
+        { "type": "password", "value": "transfers", "temporary": false }
       ]
     },
     {
@@ -53,7 +53,7 @@
       "firstName": "Agent",
       "lastName": "Deux",
       "credentials": [
-        { "type": "password", "value": "transferts", "temporary": false }
+        { "type": "password", "value": "transfers", "temporary": false }
       ]
     }
   ]

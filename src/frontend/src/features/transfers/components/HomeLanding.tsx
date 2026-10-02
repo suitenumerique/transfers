@@ -17,7 +17,7 @@ export function HomeLanding() {
       <div className="home-landing__content">
         <img
           className="home-landing__icon"
-          src="/images/transferts-icon.svg"
+          src="/images/transfers-icon.svg"
           alt=""
           aria-hidden="true"
           width={48}

@@ -35,7 +35,7 @@ const API_PATH = "/api/v1.0";
 // on disk in readable form. Entries carry the transfer's expiry and are
 // dropped past it, and on explicit unregister.
 const REGISTRY = new Map();
-const DB_NAME = "transferts-decryption";
+const DB_NAME = "transfers-decryption";
 const DB_VERSION = 1;
 const STORE = "entries";
 

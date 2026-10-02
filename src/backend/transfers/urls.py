@@ -1,4 +1,4 @@
-"""URL configuration for the transferts project."""
+"""URL configuration for the transfers project."""
 
 from logging import getLogger
 

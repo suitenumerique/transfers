@@ -5,7 +5,7 @@ import { useConfig } from "@/features/providers/config";
 // both LAGAUFRE_WIDGET_URL and LAGAUFRE_API_URL, so an instance outside a
 // Suite deployment neither pulls the third-party script nor lists services
 // belonging to another operator. The frontend's Caddy CSP must allow the
-// same two origins (TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
+// same two origins (TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
 //
 // The widget shows its first six services, the rest behind "more apps" —
 // the operator's API decides which six. That is the layout the other Suite

@@ -14,8 +14,8 @@ const CADDYFILE = readFileSync(
   "utf8",
 );
 
-const SCRIPT_ORIGIN = "{$TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}";
-const API_ORIGIN = "{$TRANSFERTS_FRONTEND_GAUFRE_API_ORIGIN}";
+const SCRIPT_ORIGIN = "{$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}";
+const API_ORIGIN = "{$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN}";
 
 // Directive name -> its source list, read from the header itself so the test
 // tracks the policy rather than a copy of it.
@@ -130,7 +130,7 @@ describe("Caddyfile client IP", () => {
 
   it("only trusts the proxies the deployment names, right to left", () => {
     expect(CADDYFILE).toMatch(
-      /trusted_proxies static \{\$TRANSFERTS_FRONTEND_TRUSTED_PROXIES\}/,
+      /trusted_proxies static \{\$TRANSFERS_FRONTEND_TRUSTED_PROXIES\}/,
     );
     expect(CADDYFILE).toMatch(/^\s*trusted_proxies_strict\s*$/m);
   });

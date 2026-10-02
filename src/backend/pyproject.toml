@@ -1,9 +1,9 @@
 #
-# transferts backend package
+# transfers backend package
 #
 
 [project]
-name = "transferts-backend"
+name = "transfers-backend"
 version = "0.1.0"
 authors = [{ "name" = "ANCT", "email" = "suiteterritoriale@anct.gouv.fr" }]
 classifiers = [
@@ -112,8 +112,8 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-section-order = ["future", "standard-library", "django", "third-party", "transferts", "first-party", "local-folder"]
-sections = { transferts = ["core"], django = ["django"] }
+section-order = ["future", "standard-library", "django", "third-party", "transfers", "first-party", "local-folder"]
+sections = { transfers = ["core"], django = ["django"] }
 extra-standard-library = ["tomllib"]
 
 [tool.ruff.lint.per-file-ignores]

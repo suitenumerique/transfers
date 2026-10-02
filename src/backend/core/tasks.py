@@ -1,4 +1,4 @@
-"""Celery tasks for the transferts core app."""
+"""Celery tasks for the transfers core app."""
 
 import json
 import logging

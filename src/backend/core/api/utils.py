@@ -1,4 +1,4 @@
-"""API utility functions for the transferts core app."""
+"""API utility functions for the transfers core app."""
 
 from core import models
 from core.enums import ActorType

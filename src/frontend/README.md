@@ -1,4 +1,4 @@
-# Transferts frontend
+# Transfers frontend
 
 [Vite](https://vite.dev/) single-page app with file-based routing via
 [TanStack Router](https://tanstack.com/router/), built to static assets and

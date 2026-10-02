@@ -81,7 +81,7 @@ def _common_context(base_url: str) -> dict:
         # The shipped wordmark is a 2x raster (476x80) sized for the 238x40
         # box in _base.html. A custom logo has an unknown ratio, so the
         # template renders it at 40px high with its natural width.
-        "logo_url": custom_logo or f"{base_url}/images/transferts-logo.png",
+        "logo_url": custom_logo or f"{base_url}/images/transfers-logo.png",
         "logo_width": None if custom_logo else 238,
         "footer_logos": _footer_logos(),
         "terms_url": getattr(settings, "TERMS_URL", ""),

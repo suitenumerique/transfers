@@ -8,7 +8,7 @@ import { useLocation } from "@tanstack/react-router";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
-const STORAGE_KEY = "transferts:sidebar-collapsed";
+const STORAGE_KEY = "transfers:sidebar-collapsed";
 const MOBILE_QUERY = "(max-width: 768px)";
 
 const isMobileViewport = () =>

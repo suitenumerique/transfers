@@ -23,7 +23,7 @@ def test_common_context_neutral_defaults():
     empty URLs, so the template renders no <img> at all."""
     ctx = _common_context("https://example.org")
 
-    assert ctx["logo_url"] == "https://example.org/images/transferts-logo.png"
+    assert ctx["logo_url"] == "https://example.org/images/transfers-logo.png"
     assert ctx["logo_width"] == 238
     assert ctx["footer_logos"] == []
     assert ctx["terms_url"] == ""
@@ -153,7 +153,7 @@ def test_base_template_renders_no_footer_when_unconfigured():
 
     # Header only: the shipped wordmark at its native box.
     assert len(imgs) == 1
-    assert 'src="https://example.org/images/transferts-logo.png"' in imgs[0]
+    assert 'src="https://example.org/images/transfers-logo.png"' in imgs[0]
     assert 'width="238"' in imgs[0]
     assert 'height="40"' in imgs[0]
     # No divider, no terms link, no footer table at all.
@@ -222,4 +222,4 @@ def test_base_template_renders_custom_header_logo_without_width():
     assert 'src="https://cdn.example.org/wordmark.png"' in imgs[0]
     assert 'height="40"' in imgs[0]
     assert "width=" not in imgs[0]
-    assert "transferts-logo.png" not in html
+    assert "transfers-logo.png" not in html

@@ -13,15 +13,15 @@ code flow, just against a self-hosted provider.
 
    | Username / email           | Password     |
    |----------------------------|--------------|
-   | `agent@collectivite.fr`    | `transferts` |
-   | `agent2@collectivite.fr`   | `transferts` |
+   | `agent@collectivite.fr`    | `transfers` |
+   | `agent2@collectivite.fr`   | `transfers` |
 
 That's it — you land back in the app, authenticated. Logout works the same way
 (it clears both the Django session and the Keycloak SSO session).
 
 **Keycloak admin console:** http://localhost:8902 — realm `master`, `admin` / `admin`.
 This admin manages *Keycloak itself*; it is unrelated to the app's test users
-(which live in the `transferts` realm). Both the admin credentials and the realm
+(which live in the `transfers` realm). Both the admin credentials and the realm
 are dev-only — see [Security note](#security-note).
 
 ## How it's wired
@@ -52,12 +52,12 @@ This split is configured in `env.d/development/backend.defaults`:
 
 ```bash
 # browser-facing
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/auth
-OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/logout
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transfers/protocol/openid-connect/auth
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transfers/protocol/openid-connect/logout
 # backend-facing (in-network)
-OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/token
-OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/userinfo
-OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/certs
+OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/userinfo
+OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/certs
 ```
 
 > This is the same pattern as the S3 dev setup (`AWS_S3_DOMAIN_REPLACE`):
@@ -65,8 +65,8 @@ OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-con
 
 ### The realm
 
-The `transferts` realm — client `transferts` (confidential, secret
-`transferts-dev-secret`) and the test users — is imported on startup from
+The `transfers` realm — client `transfers` (confidential, secret
+`transfers-dev-secret`) and the test users — is imported on startup from
 [`src/keycloak/realm.json`](../src/keycloak/realm.json) via `--import-realm`.
 The client allows redirects to `localhost:8980` (frontend) and `localhost:8981`
 (the backend OIDC callback). Keycloak runs with `start-dev`, so its database is
@@ -77,7 +77,7 @@ an **ephemeral H2** that resets whenever the container is recreated — the real
 
 Either edit `src/keycloak/realm.json` and recreate Keycloak
 (`docker compose up -d --force-recreate keycloak`), or add them at runtime in the
-admin console (realm `transferts`). Runtime changes are lost on the next recreate
+admin console (realm `transfers`). Runtime changes are lost on the next recreate
 since the H2 store is ephemeral — put anything you want to keep in `realm.json`.
 
 ## Switching to the real ProConnect

@@ -1,6 +1,6 @@
 # App database configuration
 DB_HOST=postgresql
-DB_NAME=transferts
+DB_NAME=transfers
 DB_USER=user
 DB_PASSWORD=pass
 DB_PORT=5432
@@ -8,7 +8,7 @@ DB_PORT=5432
 # Django
 DJANGO_ALLOWED_HOSTS=*
 DJANGO_SECRET_KEY=ThisIsAnExampleKeyForDevPurposeOnly
-DJANGO_SETTINGS_MODULE=transferts.settings
+DJANGO_SETTINGS_MODULE=transfers.settings
 DJANGO_SUPERUSER_PASSWORD=admin
 DJANGO_DATA_DIR=/data
 
@@ -25,20 +25,20 @@ DJANGO_EMAIL_HOST="mailcatcher"
 DJANGO_EMAIL_PORT=1025
 # Branding is deployment-supplied (see settings.py, "Branding of the
 # notification emails"). Left unset here so dev mails use the neutral
-# defaults: shipped Transferts wordmark in the header, no footer logo.
+# defaults: shipped Transfers wordmark in the header, no footer logo.
 # To preview an institutional footer locally, host the PNGs yourself and:
 # DJANGO_EMAIL_FOOTER_LOGOS='[{"url":"http://localhost:8900/images/my-logo.png","alt":"My org","width":80,"height":44}]'
 # DJANGO_EMAIL_LOGO_IMG="http://localhost:8900/images/my-wordmark.png"
 
 # S3 Object Storage
 AWS_S3_ENDPOINT_URL=http://objectstorage:9000
-AWS_S3_ACCESS_KEY_ID=transferts
+AWS_S3_ACCESS_KEY_ID=transfers
 AWS_S3_SECRET_ACCESS_KEY=password
 AWS_S3_SIGNATURE_VERSION=s3v4
 AWS_S3_DOMAIN_REPLACE=http://localhost:8986
 
 # Transfers storage bucket
-AWS_STORAGE_BUCKET_NAME=transferts
+AWS_STORAGE_BUCKET_NAME=transfers
 
 # Transfer size caps (bytes)
 TRANSFER_MAX_FILE_SIZE=21474836480
@@ -56,16 +56,16 @@ OIDC_CREATE_USER=True
 #     localhost:8902 is unreachable from inside the backend container)
 # Keycloak runs with --hostname=http://localhost:8902, so the issuer/URLs it
 # stamps stay consistent regardless of which host answered the request.
-OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/auth
-OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/token
-OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/userinfo
-OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transferts/protocol/openid-connect/certs
-OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transferts/protocol/openid-connect/logout
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:8902/realms/transfers/protocol/openid-connect/auth
+OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/userinfo
+OIDC_OP_JWKS_ENDPOINT=http://keycloak:8802/realms/transfers/protocol/openid-connect/certs
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:8902/realms/transfers/protocol/openid-connect/logout
 
 # Dev client + secret are committed on purpose — they only match the local
 # realm imported from src/keycloak/realm.json, never anything real.
-OIDC_RP_CLIENT_ID=transferts
-OIDC_RP_CLIENT_SECRET=transferts-dev-secret
+OIDC_RP_CLIENT_ID=transfers
+OIDC_RP_CLIENT_SECRET=transfers-dev-secret
 OIDC_RP_SIGN_ALGO=RS256
 OIDC_RP_SCOPES="openid email profile"
 # Keycloak emits given_name/family_name (not first_name/last_name). NB:
@@ -88,7 +88,7 @@ DRIVE_BASE_URL=
 
 # LaGaufre (La Suite app switcher) — leave blank to hide it. Both must be set
 # for the widget to render; the frontend's Caddy CSP must allow the same two
-# origins (TRANSFERTS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
+# origins (TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
 # The API answers with the service list and its order; a &siret=<siret> on it
 # scopes that answer to one organization, whoever is looking.
 LAGAUFRE_WIDGET_URL=
