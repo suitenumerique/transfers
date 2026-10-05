@@ -129,6 +129,9 @@ describe("Caddyfile client IP", () => {
   });
 
   it("only trusts the proxies the deployment names, right to left", () => {
+    // No default, and none is safe: a published container port is reached
+    // through a private bridge gateway, so `private_ranges` would let any
+    // client spoof X-Forwarded-For past the admin allowlist.
     expect(CADDYFILE).toMatch(
       /trusted_proxies static \{\$TRANSFERS_FRONTEND_TRUSTED_PROXIES\}/,
     );
