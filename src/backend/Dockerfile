@@ -2,7 +2,7 @@
 FROM debian:trixie-slim AS base
 
 # Bump this to force an update of the apt repositories
-ENV MIN_UPDATE_DATE="2026-02-20"
+ENV MIN_UPDATE_DATE="2026-10-05"
 
 RUN <<EOR
 apt-get update
