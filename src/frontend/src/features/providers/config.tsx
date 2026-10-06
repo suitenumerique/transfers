@@ -44,6 +44,14 @@ export interface AppConfig {
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).
   HELP_URL: string;
+  // Cunningham theme name. Empty string when the operator set none: the root
+  // shell then mounts the neutral "default" theme.
+  FRONTEND_THEME: string;
+  // True swaps the neutral "Sign in" button for the ProConnect one. Off
+  // unless the instance is actually federated with ProConnect.
+  FRONTEND_PROCONNECT_BUTTON: boolean;
+  // "Learn more" link on the public landing. Empty hides the button.
+  FRONTEND_LEARN_MORE_URL: string;
   // Absent when the operator hasn't wired Drive up (DRIVE_BASE_URL empty).
   DRIVE?: DriveConfig;
   // Absent unless the operator set both LAGAUFRE_WIDGET_URL and
@@ -94,6 +102,12 @@ export const ConfigProvider = ({ children }: PropsWithChildren) => {
     </ConfigContext.Provider>
   );
 };
+
+// Config as it stands, ``null`` while the first /config/ fetch is in flight.
+// For the few consumers that mount above the loading gate — the theme on the
+// root shell — and must render something before the answer lands.
+export const useOptionalConfig = (): AppConfig | null =>
+  useContext(ConfigContext).config;
 
 export const useConfig = (): AppConfig => {
   const { config } = useContext(ConfigContext);

@@ -95,4 +95,13 @@ LAGAUFRE_WIDGET_URL=
 LAGAUFRE_API_URL=
 
 # Frontend
-FRONTEND_THEME=dsfr
+# Cunningham theme name, now read at runtime by the root shell. Must be one of
+# the generated themes (default, dark, dsfr-light, dsfr-dark, anct-light,
+# anct-dark).
+# Leave empty for the neutral theme.
+FRONTEND_THEME=anct-light
+# ProConnect sign-in button instead of the neutral one. Dev authenticates
+# against the local Keycloak, not ProConnect, so this stays off.
+FRONTEND_PROCONNECT_BUTTON=False
+# "Learn more" link on the public landing. Empty hides the button.
+FRONTEND_LEARN_MORE_URL=

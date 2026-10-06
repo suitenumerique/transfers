@@ -47,6 +47,15 @@ class ConfigView(drf.views.APIView):
             # opted out; finalize enforces the same flag server-side.
             "TRANSFER_CONFIDENTIAL_ENABLED": settings.TRANSFER_CONFIDENTIAL_ENABLED,
             "HELP_URL": getattr(settings, "HELP_URL", ""),
+            # Empty means "neutral": the frontend falls back to the default
+            # Cunningham theme rather than any operator's branding.
+            "FRONTEND_THEME": getattr(settings, "FRONTEND_THEME", None) or "",
+            "FRONTEND_PROCONNECT_BUTTON": getattr(
+                settings, "FRONTEND_PROCONNECT_BUTTON", False
+            ),
+            "FRONTEND_LEARN_MORE_URL": getattr(
+                settings, "FRONTEND_LEARN_MORE_URL", ""
+            ),
         }
 
         # Surface Drive picker config only when DRIVE_BASE_URL is set —

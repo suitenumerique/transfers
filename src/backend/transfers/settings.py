@@ -476,8 +476,24 @@ class Base(Configuration):
     SENTRY_DSN = values.Value(None, environ_name="SENTRY_DSN", environ_prefix=None)
 
     # Frontend
+    # Cunningham theme name. Empty falls back to the neutral "default" theme
+    # front-side, so an instance that sets nothing ships no operator's
+    # colours, logo or favicon.
     FRONTEND_THEME = values.Value(
         None, environ_name="FRONTEND_THEME", environ_prefix=None
+    )
+    # Swap the neutral "Sign in" button for the ProConnect one. Off by
+    # default: ProConnect is a French State identity provider, and its button
+    # is only legitimate on an instance actually federated with it.
+    FRONTEND_PROCONNECT_BUTTON = values.BooleanValue(
+        default=False,
+        environ_name="FRONTEND_PROCONNECT_BUTTON",
+        environ_prefix=None,
+    )
+    # "Learn more" link on the public landing page. Empty hides the button
+    # rather than sending every instance to another operator's site.
+    FRONTEND_LEARN_MORE_URL = values.Value(
+        "", environ_name="FRONTEND_LEARN_MORE_URL", environ_prefix=None
     )
 
     # Celery
