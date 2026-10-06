@@ -203,20 +203,20 @@ class Base(Configuration):
         environ_prefix=None,
     )
 
-    # Antivirus scanning (clamav file-scanner service)
+    # Antivirus scanning (the file-scanner service)
     # ------------------------------------------------
     # When enabled, every file that completes its upload is submitted to the
     # external file-scanner service for an asynchronous virus scan; the
     # result comes back via the scan-result webhook and gates downloads.
     # Disabled by default so the service runs standalone without the scanner.
-    CLAMAV_SCAN_ENABLED = values.BooleanValue(
-        False, environ_name="CLAMAV_SCAN_ENABLED", environ_prefix=None
+    SCAN_ENABLED = values.BooleanValue(
+        False, environ_name="SCAN_ENABLED", environ_prefix=None
     )
     # Base URL of the file-scanner REST service, reachable from the backend
-    # AND worker containers (e.g. http://clamav_rest:8090 on the shared
+    # AND worker containers (e.g. http://file-scanner:8090 on the shared
     # Docker network). No trailing slash.
-    CLAMAV_SERVICE_URL = values.Value(
-        "", environ_name="CLAMAV_SERVICE_URL", environ_prefix=None
+    SCAN_SERVICE_URL = values.Value(
+        "", environ_name="SCAN_SERVICE_URL", environ_prefix=None
     )
     # EdDSA (Ed25519) private key we use to mint request-bound JWTs for the
     # file-scanner, as unpadded URL-safe base64 (43 chars). The scanner
@@ -246,12 +246,28 @@ class Base(Configuration):
         environ_name="SCAN_JWT_TTL",
         environ_prefix=None,
     )
-    # Files larger than this are NOT scanned (clamd tops out ~4 GB and big
-    # scans are slow/memory-heavy). They get scan_status=TOO_LARGE: still
-    # sendable, but flagged "not scanned" rather than claimed clean. Keep this
-    # at or below the scanner's own max_url_size (2 GB).
+    # Engines the scanner runs on our files, comma-separated names known to
+    # the file-scanner (``clamav``, ``exav``, ...). Sent as ``scanners`` with
+    # every submission; empty ⇒ the scanner's own defaults. Naming several
+    # runs them all and a file is clean only if every engine cleared it.
+    SCAN_SCANNERS = values.Value("", environ_name="SCAN_SCANNERS", environ_prefix=None)
+    # The file-scanner API version we submit to and read callbacks in — its
+    # versioning, not ours (``API_VERSION`` routes our own public endpoints).
+    # ``v2.0`` reports a verdict per category; ``v1.0`` is the flat tri-state
+    # that preceded it, which this service no longer parses.
+    SCAN_API_VERSION = values.Value(
+        "v2.0", environ_name="SCAN_API_VERSION", environ_prefix=None
+    )
+    # Files whose content (the plaintext, for an encrypted file) is larger
+    # than this are NOT scanned. They get scan_status=TOO_LARGE: still
+    # sendable, but flagged "not scanned" rather than claimed clean. It is the
+    # scanner's MAX_URL_SIZE, which counts the same bytes (the wire gets the
+    # chunking overhead on top): keep the two equal. The default is the most
+    # clamav scans in one file (libclamav's INT_MAX - 2); a bigger file that
+    # the scanner does accept comes back UNSCANNABLE from clamav, or scanned
+    # by exav (SCAN_SCANNERS).
     SCAN_MAX_FILE_SIZE = values.PositiveIntegerValue(
-        2 * 1024 * 1024 * 1024,  # 2 GB
+        2**31 - 3,  # 2,147,483,645
         environ_name="SCAN_MAX_FILE_SIZE",
         environ_prefix=None,
     )
@@ -705,11 +721,11 @@ class Base(Configuration):
 
         # Fail fast: scanning enabled but its endpoints/credentials unset would
         # otherwise surface only later, as silently-skipped scans in the worker.
-        if cls.CLAMAV_SCAN_ENABLED:
+        if cls.SCAN_ENABLED:
             missing = [
                 name
                 for name in (
-                    "CLAMAV_SERVICE_URL",
+                    "SCAN_SERVICE_URL",
                     "SCAN_JWT_PRIVATE_KEY",
                     "SCAN_WEBHOOK_BASE_URL",
                 )
@@ -717,7 +733,7 @@ class Base(Configuration):
             ]
             if missing:
                 raise ImproperlyConfigured(
-                    "CLAMAV_SCAN_ENABLED is set but these required settings are "
+                    "SCAN_ENABLED is set but these required settings are "
                     f"empty: {', '.join(missing)}."
                 )
 

@@ -113,6 +113,12 @@ class UserManager(auth_models.UserManager):
         return None
 
 
+def default_timezone():
+    """``TIME_ZONE`` read per row, not at import: a value frozen into a
+    migration would differ per deployment, since the setting is configurable."""
+    return settings.TIME_ZONE
+
+
 class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
     """User model to work with OIDC only authentication."""
 
@@ -153,7 +159,7 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
     timezone = TimeZoneField(
         choices_display="WITH_GMT_OFFSET",
         use_pytz=False,
-        default=settings.TIME_ZONE,
+        default=default_timezone,
         help_text="The timezone in which the user wants to see times.",
     )
     is_staff = models.BooleanField(
@@ -503,6 +509,7 @@ class TransferFile(BaseModel):
         "transfer is not encrypted — UIs should fall back to ``size``.",
     )
     mime_type = models.CharField(max_length=255, blank=True, default="")
+
     s3_key = models.CharField(max_length=512)
 
     upload_id = models.CharField(
@@ -551,11 +558,11 @@ class TransferFile(BaseModel):
     )
 
     scan_status = models.CharField(
-        max_length=10,
+        max_length=16,
         choices=ScanStatus.choices,
         default=ScanStatus.PENDING,
         help_text="Antivirus scan state. A file is downloadable when CLEAN or "
-        "scan-exempt (SKIPPED / TOO_LARGE); the download path fails closed on "
+        "scan-exempt (SKIPPED / TOO_LARGE / UNSCANNABLE); the download path fails closed on "
         "anything else. Driven by the clamav file-scanner service's webhook "
         "callback.",
     )
@@ -580,6 +587,13 @@ class TransferFile(BaseModel):
         default="",
         help_text="Job id returned by the file-scanner service when the scan "
         "was submitted. Kept for traceability / debugging.",
+    )
+    scan_report = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="What the scanner answered, as it answered it: the "
+        "per-category verdicts and each engine's own result. scan_status is "
+        "the decision taken from it; this is why. Replaced on a rescan.",
     )
     webhook_secret = models.CharField(
         max_length=64,
@@ -619,6 +633,12 @@ class TransferFile(BaseModel):
 
     def __str__(self):
         return self.filename
+
+    @property
+    def scannable_size(self) -> int:
+        """Bytes the scanner examines: the plaintext of an encrypted file
+        (decrypted before scanning), the object itself otherwise."""
+        return self.plaintext_size if self.plaintext_size is not None else self.size
 
     @property
     def is_upload_complete(self) -> bool:

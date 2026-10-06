@@ -318,9 +318,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 else:
                     transfer_file.upload_completed_at = timezone.now()
                     transfer_file.upload_id = ""
-                    if not settings.CLAMAV_SCAN_ENABLED:
+                    if not settings.SCAN_ENABLED:
                         transfer_file.scan_status = ScanStatus.SKIPPED
-                    elif transfer_file.size > settings.SCAN_MAX_FILE_SIZE:
+                    elif transfer_file.scannable_size > settings.SCAN_MAX_FILE_SIZE:
                         transfer_file.scan_status = ScanStatus.TOO_LARGE
                     transfer_file.save(
                         update_fields=[
@@ -630,7 +630,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         instead of a "scanned" badge), non-confidential drafts enqueue a
         scan for each row whose bytes are on S3 and haven't been sent to
         the scanner yet. Idempotent: ``scan_submitted_at`` gates re-posts."""
-        if not settings.CLAMAV_SCAN_ENABLED or not draft.encryption_chunk_size:
+        if not settings.SCAN_ENABLED or not draft.encryption_chunk_size:
             return
         if confidential:
             for f in files:
@@ -652,14 +652,14 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
     def _scan_gate(self, files):
         """Classify every file by scan status. A transfer is created only
         once every file is non-blocking (CLEAN, or scan-exempt SKIPPED /
-        TOO_LARGE). Any INFECTED / ERROR fails the finalize; PENDING
+        TOO_LARGE / UNSCANNABLE). Any INFECTED / ERROR fails the finalize; PENDING
         keeps the client polling. Re-arming a failed scan is /rescan/'s
         job — the reason strings are what the client keys its UI on.
 
         Returns a 202/400 Response when the caller must return early, or
         ``None`` to let the transfer creation proceed.
         """
-        if not settings.CLAMAV_SCAN_ENABLED:
+        if not settings.SCAN_ENABLED:
             return None
 
         infected, unscannable, scan_errored, scanning = [], [], [], []
@@ -780,7 +780,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         Files under a hard block (INFECTED, or a file-bound ERROR) are left
         untouched: retrying can't help them.
         """
-        if not settings.CLAMAV_SCAN_ENABLED:
+        if not settings.SCAN_ENABLED:
             return drf.response.Response({"rescanned_file_ids": []})
 
         with transaction.atomic():

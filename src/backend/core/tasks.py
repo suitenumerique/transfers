@@ -331,10 +331,10 @@ def import_drive_file_task(transfer_file_id):
         # here for the shortcuts (scan disabled instance-wide, file over
         # the scanner cap) so the finalize gate lets the transfer through.
         update_fields = ["upload_id", "upload_completed_at", "updated_at"]
-        if not settings.CLAMAV_SCAN_ENABLED:
+        if not settings.SCAN_ENABLED:
             tf.scan_status = ScanStatus.SKIPPED
             update_fields.append("scan_status")
-        elif tf.size > settings.SCAN_MAX_FILE_SIZE:
+        elif tf.scannable_size > settings.SCAN_MAX_FILE_SIZE:
             tf.scan_status = ScanStatus.TOO_LARGE
             update_fields.append("scan_status")
         tf.save(update_fields=update_fields)
@@ -419,11 +419,11 @@ def submit_scan_task(self, transfer_file_id):
     actually completed. Only the HTTP submit is retried; once the scanner has
     accepted the job, delivery of the result is the webhook's problem.
     """
-    if not settings.CLAMAV_SCAN_ENABLED:
+    if not settings.SCAN_ENABLED:
         return
-    if not settings.CLAMAV_SERVICE_URL or not settings.SCAN_WEBHOOK_BASE_URL:
+    if not settings.SCAN_SERVICE_URL or not settings.SCAN_WEBHOOK_BASE_URL:
         logger.error(
-            "Scan enabled but CLAMAV_SERVICE_URL / SCAN_WEBHOOK_BASE_URL unset; "
+            "Scan enabled but SCAN_SERVICE_URL / SCAN_WEBHOOK_BASE_URL unset; "
             "skipping scan for %s",
             transfer_file_id,
         )
@@ -475,16 +475,19 @@ def submit_scan_task(self, transfer_file_id):
     }
     if encryption_params:
         payload["encryption"] = encryption_params
+    scanners = [s.strip() for s in settings.SCAN_SCANNERS.split(",") if s.strip()]
+    if scanners:
+        payload["scanners"] = scanners
 
     # Serialise once: the JWT ``bh`` claim binds the SHA-256 of the exact
     # bytes we POST, so `requests` must ship the same bytes (``data=``, not
     # ``json=``, so it doesn't re-serialise and drift the hash).
     body = json.dumps(payload, separators=(",", ":")).encode()
-    scan_path = f"/api/{settings.API_VERSION}/scan-async"
+    scan_path = f"/api/{settings.SCAN_API_VERSION}/scan-async"
     token = mint_request_token("POST", scan_path, body)
     try:
         response = requests.post(
-            f"{settings.CLAMAV_SERVICE_URL}{scan_path}",
+            f"{settings.SCAN_SERVICE_URL}{scan_path}",
             data=body,
             headers={
                 "Authorization": f"Bearer {token}",
@@ -520,7 +523,7 @@ def reap_stale_pending_scans_task():
     Clocked on ``scan_submitted_at``, not the upload: a scan only starts at
     finalize, which can be long after the bytes landed.
     """
-    if not settings.CLAMAV_SCAN_ENABLED:
+    if not settings.SCAN_ENABLED:
         return
 
     now = timezone.now()
