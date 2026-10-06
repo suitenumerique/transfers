@@ -1,10 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { QuestionMark } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
-import { login, useAuth } from "@/features/auth";
+import { useAuth } from "@/features/auth";
+import { LoginButton } from "@/features/auth/LoginButton";
 import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { useConfig } from "@/features/providers/config";
@@ -89,7 +90,7 @@ function DownloadPage() {
         <div className="download-page__topbar-right">
           <LanguagePicker size="small" compact />
           <Gaufre />
-          {!user && <ProConnectButton onClick={login} />}
+          {!user && <LoginButton />}
         </div>
       </header>
 

@@ -1,16 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ProConnectButton } from "@gouvfr-lasuite/ui-kit";
 import { ArrowRight } from "@gouvfr-lasuite/ui-kit/icons";
-import { login } from "@/features/auth";
+import { LoginButton } from "@/features/auth/LoginButton";
+import { useConfig } from "@/features/providers/config";
 
 // Public landing, pre-login. Single centered column for now — the mock
 // pairs it with an illustration on the right which isn't ready yet.
 // Wire the right column back in once the asset lands.
-const LEARN_MORE_URL = "https://suiteterritoriale.anct.gouv.fr/";
 
 export function HomeLanding() {
   const { t } = useTranslation();
+  const { FRONTEND_LEARN_MORE_URL: learnMoreUrl } = useConfig();
 
   return (
     <section className="home-landing">
@@ -32,18 +32,20 @@ export function HomeLanding() {
           )}
         </p>
         <div className="home-landing__actions">
-          <ProConnectButton onClick={login} />
-          <Button
-            color="brand"
-            variant="tertiary"
-            iconPosition="right"
-            icon={<ArrowRight />}
-            href={LEARN_MORE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {t("Learn more")}
-          </Button>
+          <LoginButton />
+          {learnMoreUrl && (
+            <Button
+              color="brand"
+              variant="tertiary"
+              iconPosition="right"
+              icon={<ArrowRight />}
+              href={learnMoreUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t("Learn more")}
+            </Button>
+          )}
         </div>
       </div>
     </section>
