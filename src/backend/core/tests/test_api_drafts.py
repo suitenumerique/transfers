@@ -801,7 +801,7 @@ class TestDraftEncryption:
         # so there is nothing scannable yet: the file stays PENDING and no scan
         # is submitted here. (It is *not* SKIPPED — it will be scanned, just
         # later.)
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         with (
             patch("core.api.viewsets.draft.submit_scan_task.delay") as scan_mock,
@@ -866,7 +866,7 @@ class TestDraftEncryption:
         that contradicts the one which parked the key. Switching to
         confidential then is refused on the field, not by the database
         constraint behind it."""
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
@@ -891,7 +891,7 @@ class TestDraftEncryption:
     ):
         """A second key is refused rather than ignored: the transfer would go
         out under the parked one while the sender hands out the other."""
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
@@ -919,8 +919,9 @@ class TestDraftEncryption:
 
         The task runs for real here (not stubbed) so we observe the wire.
         """
-        settings.CLAMAV_SCAN_ENABLED = True
-        settings.CLAMAV_SERVICE_URL = "http://scanner"
+        settings.SCAN_ENABLED = True
+        settings.SCAN_SCANNERS = ""
+        settings.SCAN_SERVICE_URL = "http://scanner"
         settings.SCAN_WEBHOOK_BASE_URL = "http://back"
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
@@ -971,12 +972,76 @@ class TestDraftEncryption:
             mock_post.call_args.kwargs["headers"]["Authorization"]
             == "Bearer test-jwt-token"
         )
-        # New endpoint: /api/v1.0/scan-async (was /v2/scan-async).
-        assert mock_post.call_args.args[0].endswith("/api/v1.0/scan-async")
+        # The scanner's version, not ours: SCAN_API_VERSION is what builds
+        # this path, and it is v2 — the one that answers with per-category
+        # verdicts. Pinned rather than read from settings, so moving the
+        # default is a decision someone has to make here too.
+        assert mock_post.call_args.args[0].endswith("/api/v2.0/scan-async")
+        # No engine named (the default): the scanner applies its own.
+        assert "scanners" not in body
 
         tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
         assert tf.scan_status == ScanStatus.PENDING
         assert tf.scan_submitted_at is not None
+
+    def test_finalize_names_the_engines_from_settings(
+        self, patched_s3, authenticated_client, settings
+    ):
+        """SCAN_SCANNERS picks the engines the scanner runs on our files."""
+        settings.SCAN_ENABLED = True
+        settings.SCAN_SCANNERS = "clamav, exav"
+        settings.SCAN_SERVICE_URL = "http://scanner"
+        settings.SCAN_WEBHOOK_BASE_URL = "http://back"
+        initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        from core.tasks import submit_scan_task
+
+        with (
+            patch(
+                "core.api.viewsets.draft.submit_scan_task.delay",
+                side_effect=submit_scan_task,
+            ),
+            patch(
+                "core.api.viewsets.draft.transaction.on_commit",
+                side_effect=lambda fn: fn(),
+            ),
+            patch("core.tasks.s3.sign_scan_url", return_value="http://s3/signed"),
+            patch("core.tasks.mint_request_token", return_value="test-jwt-token"),
+            patch("core.tasks.requests.post") as mock_post,
+        ):
+            mock_post.return_value.json.return_value = {"job_id": "j-1"}
+            _finalize(authenticated_client, initiate["draft_id"])
+
+        body = json.loads(mock_post.call_args.kwargs["data"])
+        assert body["scanners"] == ["clamav", "exav"]
+
+    @pytest.mark.parametrize(
+        "plaintext_size, expected",
+        [(1000, ScanStatus.PENDING), (1001, ScanStatus.TOO_LARGE)],
+    )
+    def test_scan_cap_applies_to_the_plaintext(
+        self, patched_s3, authenticated_client, settings, plaintext_size, expected
+    ):
+        """The cap is on what the scanner examines — the decrypted content,
+        which is what its MAX_URL_SIZE counts too — not on the ciphertext
+        object, larger by the GCM overhead."""
+        settings.SCAN_ENABLED = True
+        settings.SCAN_MAX_FILE_SIZE = 1000
+        initiate = _initiate_with_file(
+            authenticated_client, plaintext_size=plaintext_size
+        )
+        _complete_upload(
+            authenticated_client,
+            initiate["draft_id"],
+            initiate["transfer_file_id"],
+        )
+        tf = TransferFile.objects.get(id=initiate["transfer_file_id"])
+        assert tf.size > 1000  # the ciphertext is over the cap either way
+        assert tf.scan_status == expected
 
     def test_draft_detail_reports_scan_not_submitted_before_send(
         self, patched_s3, authenticated_client, settings
@@ -985,7 +1050,7 @@ class TestDraftEncryption:
         "pending, nothing started yet" — otherwise the form spins a scanning
         badge (and eventually a bogus scan timeout) for a scan nobody launched.
         """
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
@@ -1019,7 +1084,7 @@ class TestDraftEncryption:
     ):
         """Finalize is a 202 poll loop — re-posting while the scan is in flight
         must not launch a second scan for the same file."""
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
@@ -1047,7 +1112,7 @@ class TestDraftEncryption:
         """Confidential: the key never reaches us, so the ciphertext can never be
         scanned. The files are marked SKIPPED (downloadable, no 'clean' claim)
         and the transfer is created without waiting on a scan."""
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         _complete_upload(
             authenticated_client,
@@ -1648,8 +1713,8 @@ class TestSubmitScanTask:
         """
         from core.tasks import submit_scan_task
 
-        settings.CLAMAV_SCAN_ENABLED = True
-        settings.CLAMAV_SERVICE_URL = "http://scanner"
+        settings.SCAN_ENABLED = True
+        settings.SCAN_SERVICE_URL = "http://scanner"
         settings.SCAN_WEBHOOK_BASE_URL = "http://back"
         with (
             patch("core.tasks.s3.sign_scan_url", return_value="http://s3/signed"),
@@ -1691,7 +1756,7 @@ class TestSubmitScanTask:
             scanner_post.call_args.kwargs["headers"]["Authorization"]
             == "Bearer test-jwt-token"
         )
-        assert scanner_post.call_args.args[0] == ("http://scanner/api/v1.0/scan-async")
+        assert scanner_post.call_args.args[0] == ("http://scanner/api/v2.0/scan-async")
 
     def test_defers_when_key_not_yet_known(self, user, settings):
         """Upload is done but the user hasn't hit Send, so no key has reached us.
@@ -1858,8 +1923,8 @@ class TestNoScanBeforeFinalize:
 
     @pytest.fixture(autouse=True)
     def _scan_on(self, settings):
-        settings.CLAMAV_SCAN_ENABLED = True
-        settings.CLAMAV_SERVICE_URL = "http://scanner"
+        settings.SCAN_ENABLED = True
+        settings.SCAN_SERVICE_URL = "http://scanner"
         settings.SCAN_WEBHOOK_BASE_URL = "http://back"
 
     def _uploaded_draft(self, authenticated_client):
@@ -1985,7 +2050,7 @@ class TestReapStalePendingScans:
     def _reap(self, settings):
         from core.tasks import reap_stale_pending_scans_task
 
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         settings.SCAN_PENDING_REAP_MINUTES = 15
         with patch("core.tasks.submit_scan_task.delay") as submit:
             reap_stale_pending_scans_task()
@@ -2061,7 +2126,7 @@ class TestReapStalePendingScans:
         window."""
         from core.tasks import reap_stale_pending_scans_task
 
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         settings.SCAN_PENDING_REAP_MINUTES = 15
         tf = self._file(user, submitted_ago_minutes=60)
 
@@ -2083,7 +2148,7 @@ class TestReapStalePendingScans:
         not parked behind a fresh stamp for a whole budget."""
         from core.tasks import reap_stale_pending_scans_task
 
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         settings.SCAN_PENDING_REAP_MINUTES = 15
         tf = self._file(user, submitted_ago_minutes=60)
         before = tf.scan_submitted_at
@@ -2161,7 +2226,7 @@ class TestImportDriveFileTask:
         # "no bricolage at add-file" (PENDING is preserved) from "scan
         # exempt because scanner is off" (SKIPPED). Only PENDING confirms
         # the row will actually be handed to the scanner on the next poll.
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
         settings.SCAN_MAX_FILE_SIZE = 10 * 1024 * 1024
         tf, _ = self._make_file(user, plaintext_size=12, filename="hi.txt")
         payload = b"hello-bytes!"
@@ -2390,7 +2455,7 @@ class TestDraftRescan:
 
     @pytest.fixture(autouse=True)
     def _scan_on(self, settings):
-        settings.CLAMAV_SCAN_ENABLED = True
+        settings.SCAN_ENABLED = True
 
     def _draft_with_file(self, user, scan_status, scan_error_kind=""):
         draft = TransferDraftFactory(owner=user)
@@ -2545,6 +2610,7 @@ class TestDraftRescan:
         infected = add(ScanStatus.INFECTED)
         file_err = add(ScanStatus.ERROR, "file")
         too_large = add(ScanStatus.TOO_LARGE)
+        unscannable = add(ScanStatus.UNSCANNABLE)
         skipped = add(ScanStatus.SKIPPED)
 
         submit_p, commit_p = self._patched()
@@ -2567,6 +2633,7 @@ class TestDraftRescan:
             (infected, ScanStatus.INFECTED),
             (file_err, ScanStatus.ERROR),
             (too_large, ScanStatus.TOO_LARGE),
+            (unscannable, ScanStatus.UNSCANNABLE),
             (skipped, ScanStatus.SKIPPED),
         ):
             f.refresh_from_db()
@@ -2576,7 +2643,7 @@ class TestDraftRescan:
 
     def test_noop_when_scan_disabled(self, settings, authenticated_client, user):
         """No-op (empty result, no submit) when antivirus scanning is off."""
-        settings.CLAMAV_SCAN_ENABLED = False
+        settings.SCAN_ENABLED = False
         draft, _ = self._draft_with_file(user, ScanStatus.PENDING)
         submit_p, commit_p = self._patched()
         with submit_p as submit, commit_p:
