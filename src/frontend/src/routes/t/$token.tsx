@@ -1,8 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
-import { QuestionMark } from "@gouvfr-lasuite/ui-kit/icons";
+import { Button, ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-components";
+import { QuestionMark } from "@gouvfr-lasuite/ui-components/icons";
 import { ApiError } from "@/features/api/client";
 import { login, useAuth } from "@/features/auth";
 import { Gaufre } from "@/features/layouts/components/gaufre";

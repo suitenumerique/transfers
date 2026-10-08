@@ -1,3 +1,3 @@
-import { cunninghamConfig } from "@gouvfr-lasuite/ui-kit";
+import { cunninghamConfig } from "@gouvfr-lasuite/ui-components";
 
 export default cunninghamConfig;

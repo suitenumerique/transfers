@@ -1,4 +1,4 @@
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { Button } from "@gouvfr-lasuite/ui-components";
 import clsx from "clsx";
 import { useMemo } from "react";
 import { Slide, ToastContainer, ToastContentProps, toast } from "react-toastify";

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { Button } from "@gouvfr-lasuite/ui-components";
 import { openPicker } from "@gouvfr-lasuite/drive-sdk";
-import { FolderDrive } from "@gouvfr-lasuite/ui-kit/icons";
+import { FolderDrive } from "@gouvfr-lasuite/ui-components/icons";
 import { useConfig } from "@/features/providers/config";
 import type { DrivePickedItem } from "../api/useTransferDraft";
 

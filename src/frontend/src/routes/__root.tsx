@@ -2,7 +2,7 @@ import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import { CunninghamProvider } from "@gouvfr-lasuite/cunningham-react";
+import { CunninghamProvider } from "@gouvfr-lasuite/ui-components";
 import { useTranslation } from "react-i18next";
 
 import { Auth } from "@/features/auth";

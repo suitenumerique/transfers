@@ -1,7 +1,10 @@
 // Vendors
 @use "./reset.scss";
-@use "@gouvfr-lasuite/ui-kit/style";
-@use "@gouvfr-lasuite/ui-kit/sass/fonts";
+@use "@gouvfr-lasuite/ui-components/style";
+// The kit split its single fonts entry point. Roboto Flex is only a fallback
+// in the anct theme, which renders in Marianne, so we don't ship its files.
+@use "@gouvfr-lasuite/ui-components/fonts/marianne";
+@use "@gouvfr-lasuite/ui-components/sass/fonts/material-icons";
 
 // Global app styles and tokens
 @use "./cunningham-tokens.css";

@@ -1,8 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType, Spinner } from "@gouvfr-lasuite/ui-components";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-components/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType, TransferEvent } from "@/features/api/types";
 import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";

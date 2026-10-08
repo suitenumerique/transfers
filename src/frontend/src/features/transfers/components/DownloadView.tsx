@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/ui-components";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Warning } from "@gouvfr-lasuite/ui-components/icons";
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";

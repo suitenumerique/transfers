@@ -1,4 +1,4 @@
-import { LaGaufreV2 } from "@gouvfr-lasuite/ui-kit";
+import { LaGaufreV2 } from "@gouvfr-lasuite/ui-components";
 import { useConfig } from "@/features/providers/config";
 
 // La Suite's app switcher. Opt-in: renders nothing until a deployment sets

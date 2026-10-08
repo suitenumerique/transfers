@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 // The active transfer id is read from the matched route params to highlight
 // the corresponding row; navigation itself uses TanStack Router's Link so the
 // URL bar updates via client-side navigation.
-import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ChevronDown, Folder, Plus, QuestionMark, XMark, Zoom } from "@gouvfr-lasuite/ui-kit/icons";
+import { Button } from "@gouvfr-lasuite/ui-components";
+import { ChevronDown, Folder, Plus, QuestionMark, XMark, Zoom } from "@gouvfr-lasuite/ui-components/icons";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
 import { useDebouncedValue } from "@/features/utils/use-debounced-value";
 import { useConfig } from "@/features/providers/config";

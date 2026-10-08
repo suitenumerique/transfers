@@ -26,9 +26,8 @@
     "analyze": "ANALYZE=1 vite build && node ./scripts/print-bundle-stats.mjs"
   },
   "dependencies": {
-    "@gouvfr-lasuite/cunningham-react": "4.3.0",
     "@gouvfr-lasuite/drive-sdk": "^0.0.2",
-    "@gouvfr-lasuite/ui-kit": "0.23.2",
+    "@gouvfr-lasuite/ui-components": "1.3.0",
     "@sentry/react": "10.38.0",
     "@tanstack/react-query": "5.90.20",
     "@tanstack/react-router": "1.170.15",

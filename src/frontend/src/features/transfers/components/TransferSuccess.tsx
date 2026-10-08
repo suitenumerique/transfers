@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, Loader, MailCheckFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { Alert, Button, Input, Tooltip, VariantType } from "@gouvfr-lasuite/ui-components";
+import { ArrowUpCircle, ArrowUpDown, Checkmark, CheckmarkShield, Copy, Link as LinkIcon, Loader, MailCheckFilled } from "@gouvfr-lasuite/ui-components/icons";
 import type { TransferDetail } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { transferBaseUrl } from "../api/useDownload";

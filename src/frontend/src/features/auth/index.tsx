@@ -1,8 +1,7 @@
 import React, { PropsWithChildren, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Button, Spinner } from "@gouvfr-lasuite/ui-components";
 import { useConfigState } from "@/features/providers/config";
 
 interface User {

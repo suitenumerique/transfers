@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Spinner } from "@gouvfr-lasuite/ui-components";
 import { TransferSuccess } from "@/features/transfers/components/TransferSuccess";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
 

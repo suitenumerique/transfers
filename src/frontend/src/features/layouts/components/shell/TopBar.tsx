@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { UserMenu } from "@gouvfr-lasuite/ui-kit";
-import { LeftPanel } from "@gouvfr-lasuite/ui-kit/icons";
+import { UserMenu } from "@gouvfr-lasuite/ui-components";
+import { LeftPanel } from "@gouvfr-lasuite/ui-components/icons";
 import { useAuth, logout } from "@/features/auth";
 import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";

@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Icon } from "@gouvfr-lasuite/ui-kit";
+import { Icon } from "@gouvfr-lasuite/ui-components";
 
 // TLD must be ≥2 chars to match Django's EmailValidator on the backend —
 // otherwise `sd@asdl.c` passes here and gets rejected at finalize time.

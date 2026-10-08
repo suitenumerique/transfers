@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Spinner } from "@gouvfr-lasuite/ui-kit";
+import { Spinner } from "@gouvfr-lasuite/ui-components";
 import { TransferDetail } from "@/features/transfers/components/TransferDetail";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
 

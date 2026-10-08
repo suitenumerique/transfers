@@ -1,8 +1,7 @@
 import { type PropsWithChildren } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { MainLayout as UIKitLayout } from "@gouvfr-lasuite/ui-kit";
-import { Button } from "@gouvfr-lasuite/cunningham-react";
+import { MainLayout as UIKitLayout, Button } from "@gouvfr-lasuite/ui-components";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { ShellLayout } from "@/features/layouts/components/shell";
 import { Gaufre } from "../gaufre";

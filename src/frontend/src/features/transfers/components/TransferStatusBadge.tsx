@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Badge } from "@gouvfr-lasuite/ui-kit";
+import { Badge } from "@gouvfr-lasuite/ui-components";
 
 import type { TransferStatus } from "@/features/api/types";
 

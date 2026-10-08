@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Tooltip } from "@gouvfr-lasuite/cunningham-react";
+import { Tooltip } from "@gouvfr-lasuite/ui-components";
 import { formatFullDateTime, formatSmartDate } from "@/features/utils/date";
 
 interface RelativeDateProps {

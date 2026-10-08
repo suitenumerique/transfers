@@ -1,9 +1,8 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Tooltip } from "@gouvfr-lasuite/cunningham-react";
-import { UserAvatar } from "@gouvfr-lasuite/ui-kit";
-import { CircleCheckFilled, Eye, Loader, Mail, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { Tooltip, UserAvatar } from "@gouvfr-lasuite/ui-components";
+import { CircleCheckFilled, Eye, Loader, Mail, Warning } from "@gouvfr-lasuite/ui-components/icons";
 import type { TransferDetail, TransferRecipient } from "@/features/api/types";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 

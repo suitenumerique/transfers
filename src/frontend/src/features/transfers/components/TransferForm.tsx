@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useBlocker, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-kit/icons";
+import { Alert, Button, Checkbox, Input, LabelledBox, Tooltip, VariantType, DropdownMenu, Icon, Spinner, useDropdownMenu } from "@gouvfr-lasuite/ui-components";
+import { ArrowUpRight, CheckmarkShield, Copy, Doc, FileCheck, FileError, FolderDrive, Link as LinkIcon, Lock, Mail, Retry, Trash, Warning, WarningFilled } from "@gouvfr-lasuite/ui-components/icons";
 import { ApiError } from "@/features/api/client";
 import type { SharingMode } from "@/features/api/types";
 import { useConfig } from "@/features/providers/config";
