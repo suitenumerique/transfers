@@ -56,24 +56,24 @@ RUN wget -qO /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/do
     && mv caddy /usr/bin/caddy \
     && rm /tmp/caddy.tar.gz
 
+# lprobe's release binaries lag Go's security fixes (v0.2.1 ships go1.26.0), so
+# it is built from its pinned commit with a patched toolchain. Its go.sum and
+# the Go checksum database verify the dependencies.
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS lprobe-build
+ARG TARGETARCH
 ARG LPROBE_VERSION=v0.2.1
-# When upgrading, run
-# for arch in amd64 arm64; do printf "LPROBE_SHA256_%s=%s\n" "$(echo $arch | tr a-z A-Z)" "$(wget -qO- "https://github.com/fivexl/lprobe/releases/download/v0.2.1/lprobe-linux-${arch}" | sha256sum | cut -d' ' -f1)"; done
-# and update checksums accordingly
-ARG LPROBE_SHA256_AMD64=6af14d9c2f71e81357d481088791c0744254877b43de337710c5200d3fc5fb48
-ARG LPROBE_SHA256_ARM64=b32dc4863c5879527a916161daff334213834d979e2cdeb2f214f72425d63c20
-RUN wget -qO /usr/bin/lprobe "https://github.com/fivexl/lprobe/releases/download/${LPROBE_VERSION}/lprobe-linux-${TARGETARCH}" \
-    && case "${TARGETARCH}" in \
-         amd64) echo "${LPROBE_SHA256_AMD64}  /usr/bin/lprobe" | sha256sum -c - ;; \
-         arm64) echo "${LPROBE_SHA256_ARM64}  /usr/bin/lprobe" | sha256sum -c - ;; \
-         *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-       esac \
-    && chmod +x /usr/bin/lprobe
+ARG LPROBE_COMMIT=e2b91f80dfbebbb7b244a7daa515d6d71ef9f68b
+RUN apk add --no-cache git \
+    && git clone --depth 1 --branch "${LPROBE_VERSION}" https://github.com/fivexl/lprobe.git /src \
+    && test "$(git -C /src rev-parse HEAD)" = "${LPROBE_COMMIT}" \
+    && cd /src \
+    && CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+       go build -trimpath -ldflags="-w -s" -o /out/lprobe .
 
 FROM gcr.io/distroless/static-debian13:nonroot AS runtime-prod
 
 COPY --from=tools-download /usr/bin/caddy /usr/bin/caddy
-COPY --from=tools-download /usr/bin/lprobe /usr/bin/lprobe
+COPY --from=lprobe-build /out/lprobe /usr/bin/lprobe
 COPY --from=frontend-source /app /app
 COPY caddy/Caddyfile /etc/caddy/Caddyfile
 
