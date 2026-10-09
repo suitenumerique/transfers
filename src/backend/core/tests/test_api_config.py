@@ -119,3 +119,13 @@ class TestConfigView:
         # backend's rescan/reaper agree on how long a big scan may run.
         assert response.data["SCAN_WAIT_BASE_SECONDS"] > 0
         assert response.data["SCAN_WAIT_SECONDS_PER_GIB"] > 0
+
+    @pytest.mark.parametrize("url", ["", "https://support.example.gouv.fr/"])
+    def test_support_url_follows_setting(self, api_client, settings, url):
+        """The error page shows its support link only when this is non-empty."""
+        settings.SUPPORT_URL = url
+
+        response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        assert response.data["SUPPORT_URL"] == url

@@ -47,6 +47,8 @@ class ConfigView(drf.views.APIView):
             # opted out; finalize enforces the same flag server-side.
             "TRANSFER_CONFIDENTIAL_ENABLED": settings.TRANSFER_CONFIDENTIAL_ENABLED,
             "HELP_URL": getattr(settings, "HELP_URL", ""),
+            # The error page's support link; hidden when empty.
+            "SUPPORT_URL": getattr(settings, "SUPPORT_URL", ""),
         }
 
         # Surface Drive picker config only when DRIVE_BASE_URL is set —

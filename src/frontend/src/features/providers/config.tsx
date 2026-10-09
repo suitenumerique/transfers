@@ -44,6 +44,9 @@ export interface AppConfig {
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).
   HELP_URL: string;
+  // Support contact linked from the error page. Empty string when the
+  // operator hasn't configured one (link hidden).
+  SUPPORT_URL: string;
   // Absent when the operator hasn't wired Drive up (DRIVE_BASE_URL empty).
   DRIVE?: DriveConfig;
   // Absent unless the operator set both LAGAUFRE_WIDGET_URL and

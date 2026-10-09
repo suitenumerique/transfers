@@ -311,8 +311,8 @@ class Base(Configuration):
     # (new tab); the frontend hides the button when this is empty. Empty
     # by default so a self-hosted instance doesn't point its users at the
     # ANCT docs — the La Suite territoriale deployment sets it (st-ansible).
-    # ``SUPPORT_URL`` is reserved for a distinct support contact and is not
-    # consumed anywhere yet.
+    # ``SUPPORT_URL`` is the support contact linked from the error page
+    # (sign-in denied or failed); the link is hidden when this is empty.
     HELP_URL = values.Value("", environ_name="HELP_URL", environ_prefix=None)
     SUPPORT_URL = values.Value("", environ_name="SUPPORT_URL", environ_prefix=None)
     # Terms of use link rendered in the footer of every notification email
@@ -588,7 +588,7 @@ class Base(Configuration):
         "openid email", environ_name="OIDC_RP_SCOPES", environ_prefix=None
     )
     OIDC_AUTHENTICATE_CLASS = "lasuite.oidc_login.views.OIDCAuthenticationRequestView"
-    OIDC_CALLBACK_CLASS = "lasuite.oidc_login.views.OIDCAuthenticationCallbackView"
+    OIDC_CALLBACK_CLASS = "core.authentication.views.OIDCAuthenticationCallbackView"
     LOGIN_REDIRECT_URL = values.Value(
         None, environ_name="LOGIN_REDIRECT_URL", environ_prefix=None
     )
@@ -626,6 +626,11 @@ class Base(Configuration):
     OIDC_USERINFO_FULLNAME_FIELDS = values.ListValue(
         default=["first_name", "last_name"],
         environ_name="OIDC_USERINFO_FULLNAME_FIELDS",
+        environ_prefix=None,
+    )
+    OIDC_STORE_CLAIMS = values.ListValue(
+        default=[],
+        environ_name="OIDC_STORE_CLAIMS",
         environ_prefix=None,
     )
     ALLOW_LOGOUT_GET_METHOD = values.BooleanValue(
@@ -676,6 +681,19 @@ class Base(Configuration):
             },
         },
     }
+
+    # Entitlements
+    ENTITLEMENTS_BACKEND = values.Value(
+        "core.entitlements.backends.static.StaticEntitlementsBackend",
+        environ_name="ENTITLEMENTS_BACKEND",
+        environ_prefix=None,
+    )
+
+    ENTITLEMENTS_BACKEND_PARAMETERS = values.DictValue(
+        {},
+        environ_name="ENTITLEMENTS_BACKEND_PARAMETERS",
+        environ_prefix=None,
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -769,6 +787,10 @@ class Development(Base):
         environ_prefix=None,
     )
     DEBUG = True
+
+    # The dev Redis container has no volume, so a restart drops every session
+    # (including the OIDC ``state`` mid-login). DB sessions survive it.
+    SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
     SESSION_COOKIE_NAME = "transfers_sessionid"
 
