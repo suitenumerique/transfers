@@ -29,13 +29,13 @@ WORKDIR /app
 FROM base AS uv
 
 # Pin uv by SHA256 digest for supply chain security
-# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.19
-# https://github.com/astral-sh/uv/releases/tag/0.12.19
+# Verify with: gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.24
+# https://github.com/astral-sh/uv/releases/tag/0.12.24
 #
 # uv carries the SHA256 of every Python build it can install, so the Python
 # version below cannot move without it: 0.10.4 had no 3.14.7 and failed the
 # build with "No download found for request".
-COPY --from=ghcr.io/astral-sh/uv@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a /uv /uvx /bin/
 
 RUN <<EOR
 apt-get update
@@ -58,7 +58,7 @@ ENV UV_PROJECT_ENVIRONMENT=/venv
 
 # Install Python via uv — integrity verified against SHA256 checksums embedded in the uv binary.
 # Uses python-build-standalone: most C deps (ssl, ffi, sqlite, zlib, lzma, bz2) are statically linked.
-RUN uv python install 3.14.7
+RUN uv python install 3.14.8
 
 # ---- Production dependencies ----
 FROM uv AS base-with-deps
@@ -94,7 +94,7 @@ EOR
 FROM uv AS python-runtime
 RUN <<EOR
 set -e
-PYDIR=$(dirname $(dirname $(uv python find 3.14.7)))
+PYDIR=$(dirname $(dirname $(uv python find 3.14.8)))
 rm -rf \
     $PYDIR/bin/idle* $PYDIR/bin/pip* $PYDIR/bin/pydoc* $PYDIR/bin/*-config \
     $PYDIR/include $PYDIR/share \
