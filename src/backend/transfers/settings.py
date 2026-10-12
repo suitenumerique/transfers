@@ -503,11 +503,11 @@ class Base(Configuration):
                 environ_prefix=None,
             ),
         },
-        # Client IP for anonymous throttling = the rightmost X-Forwarded-For
-        # entry, the one our edge proxy appended (same rule as
-        # XForwardedForMiddleware). Without it DRF keys on the whole header,
-        # which a client can vary at will to dodge the limit.
-        "NUM_PROXIES": 1,
+        # Anonymous throttling keys on REMOTE_ADDR: the rightmost
+        # X-Forwarded-For entry when USE_X_FORWARDED_FOR is on (set by
+        # XForwardedForMiddleware), the TCP peer otherwise. Left unset, DRF
+        # keys on the whole header, which a client can vary to dodge the limit.
+        "NUM_PROXIES": 0,
     }
 
     SPECTACULAR_SETTINGS = {
