@@ -675,6 +675,8 @@ class TransferEvent(BaseModel):
     class Meta:
         db_table = "core_transfer_event"
         ordering = ["-created_at"]
+        # The outbound recipient quota reads an agent's recent creations.
+        indexes = [models.Index(fields=["actor_id", "event_type", "created_at"])]
 
     def __str__(self):
         return f"{self.event_type} on {self.transfer_id}"

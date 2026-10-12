@@ -241,10 +241,13 @@ class TransferViewSet(
                 {"sharing_mode": "Resend only applies to email-mode transfers."}
             )
 
-        transfer.notifications_completed_at = None
-        transfer.save(update_fields=["notifications_completed_at", "updated_at"])
-        log_agent_event(transfer, TransferEventType.INVITATIONS_RESENT, request)
-        send_recipient_invitations_task.delay(str(transfer.id))
+        with transaction.atomic():
+            transfer.notifications_completed_at = None
+            transfer.save(update_fields=["notifications_completed_at", "updated_at"])
+            log_agent_event(transfer, TransferEventType.INVITATIONS_RESENT, request)
+            transaction.on_commit(
+                lambda: send_recipient_invitations_task.delay(str(transfer.id))
+            )
 
         serializer = TransferDetailSerializer(transfer)
         return drf.response.Response(serializer.data)

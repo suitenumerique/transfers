@@ -11,7 +11,11 @@ from django.utils import timezone
 import pytest
 
 from core import models
-from core.api.throttling import DraftAddFileThrottle, PublicDownloadThrottle
+from core.api.throttling import (
+    DraftAddFileThrottle,
+    PublicDownloadThrottle,
+    TransferResendThrottle,
+)
 from core.enums import (
     ActorType,
     ScanStatus,
@@ -234,6 +238,42 @@ def test_public_download_page_is_throttled(api_client, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_forged_forwarded_for_does_not_dodge_the_throttle(api_client, monkeypatch):
+    monkeypatch.setattr(PublicDownloadThrottle, "rate", "2/hour", raising=False)
+    transfer = TransferFactory()
+    codes = [
+        api_client.get(
+            f"{API}/downloads/{transfer.public_token}/",
+            HTTP_X_FORWARDED_FOR=f"203.0.113.{i}",
+        ).status_code
+        for i in range(3)
+    ]
+    assert codes == [200, 200, 429]
+
+
+@pytest.mark.django_db
+def test_resend_is_throttled(user, authenticated_client, monkeypatch):
+    monkeypatch.setattr(TransferResendThrottle, "rate", "2/hour", raising=False)
+    transfer = TransferFactory(owner=user, sharing_mode=SharingMode.EMAIL)
+    codes = [
+        authenticated_client.post(f"{API}/transfers/{transfer.id}/resend/").status_code
+        for _ in range(3)
+    ]
+    assert codes == [200, 200, 429]
+
+
+def _created(owner, recipients):
+    """The TRANSFER_CREATED event a finalize logs, which the quota sums."""
+    models.TransferEvent.objects.create(
+        transfer_id=TransferFactory(owner=owner).id,
+        event_type=TransferEventType.TRANSFER_CREATED,
+        actor_type=ActorType.AGENT,
+        actor_id=owner.id,
+        payload={"recipient_count": recipients},
+    )
+
+
+@pytest.mark.django_db
 class TestRecipientQuota:
     def _finalizable_draft(self, user):
         draft = TransferDraftFactory(owner=user, encryption_chunk_size=1024)
@@ -258,9 +298,7 @@ class TestRecipientQuota:
 
     def test_over_quota_refused(self, user, authenticated_client, settings):
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("2/day")
-        earlier = TransferFactory(owner=user, sharing_mode=SharingMode.EMAIL)
-        earlier.recipients.create(email="a@example.org")
-        earlier.recipients.create(email="b@example.org")
+        _created(user, 2)
         draft = self._finalizable_draft(user)
 
         response = self._finalize(authenticated_client, draft, ["c@example.org"])
@@ -281,12 +319,34 @@ class TestRecipientQuota:
         self, user, authenticated_client, settings
     ):
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("1/day")
-        someone_else = TransferFactory(sharing_mode=SharingMode.EMAIL)
-        someone_else.recipients.create(email="a@example.org")
+        _created(UserFactory(), 1)
         draft = self._finalizable_draft(user)
         with patch("core.tasks.send_recipient_invitations_task.delay"):
             response = self._finalize(authenticated_client, draft, ["b@example.org"])
         assert response.status_code == 200, response.data
+
+    def test_deleting_the_transfer_does_not_refund_the_quota(
+        self, user, authenticated_client, settings
+    ):
+        settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("2/day")
+        with patch("core.tasks.send_recipient_invitations_task.delay"):
+            response = self._finalize(
+                authenticated_client,
+                self._finalizable_draft(user),
+                ["a@example.org", "b@example.org"],
+            )
+        assert response.status_code == 200, response.data
+        models.Transfer.objects.filter(id=response.data["id"]).update(
+            status=TransferStatus.DEACTIVATED
+        )
+        deleted = authenticated_client.delete(f"{API}/transfers/{response.data['id']}/")
+        assert deleted.status_code == 204
+
+        response = self._finalize(
+            authenticated_client, self._finalizable_draft(user), ["c@example.org"]
+        )
+
+        assert response.status_code == 429
 
     def test_disabled_quota_accepts_any_count(
         self, user, authenticated_client, settings

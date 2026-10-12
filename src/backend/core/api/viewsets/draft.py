@@ -11,7 +11,9 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, IntegerField, Sum
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 import botocore
@@ -450,7 +452,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         with a title and file names the agent chose, so without a cap the
         service is a relay for bulk mail. Checked on every finalize poll; the
         recipients only count once the Transfer exists, so re-posts don't eat
-        into the quota."""
+        into the quota. Counted from TRANSFER_CREATED events, which outlive
+        the transfer."""
         if metadata["sharing_mode"] != SharingMode.EMAIL:
             return
         rate = settings.THROTTLE_USER_OUTBOUND_RECIPIENTS
@@ -458,9 +461,17 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             return
         limit, period_name, period_seconds = rate
         since = timezone.now() - timedelta(seconds=period_seconds)
-        current = models.TransferRecipient.objects.filter(
-            transfer__owner=user, created_at__gte=since
-        ).count()
+        recipients = Cast(
+            KeyTextTransform("recipient_count", "payload"), IntegerField()
+        )
+        current = (
+            models.TransferEvent.objects.filter(
+                actor_id=user.id,
+                event_type=TransferEventType.TRANSFER_CREATED,
+                created_at__gte=since,
+            ).aggregate(total=Sum(recipients))["total"]
+            or 0
+        )
         amount = len(metadata["recipients"])
         if current + amount > limit:
             raise drf.exceptions.Throttled(
@@ -776,7 +787,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                     email=email,
                 )
 
-        log_agent_event(transfer, TransferEventType.TRANSFER_CREATED, request)
+        # The quota sums this count: events outlive the transfer, so
+        # deleting it does not give the recipients back.
+        log_agent_event(
+            transfer,
+            TransferEventType.TRANSFER_CREATED,
+            request,
+            payload={"recipient_count": len(metadata["recipients"])}
+            if metadata["sharing_mode"] == SharingMode.EMAIL
+            else None,
+        )
 
         if transfer.sharing_mode == SharingMode.EMAIL:
             from core.tasks import send_recipient_invitations_task
