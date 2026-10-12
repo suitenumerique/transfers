@@ -50,9 +50,11 @@ class ScanResultWebhookView(APIView):
             return Response(status=200)
 
         # Constant-time compare; reject if the file has no secret (never
-        # submitted for scan) or the token doesn't match.
+        # submitted for scan) or the token doesn't match. Compared as bytes:
+        # ``compare_digest`` raises TypeError on non-ASCII str, which would
+        # turn a junk query string into a 500.
         if not transfer_file.webhook_secret or not hmac.compare_digest(
-            secret, transfer_file.webhook_secret
+            secret.encode(), transfer_file.webhook_secret.encode()
         ):
             logger.warning("Scan webhook with bad secret for file %s", file_id)
             return Response({"detail": "Invalid secret."}, status=403)

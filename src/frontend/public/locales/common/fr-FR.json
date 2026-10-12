@@ -160,6 +160,7 @@
   "Transfer created": "Transfert créé",
   "Transfer expired": "Transfert expiré",
   "Transfer deactivated": "Transfert désactivé",
+  "Invitations resent": "Invitations renvoyées",
   "Deactivate after all files are downloaded": "Désactiver après téléchargement complet",
   "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.": "Le téléchargement de {{names}} a été interrompu. Sur Firefox, « Reprendre » et « Réessayer » depuis le panneau des téléchargements ne fonctionnent pas : cliquez à nouveau sur le fichier ici pour le relancer.",
   "Single-use link. Deactivates after full download.": "Lien à usage unique. Se désactive après téléchargement complet.",

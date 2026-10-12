@@ -1,8 +1,10 @@
 """Shared test fixtures and helpers."""
 
+import ipaddress
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings as django_settings
+from django.core.cache import cache
 
 import pytest
 from moto import mock_aws
@@ -21,6 +23,30 @@ def _head_matching_declared_size(key):
     passes on the happy path. Tests that simulate a size mismatch override
     ``head.return_value`` or ``head.side_effect`` to force a divergence."""
     return TransferFile.objects.get(s3_key=key).size
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttles():
+    """Throttle counters live in the default cache; start every test from
+    zero so a suite's worth of downloads from 127.0.0.1 can't trip them."""
+    cache.clear()
+    yield
+    cache.clear()
+
+
+# Drive instance the tests import from. Server-side imports only accept
+# URLs on the configured Drive host, whose address must resolve publicly.
+TEST_DRIVE_BASE_URL = "https://drive.example.com"
+
+
+@pytest.fixture(autouse=True)
+def _drive_configured(settings):
+    settings.DRIVE_CONFIG = {**settings.DRIVE_CONFIG, "base_url": TEST_DRIVE_BASE_URL}
+    with patch(
+        "core.services.safe_http._resolve",
+        return_value=[ipaddress.ip_address("93.184.215.14")],
+    ):
+        yield
 
 
 @pytest.fixture

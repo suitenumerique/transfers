@@ -20,6 +20,7 @@ from rest_framework.views import APIView
 
 from core import models
 from core.api.serializers import DownloadTransferSerializer
+from core.api.throttling import PublicDownloadThrottle
 from core.enums import (
     ActorType,
     DeactivationReason,
@@ -199,6 +200,7 @@ class DownloadTransferView(APIView):
     """Get transfer info for the download page."""
 
     permission_classes = [AllowAny]
+    throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token):
         transfer = _fetch_transfer_by_token(public_token)
@@ -223,6 +225,7 @@ class DownloadFileView(APIView):
     """Download a single file from a transfer."""
 
     permission_classes = [AllowAny]
+    throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token, file_id):
         transfer = _fetch_transfer_by_token(public_token)

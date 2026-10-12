@@ -215,9 +215,10 @@ class TestDraftAddFile:
         assert tf.mime_type == "application/pdf"
         assert tf.upload_id == "FAKE-UPLOAD-ID"
         assert tf.upload_completed_at is None
-        # S3 key is scoped to the TransferFile UUID — stable across the
-        # finalize-time reparenting that swaps draft→transfer.
-        assert tf.s3_key == f"transfers/{tf.id}/report.pdf"
+        # S3 key is the TransferFile UUID alone — stable across the
+        # finalize-time reparenting that swaps draft→transfer, and free of
+        # the user-supplied filename.
+        assert tf.s3_key == f"transfers/{tf.id}"
         patched_s3.create.assert_called_once()
 
     def test_subsequent_drop_attaches_to_same_draft(
@@ -1581,7 +1582,7 @@ class TestDraftAddFileFromDrive:
     add-file only records the intent: no multipart, no task, slim response
     (no upload_id/chunk_size — the client won't upload anything)."""
 
-    DRIVE_URL = "https://fichiers.example.gouv.fr/api/v1.0/items/abc/download/"
+    DRIVE_URL = "https://drive.example.com/api/v1.0/items/abc/download/"
 
     def _add_from_drive(self, authenticated_client, draft_id=None, **overrides):
         plaintext = overrides.pop("plaintext_size", 100)
@@ -1666,7 +1667,7 @@ class TestDraftRetrieve:
                 "filename": "drive.jpg",
                 "plaintext_size": 50,
                 "size": _ciphertext_size(50),
-                "source_url": "https://drive.example/x/download/",
+                "source_url": "https://drive.example.com/x/download/",
             },
             format="json",
         )
@@ -2190,7 +2191,7 @@ class TestImportDriveFileTask:
             plaintext_size=plaintext_size,
             mime_type="image/jpeg",
             s3_key=f"transfers/placeholder/{filename}",
-            source_url="https://drive.example.org/x/download/",
+            source_url="https://drive.example.com/x/download/",
         )
         return tf, import_drive_file_task
 
@@ -2237,6 +2238,7 @@ class TestImportDriveFileTask:
             # reads Content-Length from them to bound the download. Empty here
             # (header absent), which exercises the mid-stream byte cap.
             headers: dict = {}
+            is_redirect = False
 
             def __enter__(self_inner):
                 return self_inner
@@ -2290,6 +2292,7 @@ class TestImportDriveFileTask:
             # reads Content-Length from them to bound the download. Empty here
             # (header absent), which exercises the mid-stream byte cap.
             headers: dict = {}
+            is_redirect = False
 
             def __enter__(self_inner):
                 return self_inner
@@ -2336,6 +2339,7 @@ class TestImportDriveFileTask:
 
         class _FakeResponse:
             headers: dict = {"Content-Length": "999999999"}
+            is_redirect = False
 
             def __enter__(self_inner):
                 return self_inner
@@ -2372,6 +2376,7 @@ class TestImportDriveFileTask:
 
         class _FakeResponse:
             headers: dict = {}
+            is_redirect = False
 
             def __enter__(self_inner):
                 return self_inner
@@ -2417,6 +2422,7 @@ class TestImportDriveFileTask:
             # reads Content-Length from them to bound the download. Empty here
             # (header absent), which exercises the mid-stream byte cap.
             headers: dict = {}
+            is_redirect = False
 
             def __enter__(self_inner):
                 return self_inner

@@ -31,6 +31,7 @@ from core.api.serializers import (
     DraftSignPartSerializer,
     TransferDetailSerializer,
 )
+from core.api.throttling import DraftAddFileThrottle
 from core.api.utils import log_agent_event
 from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
@@ -114,7 +115,12 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             )
         },
     )
-    @action(detail=False, methods=["post"], url_path="add-file")
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="add-file",
+        throttle_classes=[DraftAddFileThrottle],
+    )
     def add_file(self, request):
         """Attach a file to a draft.
 
@@ -183,7 +189,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 mime_type=data["mime_type"],
                 source_url=data.get("source_url", ""),
             )
-            transfer_file.s3_key = f"transfers/{transfer_file.id}/{data['filename']}"
+            transfer_file.s3_key = f"transfers/{transfer_file.id}"
 
             if transfer_file.source_url:
                 # Drive import is deferred to finalize: encrypting the fetched
@@ -411,6 +417,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         metadata = serializer.validated_data
         confidential = metadata["confidential"]
+        self._check_recipient_quota(request.user, metadata)
 
         with transaction.atomic():
             draft = self._get_locked_draft(pk)
@@ -436,6 +443,32 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             transfer = self._create_transfer_from_draft(draft, metadata, request)
 
         return drf.response.Response(TransferDetailSerializer(transfer).data)
+
+    def _check_recipient_quota(self, user, metadata):
+        """Cap how many invitation emails one agent can trigger per period
+        (THROTTLE_USER_OUTBOUND_RECIPIENTS). Each one goes out from our sender
+        with a title and file names the agent chose, so without a cap the
+        service is a relay for bulk mail. Checked on every finalize poll; the
+        recipients only count once the Transfer exists, so re-posts don't eat
+        into the quota."""
+        if metadata["sharing_mode"] != SharingMode.EMAIL:
+            return
+        rate = settings.THROTTLE_USER_OUTBOUND_RECIPIENTS
+        if not rate:
+            return
+        limit, period_name, period_seconds = rate
+        since = timezone.now() - timedelta(seconds=period_seconds)
+        current = models.TransferRecipient.objects.filter(
+            transfer__owner=user, created_at__gte=since
+        ).count()
+        amount = len(metadata["recipients"])
+        if current + amount > limit:
+            raise drf.exceptions.Throttled(
+                detail=(
+                    f"Rate limit exceeded: {current}/{limit} recipients "
+                    f"per {period_name}. Tried to add {amount} more."
+                )
+            )
 
     def _reject_bad_finalize_shape(
         self, files, drive_files, browser_files, confidential

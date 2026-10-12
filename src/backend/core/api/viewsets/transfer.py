@@ -11,6 +11,7 @@ orphaned by the operation).
 
 import logging
 
+from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Sum
 
 import rest_framework as drf
@@ -27,6 +28,7 @@ from core.api.serializers import (
     TransferEventSerializer,
     TransferListSerializer,
 )
+from core.api.throttling import TransferResendThrottle
 from core.api.utils import log_agent_event
 from core.api.viewsets import Pagination
 from core.enums import (
@@ -182,7 +184,11 @@ class TransferViewSet(
                     }
                 )
         transfer_id = instance.id
-        instance.delete()
+        # One transaction: the audit event must not claim a deletion that
+        # then failed, nor the row vanish without its event.
+        with transaction.atomic():
+            log_agent_event(instance, TransferEventType.TRANSFER_DELETED, self.request)
+            instance.delete()
         logger.info("Transfer %s hard-deleted", transfer_id)
 
     @extend_schema(responses={200: TransferDetailSerializer})
@@ -212,7 +218,7 @@ class TransferViewSet(
         return drf.response.Response(serializer.data)
 
     @extend_schema(responses={200: TransferDetailSerializer})
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], throttle_classes=[TransferResendThrottle])
     def resend(self, request, pk=None):
         """Retry failed recipient invitation emails for an email-mode
         transfer. The task only emails recipients with
@@ -237,6 +243,7 @@ class TransferViewSet(
 
         transfer.notifications_completed_at = None
         transfer.save(update_fields=["notifications_completed_at", "updated_at"])
+        log_agent_event(transfer, TransferEventType.INVITATIONS_RESENT, request)
         send_recipient_invitations_task.delay(str(transfer.id))
 
         serializer = TransferDetailSerializer(transfer)

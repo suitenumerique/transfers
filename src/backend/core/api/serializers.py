@@ -9,7 +9,7 @@ from rest_framework import serializers
 
 from core import models
 from core.enums import SharingMode
-from core.services import encryption
+from core.services import encryption, safe_http
 from core.services.recipient_activity import activity_by_recipient
 
 # URL-safe base64 alphabet, no padding required. The frontend ships exactly
@@ -327,6 +327,15 @@ class DraftAddFileSerializer(serializers.Serializer):
     source_url = serializers.URLField(
         max_length=2048, required=False, allow_blank=True, default=""
     )
+
+    def validate_source_url(self, value):
+        # The worker fetches this URL server-side: only the configured Drive
+        # instance is acceptable, and nothing at all when Drive is off.
+        if value and not safe_http.is_drive_url(value):
+            raise serializers.ValidationError(
+                "Only files from the configured Drive can be imported."
+            )
+        return value
 
     def validate_size(self, value):
         if value > settings.TRANSFER_MAX_FILE_SIZE:

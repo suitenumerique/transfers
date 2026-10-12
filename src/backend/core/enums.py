@@ -50,6 +50,11 @@ class TransferEventType(models.TextChoices):
     )
     TRANSFER_DEACTIVATED_AFTER_EXPIRY = "transfer_deactivated_after_expiry"
     FILE_DELETED = "file_deleted"
+    # The agent re-triggered the invitation emails (``resend``).
+    INVITATIONS_RESENT = "invitations_resent"
+    # The agent hard-deleted the transfer. Outlives the row like every
+    # event, so "who deleted it, when, from where" stays answerable.
+    TRANSFER_DELETED = "transfer_deleted"
 
 
 class ScanStatus(models.TextChoices):
