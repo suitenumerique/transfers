@@ -37,42 +37,41 @@ COPY --from=frontend-build /home/frontend/dist /app
 # frontend-deps, frontend-build, and frontend-build-output entirely
 FROM ${FRONTEND_IMAGE} AS frontend-source
 
-FROM alpine:3.21 AS tools-download
+# Caddy and lprobe release binaries lag Go's security fixes (Caddy 2.11.7 ships
+# go1.26.8), so both are built with a patched toolchain and golang.org/x/net
+# raised past their pins. The Go checksum database verifies every module.
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS go-build
 ARG TARGETARCH
+ARG GO_X_NET_VERSION=v0.60.0
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH}
 
-ARG CADDY_VERSION=2.11.7
-# When upgrading, run
-# for arch in amd64 arm64; do printf "CADDY_SHA256_%s=%s\n" "$(echo $arch | tr a-z A-Z)" "$(wget -qO- "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_${arch}.tar.gz" | sha256sum | cut -d' ' -f1)"; done
-# and update checksums accordingly (bin/scalingo_postfrontend pins the same version and amd64 checksum)
-ARG CADDY_SHA256_AMD64=727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b
-ARG CADDY_SHA256_ARM64=d8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42
-RUN wget -qO /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_${TARGETARCH}.tar.gz" \
-    && case "${TARGETARCH}" in \
-         amd64) echo "${CADDY_SHA256_AMD64}  /tmp/caddy.tar.gz" | sha256sum -c - ;; \
-         arm64) echo "${CADDY_SHA256_ARM64}  /tmp/caddy.tar.gz" | sha256sum -c - ;; \
-         *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-       esac \
-    && tar -xzf /tmp/caddy.tar.gz caddy \
-    && mv caddy /usr/bin/caddy \
-    && rm /tmp/caddy.tar.gz
+# Caddy's own cmd/caddy/main.go: the standard modules, no plugin.
+FROM go-build AS caddy-build
+ARG CADDY_VERSION=v2.11.7
+WORKDIR /src
+RUN printf '%s\n' 'package main' \
+      'import (' '	_ "time/tzdata"' \
+      '	caddycmd "github.com/caddyserver/caddy/v2/cmd"' \
+      '	_ "github.com/caddyserver/caddy/v2/modules/standard"' ')' \
+      'func main() { caddycmd.Main() }' > main.go \
+    && go mod init caddy \
+    && go get "github.com/caddyserver/caddy/v2@${CADDY_VERSION}" "golang.org/x/net@${GO_X_NET_VERSION}" \
+    && go mod tidy \
+    && go build -trimpath -ldflags="-w -s" -o /out/caddy .
 
-# lprobe's release binaries lag Go's security fixes (v0.2.1 ships go1.26.0), so
-# it is built from its pinned commit with a patched toolchain. Its go.sum and
-# the Go checksum database verify the dependencies.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS lprobe-build
-ARG TARGETARCH
+FROM go-build AS lprobe-build
 ARG LPROBE_VERSION=v0.2.1
 ARG LPROBE_COMMIT=e2b91f80dfbebbb7b244a7daa515d6d71ef9f68b
 RUN apk add --no-cache git \
     && git clone --depth 1 --branch "${LPROBE_VERSION}" https://github.com/fivexl/lprobe.git /src \
     && test "$(git -C /src rev-parse HEAD)" = "${LPROBE_COMMIT}" \
     && cd /src \
-    && CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
-       go build -trimpath -ldflags="-w -s" -o /out/lprobe .
+    && go get "golang.org/x/net@${GO_X_NET_VERSION}" \
+    && go build -trimpath -ldflags="-w -s" -o /out/lprobe .
 
 FROM gcr.io/distroless/static-debian13:nonroot AS runtime-prod
 
-COPY --from=tools-download /usr/bin/caddy /usr/bin/caddy
+COPY --from=caddy-build /out/caddy /usr/bin/caddy
 COPY --from=lprobe-build /out/lprobe /usr/bin/lprobe
 COPY --from=frontend-source /app /app
 COPY caddy/Caddyfile /etc/caddy/Caddyfile
