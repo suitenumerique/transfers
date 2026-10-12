@@ -22,6 +22,7 @@ import { TransferStatusBadge } from "./TransferStatusBadge";
 const EVENT_LABELS: Record<string, string> = {
   transfer_created: "Transfer created",
   email_sent: "Notification email sent",
+  invitations_resent: "Invitations resent",
   link_opened: "Link opened",
   file_downloaded: "File downloaded",
   transfer_deactivated_manually: "Transfer deactivated",

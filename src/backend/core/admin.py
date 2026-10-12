@@ -18,6 +18,21 @@ class UserAdmin(auth_admin.UserAdmin):
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser")}),
     )
     add_fieldsets = ((None, {"fields": ("admin_email", "password1", "password2")}),)
+    # Logins match on sub: editing it signs in as that person. Only the IdP sets it.
+    readonly_fields = ("sub",)
+
+
+# File rows inlined on a transfer or draft, all read-only.
+_FILE_FIELDS = (
+    "filename",
+    "size",
+    "plaintext_size",
+    "mime_type",
+    "s3_key",
+    "scan_status",
+    "scan_error_kind",
+    "created_at",
+)
 
 
 class TransferFileInline(admin.TabularInline):
@@ -28,7 +43,8 @@ class TransferFileInline(admin.TabularInline):
     model = models.TransferFile
     fk_name = "transfer"
     extra = 0
-    readonly_fields = ("filename", "size", "mime_type", "s3_key", "created_at")
+    fields = _FILE_FIELDS
+    readonly_fields = _FILE_FIELDS
     can_delete = False
 
 
@@ -38,7 +54,8 @@ class TransferDraftFileInline(admin.TabularInline):
     model = models.TransferFile
     fk_name = "draft"
     extra = 0
-    readonly_fields = ("filename", "size", "mime_type", "s3_key", "created_at")
+    fields = _FILE_FIELDS
+    readonly_fields = _FILE_FIELDS
     can_delete = False
 
 
@@ -58,7 +75,17 @@ class TransferAdmin(admin.ModelAdmin):
     search_fields = ("id", "title", "public_token", "owner__email")
     readonly_fields = (
         "id",
+        "owner",
         "public_token",
+        "encryption_key",
+        "confidential",
+        "encryption_chunk_size",
+        # Public access hangs on the status: reopening a deactivated transfer
+        # here would leave no event in its history.
+        "status",
+        "deactivation_reason",
+        "deactivated_at",
+        "pending_deletion_at",
         "created_at",
         "updated_at",
     )
@@ -76,7 +103,14 @@ class TransferDraftAdmin(admin.ModelAdmin):
 
     list_display = ("id", "owner", "created_at")
     search_fields = ("id", "owner__email")
-    readonly_fields = ("id", "created_at", "updated_at")
+    readonly_fields = (
+        "id",
+        "owner",
+        "encryption_key",
+        "encryption_chunk_size",
+        "created_at",
+        "updated_at",
+    )
     date_hierarchy = "created_at"
     inlines = [TransferDraftFileInline]
 
@@ -97,7 +131,24 @@ class TransferFileAdmin(admin.ModelAdmin):
     )
     list_filter = ("mime_type",)
     search_fields = ("filename", "transfer__id", "draft__id")
-    readonly_fields = ("id", "created_at", "updated_at")
+    # The verdict and its report only come from the scanner; the webhook
+    # secret would let anyone holding it forge one.
+    exclude = ("webhook_secret",)
+    readonly_fields = (
+        "id",
+        "transfer",
+        "draft",
+        "s3_key",
+        "upload_id",
+        "source_url",
+        "scan_status",
+        "scan_error_kind",
+        "scan_submitted_at",
+        "scan_job_id",
+        "scan_report",
+        "created_at",
+        "updated_at",
+    )
 
     @admin.display(description="Parent")
     def parent(self, obj):

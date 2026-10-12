@@ -106,3 +106,27 @@ through environment variables (real endpoints, real secrets, persistent storage)
 - **Empty `full_name`** → `OIDC_USERINFO_FULLNAME_FIELDS` must be a bare
   comma-separated list (`given_name,family_name`), not JSON — django-configurations
   `ListValue` splits on commas.
+
+## Security notes
+
+- **Session cookie only.** The API authenticates with the Django session set
+  by the OIDC login flow. Bearer access tokens are not accepted: validating
+  them only through the provider's userinfo endpoint cannot tell whether the
+  token was issued to this client, so a token minted for another ProConnect
+  service would otherwise act as its user here. Anonymous API calls answer
+  401.
+- **No account linking by email by default.**
+  `OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION` defaults to `False`: a login is
+  matched on `sub` only. With it on, an unknown `sub` is attached to the
+  existing account holding the same email, which hands that account to any
+  identity provider of the federation asserting the address. Turn it on only
+  for a one-off migration of accounts created without a `sub`.
+- **The `sub` of an account that has one is never rewritten.**
+  `OIDC_USER_SUB_FIELD_IMMUTABLE` is declared `True` rather than inherited:
+  django-lasuite would otherwise derive it from the setting above, so enabling
+  the email fallback for a migration would also allow the overwrite that makes
+  a takeover persist. An account with no `sub` yet still receives its first
+  one, so a migration is unaffected. A refused rewrite is logged with the
+  account id — if a login legitimately arrives with a new `sub` (the agent's
+  upstream provider changed), that log line is the signal, and the fix is
+  deliberate rather than automatic.

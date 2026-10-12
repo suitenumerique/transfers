@@ -7,7 +7,7 @@ from django.db import connection
 # Any env that may hold real user data — anything other than dev/test.
 # Guard raises CommandError (exit 1) instead of printing + returning 0 so
 # a chained deploy script fails loudly rather than silently proceeding.
-FORBIDDEN_ENVIRONMENTS = {"production", "staging"}
+FORBIDDEN_ENVIRONMENTS = {"production", "preproduction", "staging"}
 
 
 class Command(BaseCommand):

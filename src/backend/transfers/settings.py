@@ -12,6 +12,8 @@ import sentry_sdk
 from configurations import Configuration, values
 from sentry_sdk.integrations.django import DjangoIntegration
 
+from core.utils import ThrottleRateValue
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -158,6 +160,14 @@ class Base(Configuration):
     TRANSFER_MAX_TOTAL_SIZE = values.PositiveIntegerValue(
         20 * 1024 * 1024 * 1024,  # 20 Go — cap on the sum of all files in a transfer
         environ_name="TRANSFER_MAX_TOTAL_SIZE",
+        environ_prefix=None,
+    )
+    # Throttling - limits invitation recipients per agent per time period,
+    # all transfers together, over a sliding window.
+    # Format: "count/period" where period is minute, hour, or day. None to disable.
+    THROTTLE_USER_OUTBOUND_RECIPIENTS = ThrottleRateValue(
+        "200/day",
+        environ_name="THROTTLE_USER_OUTBOUND_RECIPIENTS",
         environ_prefix=None,
     )
     TRANSFER_MAX_FILES_PER_TRANSFER = values.PositiveIntegerValue(
@@ -333,6 +343,17 @@ class Base(Configuration):
         "app_name": os.environ.get("DRIVE_APP_NAME", "Fichiers"),
     }
 
+    # Drive imports are fetched server-side, and every hop (Drive's
+    # permalink usually redirects to its object storage) must resolve to a
+    # public address. Dev turns this on: Drive and its storage sit on the
+    # Docker network there. Never enable it where the worker can reach
+    # internal services.
+    DRIVE_IMPORT_ALLOW_PRIVATE_NETWORKS = values.BooleanValue(
+        False,
+        environ_name="DRIVE_IMPORT_ALLOW_PRIVATE_NETWORKS",
+        environ_prefix=None,
+    )
+
     # LaGaufre (La Suite's app switcher): rendered only when both URLs are
     # set, so an instance outside a Suite deployment neither pulls a
     # third-party script nor advertises services it has nothing to do with.
@@ -439,9 +460,13 @@ class Base(Configuration):
     }
 
     REST_FRAMEWORK = {
+        # Session only. mozilla-django-oidc's bearer authentication used to
+        # sit here: it accepts any access token the provider's userinfo
+        # endpoint honours, without checking it was issued to this client,
+        # so a token minted for another ProConnect service would act as the
+        # user here. The frontend never sends one.
         "DEFAULT_AUTHENTICATION_CLASSES": (
-            "mozilla_django_oidc.contrib.drf.OIDCAuthentication",
-            "rest_framework.authentication.SessionAuthentication",
+            "core.authentication.drf.SessionAuthenticationWith401",
         ),
         "DEFAULT_PARSER_CLASSES": [
             "rest_framework.parsers.JSONParser",
@@ -452,8 +477,37 @@ class Base(Configuration):
         "PAGE_SIZE": 20,
         "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+        # No global throttle; the scopes below are opted into per endpoint
+        # (core.api.throttling).
         "DEFAULT_THROTTLE_CLASSES": [],
-        "DEFAULT_THROTTLE_RATES": {},
+        "DEFAULT_THROTTLE_RATES": {
+            # Attaching files, browser uploads and Drive imports alike: bounds
+            # storage churn and server-side Drive fetches.
+            "draft_add_file": values.Value(
+                default="300/hour",
+                environ_name="API_DRAFT_ADD_FILE_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+            # Re-sending invitations. Only unsent recipients are emailed again,
+            # so this caps retries, not mail volume.
+            "transfer_resend": values.Value(
+                default="30/hour",
+                environ_name="API_TRANSFER_RESEND_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+            # Public download page and file URLs, keyed per IP for visitors.
+            # Generous: one agency behind a single NAT may fetch many files.
+            "public_download": values.Value(
+                default="1000/hour",
+                environ_name="API_PUBLIC_DOWNLOAD_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+        },
+        # Client IP for anonymous throttling = the rightmost X-Forwarded-For
+        # entry, the one our edge proxy appended (same rule as
+        # XForwardedForMiddleware). Without it DRF keys on the whole header,
+        # which a client can vary at will to dodge the limit.
+        "NUM_PROXIES": 1,
     }
 
     SPECTACULAR_SETTINGS = {
@@ -610,9 +664,27 @@ class Base(Configuration):
     OIDC_STORE_ID_TOKEN = values.BooleanValue(
         default=True, environ_name="OIDC_STORE_ID_TOKEN", environ_prefix=None
     )
+    # Off by default: a login whose ``sub`` is unknown would otherwise be
+    # attached to whichever account holds the same email, so any identity
+    # provider in the federation asserting that address takes the account
+    # over. Turn on only for a one-off migration of accounts without a sub.
     OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = values.BooleanValue(
-        default=True,
+        default=False,
         environ_name="OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION",
+        environ_prefix=None,
+    )
+    # Declared rather than inherited. django-lasuite derives this from the
+    # setting above (``not OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION``), which
+    # couples two separate decisions: turning the email fallback on for a
+    # migration would also start letting a login rewrite the ``sub`` of an
+    # account that already has one — the overwrite that makes a takeover
+    # stick, during exactly the window when the fallback is what exposes us.
+    # Pinned True so the fallback can be flipped without that side effect. A
+    # first ``sub`` still lands on an account that has none (the library only
+    # guards a field already set), so a migration keeps working.
+    OIDC_USER_SUB_FIELD_IMMUTABLE = values.BooleanValue(
+        default=True,
+        environ_name="OIDC_USER_SUB_FIELD_IMMUTABLE",
         environ_prefix=None,
     )
     OIDC_ALLOW_DUPLICATE_EMAILS = values.BooleanValue(
@@ -787,6 +859,11 @@ class Development(Base):
         environ_prefix=None,
     )
     DEBUG = True
+    DRIVE_IMPORT_ALLOW_PRIVATE_NETWORKS = values.BooleanValue(
+        True,
+        environ_name="DRIVE_IMPORT_ALLOW_PRIVATE_NETWORKS",
+        environ_prefix=None,
+    )
 
     # The dev Redis container has no volume, so a restart drops every session
     # (including the OIDC ``state`` mid-login). DB sessions survive it.

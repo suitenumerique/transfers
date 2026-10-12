@@ -29,7 +29,7 @@ from core.models import (
     TransferFile,
     TransferRecipient,
 )
-from core.services import encryption, s3
+from core.services import encryption, s3, safe_http
 from core.services.email import send_download_receipt, send_recipient_invitation
 from core.services.s3_sweep import run_orphan_sweep
 from core.services.scan_auth import mint_request_token
@@ -214,12 +214,17 @@ def import_drive_file_task(transfer_file_id):
         else settings.TRANSFER_CHUNK_SIZE
     )
     encryption_key = tf.draft.encryption_key if tf.draft else ""
-    key = tf.s3_key or f"transfers/{tf.id}/{tf.filename}"
+    key = tf.s3_key
     upload_id = ""
     try:
         aes_key = encryption.decode_key(encryption_key)
 
-        with requests.get(tf.source_url, stream=True, timeout=60) as response:
+        # Re-checked here, not just at add-file: the Drive base URL may have
+        # changed since, and this is the line that actually fetches.
+        if not safe_http.is_drive_url(tf.source_url):
+            raise safe_http.UnsafeURLError("source_url is not on the Drive host.")
+
+        with safe_http.get_public(tf.source_url, timeout=60) as response:
             response.raise_for_status()
 
             # Reject up front on the declared size, then cap what we actually

@@ -43,6 +43,17 @@ local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/aut
 
 Recipient count in email mode is hard-capped at 50 (in the serializer).
 
+Abuse limits:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `THROTTLE_USER_OUTBOUND_RECIPIENTS` | `200/day` | Invitation emails one agent may trigger per sliding period, all transfers together (finalize answers 429 past it). `count/period` with period `minute`, `hour` or `day`; empty to disable |
+| `API_DRAFT_ADD_FILE_THROTTLE_RATE` | `300/hour` | Files an agent may attach (browser uploads and Drive imports) |
+| `API_TRANSFER_RESEND_THROTTLE_RATE` | `30/hour` | Invitation re-sends per agent |
+| `API_PUBLIC_DOWNLOAD_THROTTLE_RATE` | `1000/hour` | Download page + file URL calls per visitor IP (per user when signed in) |
+
+Throttle counters live in the default cache (Redis in production).
+
 ## Configuration
 
 S3 / storage:
@@ -202,6 +213,12 @@ Instances can optionally allow users to attach files from a [Drive](https://gith
 | `DRIVE_SDK_URL` | No | `/sdk` | Path (or absolute URL) to the Drive SDK endpoint |
 | `DRIVE_API_URL` | No | `/api/v1.0` | Path (or absolute URL) to the Drive API |
 | `DRIVE_APP_NAME` | No | `Drive` | Display name shown in UI labels |
+| `DRIVE_IMPORT_ALLOW_PRIVATE_NETWORKS` | No | `False` (`True` in Development) | Let server-side Drive imports reach private / loopback addresses. Leave off in production |
+
+Server-side imports (`source_url`) are fetched by the worker, so they are
+locked down: the URL must share the scheme and host of `DRIVE_BASE_URL`
+(any `source_url` is refused while it is empty), redirects are followed by
+hand, and every hop must resolve to a public address.
 
 **Drive side** — the Drive instance must allow the Transfers origin:
 
