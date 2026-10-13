@@ -419,9 +419,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         metadata = serializer.validated_data
         confidential = metadata["confidential"]
-        self._check_recipient_quota(request.user, metadata)
 
         with transaction.atomic():
+            self._check_recipient_quota(request.user, metadata)
             draft = self._get_locked_draft(pk)
             files = list(draft.files.all())
             drive_files = [f for f in files if f.source_url]
@@ -459,6 +459,9 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         rate = settings.THROTTLE_USER_OUTBOUND_RECIPIENTS
         if not rate:
             return
+        # Held until the transaction ends, so concurrent finalizes by the same
+        # agent cannot both pass the check before either logs its event.
+        models.User.objects.select_for_update().get(pk=user.pk)
         limit, period_name, period_seconds = rate
         since = timezone.now() - timedelta(seconds=period_seconds)
         recipients = Cast(
