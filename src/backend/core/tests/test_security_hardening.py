@@ -393,18 +393,25 @@ def test_concurrent_finalizes_share_one_quota(settings):
     user = UserFactory()
     drafts = [TestRecipientQuota()._finalizable_draft(user) for _ in range(4)]
     start = threading.Barrier(len(drafts))
-    codes = []
+    codes, errors = [], []
 
     def finalize(draft):
-        client = APIClient()
-        client.force_login(user)
-        start.wait()
-        codes.append(
-            TestRecipientQuota()
-            ._finalize(client, draft, ["a@example.org", "b@example.org"])
-            .status_code
-        )
-        connection.close()
+        try:
+            client = APIClient()
+            client.force_login(user)
+            # Bounded: a worker failing before the barrier breaks it instead
+            # of leaving the others waiting forever.
+            start.wait(timeout=10)
+            codes.append(
+                TestRecipientQuota()
+                ._finalize(client, draft, ["a@example.org", "b@example.org"])
+                .status_code
+            )
+        except Exception as exc:
+            errors.append(exc)
+            start.abort()
+        finally:
+            connection.close()
 
     threads = [threading.Thread(target=finalize, args=(d,)) for d in drafts]
     with patch("core.tasks.send_recipient_invitations_task.delay"):
@@ -412,6 +419,7 @@ def test_concurrent_finalizes_share_one_quota(settings):
             thread.start()
         for thread in threads:
             thread.join()
+    assert not errors, errors
     assert sorted(codes) == [200, 429, 429, 429]
 
 

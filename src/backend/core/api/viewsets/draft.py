@@ -421,8 +421,8 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         confidential = metadata["confidential"]
 
         with transaction.atomic():
-            self._check_recipient_quota(request.user, metadata)
             draft = self._get_locked_draft(pk)
+            self._check_recipient_quota(request.user, metadata)
             files = list(draft.files.all())
             drive_files = [f for f in files if f.source_url]
             browser_files = [f for f in files if not f.source_url]
