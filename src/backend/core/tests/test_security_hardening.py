@@ -4,11 +4,14 @@ secret handling."""
 
 import base64
 import ipaddress
+import threading
 from unittest.mock import MagicMock, patch
 
+from django.db import connection
 from django.utils import timezone
 
 import pytest
+from rest_framework.test import APIClient
 
 from core import models
 from core.api.throttling import (
@@ -252,6 +255,28 @@ def test_forged_forwarded_for_does_not_dodge_the_throttle(api_client, monkeypatc
 
 
 @pytest.mark.django_db
+def test_forged_forwarded_for_prefix_does_not_dodge_the_throttle(
+    api_client, monkeypatch, settings
+):
+    """Behind the proxy (USE_X_FORWARDED_FOR): a client can prepend its own
+    entries, but the proxy appends the real address, which is what counts."""
+    settings.MIDDLEWARE = [
+        "core.middlewares.XForwardedForMiddleware",
+        *settings.MIDDLEWARE,
+    ]
+    monkeypatch.setattr(PublicDownloadThrottle, "rate", "2/hour", raising=False)
+    transfer = TransferFactory()
+    codes = [
+        api_client.get(
+            f"{API}/downloads/{transfer.public_token}/",
+            HTTP_X_FORWARDED_FOR=f"203.0.113.{i}, 198.51.100.7",
+        ).status_code
+        for i in range(3)
+    ]
+    assert codes == [200, 200, 429]
+
+
+@pytest.mark.django_db
 def test_resend_is_throttled(user, authenticated_client, monkeypatch):
     monkeypatch.setattr(TransferResendThrottle, "rate", "2/hour", raising=False)
     transfer = TransferFactory(owner=user, sharing_mode=SharingMode.EMAIL)
@@ -358,6 +383,36 @@ class TestRecipientQuota:
                 authenticated_client, draft, ["a@example.org", "b@example.org"]
             )
         assert response.status_code == 200, response.data
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_finalizes_share_one_quota(settings):
+    """Simultaneous finalizes by one agent are serialized: each sees the
+    recipients the previous one logged."""
+    settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("2/day")
+    user = UserFactory()
+    drafts = [TestRecipientQuota()._finalizable_draft(user) for _ in range(4)]
+    start = threading.Barrier(len(drafts))
+    codes = []
+
+    def finalize(draft):
+        client = APIClient()
+        client.force_login(user)
+        start.wait()
+        codes.append(
+            TestRecipientQuota()
+            ._finalize(client, draft, ["a@example.org", "b@example.org"])
+            .status_code
+        )
+        connection.close()
+
+    threads = [threading.Thread(target=finalize, args=(d,)) for d in drafts]
+    with patch("core.tasks.send_recipient_invitations_task.delay"):
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert sorted(codes) == [200, 429, 429, 429]
 
 
 @pytest.mark.parametrize(
