@@ -25,7 +25,7 @@ Services:
 - Keycloak (dev OIDC): http://localhost:8902 (`admin` / `admin`)
 
 **Signing in:** open the frontend, click _Sign in_, and use a seeded test user
-(`agent@collectivite.fr` / `transfers`). Dev runs the real OIDC flow against a
+(`user1@example.local` / `user1`). Dev runs the real OIDC flow against a
 local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/authentication.md).
 
 ## Configurable limits

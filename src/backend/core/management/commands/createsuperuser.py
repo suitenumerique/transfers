@@ -37,6 +37,8 @@ class Command(BaseCommand):
                 user = UserModel(admin_email=email)
                 message = "Superuser created successfully."
             else:
+                # The admin login matches on admin_email, not email.
+                user.admin_email = email
                 message = "User already existed and was upgraded to superuser."
         else:
             if user.is_superuser and user.is_staff:

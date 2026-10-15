@@ -11,10 +11,15 @@ code flow, just against a self-hosted provider.
 2. Open http://localhost:8980 and click **Sign in**.
 3. Log in with one of the seeded test users:
 
-   | Username / email           | Password     |
-   |----------------------------|--------------|
-   | `agent@collectivite.fr`    | `transfers` |
-   | `agent2@collectivite.fr`   | `transfers` |
+   | Username / email        | Password |
+   |-------------------------|----------|
+   | `user1@example.local`   | `user1`  |
+   | `user2@example.local`   | `user2`  |
+   | `user3@example.local`   | `user3`  |
+
+   `make superuser` creates two superusers for the Django admin at
+   http://localhost:8981/admin: `admin@admin.local` / `admin`, and
+   `user1@example.local` / `user1`.
 
 That's it — you land back in the app, authenticated. Logout works the same way
 (it clears both the Django session and the Keycloak SSO session).

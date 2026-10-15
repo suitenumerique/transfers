@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "22.x"
+    "node": "24.x",
+    "npm": ">=11.16.0"
   },
   "scripts": {
     "dev": "vite",
