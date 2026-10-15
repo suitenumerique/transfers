@@ -1,6 +1,6 @@
 ARG FRONTEND_IMAGE=frontend-build-output
 
-FROM node:22-alpine AS frontend-deps
+FROM node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-deps
 
 ENV npm_config_cache=/tmp/npm-cache
 
@@ -11,7 +11,7 @@ RUN mkdir -p /tmp/npm-cache && chown -R ${DOCKER_USER} /tmp/npm-cache /home/fron
 
 # Install deps and run all npm commands as the user running the container
 USER ${DOCKER_USER}
-COPY --chown=${DOCKER_USER} package*.json ./
+COPY --chown=${DOCKER_USER} package*.json .npmrc ./
 # npm ci installs exactly what package-lock.json pins. The cache is cleaned in
 # the same layer so the downloaded tarballs don't ship in the image. (A
 # BuildKit cache mount would keep them across rebuilds, but its root-owned
