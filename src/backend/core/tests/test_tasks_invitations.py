@@ -180,8 +180,8 @@ def test_download_receipt_is_sent_once_to_the_owner():
 def test_download_receipt_failure_releases_both_stamps_and_retries():
     """A relay error must not burn the recipient's single receipt, nor
     pass as a successful task: both claims go back to NULL (so a later
-    download can re-arm) and the task retries. Called directly, Celery's
-    ``retry`` re-raises the original error instead of scheduling."""
+    download can re-arm) and the task retries: it re-raises, and the
+    broker's retry policy schedules the next attempt."""
     transfer = TransferFactory(sharing_mode=SharingMode.EMAIL, notify_on_download=True)
     recipient = TransferRecipient.objects.create(
         transfer=transfer,

@@ -246,7 +246,7 @@ class TransferViewSet(
             transfer.save(update_fields=["notifications_completed_at", "updated_at"])
             log_agent_event(transfer, TransferEventType.INVITATIONS_RESENT, request)
             transaction.on_commit(
-                lambda: send_recipient_invitations_task.delay(str(transfer.id))
+                lambda: send_recipient_invitations_task.send(str(transfer.id))
             )
 
         serializer = TransferDetailSerializer(transfer)

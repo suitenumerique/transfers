@@ -9,3 +9,11 @@ class CoreConfig(AppConfig):
     name = "core"
     app_label = "core"
     verbose_name = "Transfers core"
+
+    def ready(self):
+        """Register every task actor, and the cron schedules the scheduler
+        reads, in every process."""
+        # pylint: disable=import-outside-toplevel,unused-import
+        import core.tasks  # noqa: F401
+
+        import transfers.health  # noqa: F401

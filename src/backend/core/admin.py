@@ -5,6 +5,9 @@ from django.contrib.auth import admin as auth_admin
 
 from . import models
 
+# Adds a link to the task-queue dashboard on the admin home page.
+admin.site.index_template = "admin/worker_dashboard_index.html"
+
 
 @admin.register(models.User)
 class UserAdmin(auth_admin.UserAdmin):

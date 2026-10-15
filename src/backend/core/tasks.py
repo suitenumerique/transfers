@@ -1,4 +1,4 @@
-"""Celery tasks for the transfers core app."""
+"""Background tasks for the transfers core app."""
 
 import json
 import logging
@@ -11,9 +11,10 @@ from django.db import transaction
 from django.utils import timezone
 
 import botocore
+import dramatiq
 import requests
 import sentry_sdk
-from celery import shared_task
+from dramatiq_crontab import cron
 
 from core.enums import (
     ActorType,
@@ -35,6 +36,9 @@ from core.services.s3_sweep import run_orphan_sweep
 from core.services.scan_auth import mint_request_token
 from core.services.scan_budget import scan_wait_seconds
 
+# Installs the broker, so the actors below bind to it.
+import transfers.broker  # noqa: F401  # pylint: disable=unused-import
+
 logger = logging.getLogger(__name__)
 
 # Chunk size used when streaming from a remote source (Drive) into S3's
@@ -45,7 +49,9 @@ logger = logging.getLogger(__name__)
 _DRIVE_IMPORT_CHUNK_SIZE = 16 * 1024 * 1024
 
 
-@shared_task
+# The periodic tasks fire at staggered minutes, so they never all start at once.
+@cron("0 * * * *")  # every hour, at :00
+@dramatiq.actor
 def deactivate_expired_transfers_task():
     """Deactivate transfers whose expiry date has passed.
 
@@ -82,7 +88,8 @@ def deactivate_expired_transfers_task():
         logger.info("Deactivated %d expired transfer(s).", count)
 
 
-@shared_task
+@cron("45 0 * * *")  # every day at 00:45
+@dramatiq.actor
 def sweep_orphan_s3_storage_task():
     """Daily safety net for S3 leaks not caught by the per-row cleanup paths.
 
@@ -104,7 +111,8 @@ def sweep_orphan_s3_storage_task():
         )
 
 
-@shared_task
+@cron("30 */6 * * *")  # every 6 hours, at :30
+@dramatiq.actor
 def cleanup_abandoned_drafts_task():
     """Clean up drafts whose user never pressed "Create link".
 
@@ -144,7 +152,9 @@ def cleanup_abandoned_drafts_task():
         logger.info("Cleaned up %d abandoned draft(s).", count)
 
 
-@shared_task(acks_late=True, reject_on_worker_lost=True)
+# A 20 GB file can take over an hour from Drive; dramatiq's default limit
+# is 10 minutes.
+@dramatiq.actor(time_limit=2 * 60 * 60 * 1000)
 def import_drive_file_task(transfer_file_id):
     """Stream a public Drive permalink into our S3 multipart, encrypting it.
 
@@ -154,13 +164,13 @@ def import_drive_file_task(transfer_file_id):
     the key parked on the draft before enqueueing — so a Drive file is
     indistinguishable from a browser-encrypted upload and the recipient SW
     decrypts it the same way. The key is read from ``tf.draft.encryption_key``
-    rather than passed as a Celery kwarg, keeping it out of task metadata
-    and broker payloads.
+    rather than passed as a task argument, keeping it out of the broker
+    payload.
 
-    ``acks_late`` + ``reject_on_worker_lost``: the message stays in the
-    queue until the task returns, and is redelivered to another worker if
-    the current one dies mid-execution (OOM kill, container restart).
-    The idempotency check at the top handles the redelivery cleanly.
+    The message is acknowledged only once the task returns; if the worker
+    dies mid-execution (OOM kill, container restart), the broker hands it to
+    another worker once its time limit has passed. The idempotency check at
+    the top handles the redelivery cleanly.
 
     On success ``upload_completed_at`` is set and the row stays PENDING, so the
     finalize gate submits its scan. On failure ``import_failed_at`` is set and
@@ -409,8 +419,8 @@ def _scan_encryption_params(tf):
     }
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def submit_scan_task(self, transfer_file_id):
+@dramatiq.actor(max_retries=3, min_backoff=30_000, max_backoff=30_000)
+def submit_scan_task(transfer_file_id):
     """Submit a completed file to the file-scanner service for a virus scan.
 
     Fire-and-forget from the caller's view: we hand the scanner a presigned
@@ -506,7 +516,7 @@ def submit_scan_task(self, transfer_file_id):
         logger.warning(
             "Scan submission failed for TransferFile %s: %s", transfer_file_id, exc
         )
-        raise self.retry(exc=exc) from exc
+        raise
 
     job_id = ""
     try:
@@ -520,7 +530,8 @@ def submit_scan_task(self, transfer_file_id):
     logger.info("Submitted scan for TransferFile %s (job %s)", transfer_file_id, job_id)
 
 
-@shared_task
+@cron("2-59/5 * * * *")  # every 5 minutes, at :02, :07…
+@dramatiq.actor
 def reap_stale_pending_scans_task():
     """Re-submit scans that never came back (lost webhook, dead worker),
     otherwise the file stays PENDING — and undownloadable — forever.
@@ -561,7 +572,7 @@ def reap_stale_pending_scans_task():
         if not claimed:
             continue
         try:
-            submit_scan_task.delay(str(file_id))
+            submit_scan_task.send(str(file_id))
         except Exception:
             # Broker rejected us: give the stamp back so the next tick sees
             # the row again instead of waiting a full budget.
@@ -575,7 +586,8 @@ def reap_stale_pending_scans_task():
         logger.info("Re-submitted %d stale pending scan(s).", count)
 
 
-@shared_task
+@cron("15 * * * *")  # every hour, at :15
+@dramatiq.actor
 def delete_pending_transfer_files_task():
     """Wipe S3 objects for transfers whose grace period has elapsed.
 
@@ -650,7 +662,7 @@ def delete_pending_transfer_files_task():
         logger.info("Deleted files of %d transfer(s).", count)
 
 
-@shared_task
+@dramatiq.actor
 def send_recipient_invitations_task(transfer_id):
     """Send invitation emails to every recipient of ``transfer_id`` that
     doesn't have an ``email_sent_at`` yet.
@@ -749,8 +761,9 @@ def send_recipient_invitations_task(transfer_id):
     transfer.save(update_fields=["notifications_completed_at", "updated_at"])
 
 
-@shared_task(bind=True, max_retries=3)
-def send_download_receipt_task(self, transfer_id, recipient_id):
+# Backoff doubles from about a minute: roughly 1, 2 then 4 min.
+@dramatiq.actor(max_retries=3, min_backoff=30_000, max_backoff=480_000)
+def send_download_receipt_task(transfer_id, recipient_id):
     """Email the sender about ``recipient_id``'s downloads.
 
     Enqueued by the download view in two situations (see
@@ -781,7 +794,7 @@ def send_download_receipt_task(self, transfer_id, recipient_id):
     )
     try:
         send_download_receipt(recipient.transfer, recipient)
-    except Exception as exc:
+    except Exception:
         logger.exception(
             "Failed to send download receipt for transfer %s (recipient %s)",
             transfer_id,
@@ -790,4 +803,4 @@ def send_download_receipt_task(self, transfer_id, recipient_id):
         TransferRecipient.objects.filter(id=recipient_id).update(
             download_notified_at=None, delayed_receipt_armed_at=None
         )
-        raise self.retry(exc=exc, countdown=60 * 2**self.request.retries) from exc
+        raise

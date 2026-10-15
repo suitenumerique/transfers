@@ -159,15 +159,15 @@ def _maybe_send_download_receipt(transfer, recipient):
 
     args = (str(transfer.id), str(recipient.id))
     if len(downloaded) >= file_count:
-        transaction.on_commit(lambda: send_download_receipt_task.delay(*args))
+        transaction.on_commit(lambda: send_download_receipt_task.send(*args))
         return
     armed = models.TransferRecipient.objects.filter(
         id=recipient.id, delayed_receipt_armed_at__isnull=True
     ).update(delayed_receipt_armed_at=timezone.now())
     if armed:
         transaction.on_commit(
-            lambda: send_download_receipt_task.apply_async(
-                args=args, countdown=settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY
+            lambda: send_download_receipt_task.send_with_options(
+                args=args, delay=settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY * 1000
             )
         )
 

@@ -6,7 +6,7 @@ Initially forked from [suitenumerique/messages](https://github.com/suitenumeriqu
 
 ## Stack
 
-- **Backend**: Django + DRF, PostgreSQL, Celery/Redis, S3 (RustFS in dev)
+- **Backend**: Django + DRF, PostgreSQL, Dramatiq/Redis, S3 (RustFS in dev)
 - **Frontend**: React (Vite + TanStack Router)
 - **Auth**: ProConnect via OIDC (a local Keycloak stands in for it in dev)
 
@@ -119,16 +119,26 @@ and which files were taken. Sent by `send_download_receipt_task`;
 at-most-once via `TransferRecipient.download_notified_at`, so whichever
 trigger fires first wins.
 
-## Background jobs (Celery beat)
+## Background jobs
 
-Schedule is defined in `src/backend/transfers/celery_app.py`.
+Tasks run on Dramatiq, over a Redis Streams broker (`WORKER_BROKER_URL`,
+Redis >= 7, with no eviction). `python worker.py` runs the worker and, as a
+forked sidecar, the periodic scheduler: every worker runs one, and a Redis
+lock lets a single one fire the schedule. The schedule is the `@cron`
+decorators in `src/backend/core/tasks.py`. The queue dashboard is in the
+Django admin, at `/admin/worker-dashboard/` (superusers only).
 
 | Task | Cadence | Effect |
 |---|---|---|
-| `expire_transfers_task` | hourly (3600 s) | Flips `ACTIVE → EXPIRED` past `expires_at`, deletes S3 files |
-| `cleanup_abandoned_drafts_task` | every 6 h (21600 s) | Drops drafts older than 24 h |
-| `sweep_orphan_s3_storage_task` | daily (86400 s) | Safety net — should report 0; non-zero signals a leak in a per-row path |
+| `deactivate_expired_transfers_task` | hourly, at :00 | Flips transfers past `expires_at` to pending file deletion |
+| `delete_pending_transfer_files_task` | hourly, at :15 | Wipes the S3 files of transfers past their grace period |
+| `cleanup_abandoned_drafts_task` | every 6 h, at :30 | Drops drafts older than 24 h |
+| `sweep_orphan_s3_storage_task` | daily, at 00:45 | Safety net — should report 0; non-zero signals a leak in a per-row path |
+| `reap_stale_pending_scans_task` | every 5 min, from :02 | Re-submits scans whose result never came back |
 | `send_recipient_invitations_task` | on-demand | Triggered by `finalize` (email mode) and `resend` |
+
+`python worker.py --ping` is the worker's healthcheck: it sends a ping on a
+queue only this container consumes and exits 0 once the answer comes back.
 
 ## End-to-end encryption
 

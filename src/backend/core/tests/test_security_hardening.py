@@ -334,7 +334,7 @@ class TestRecipientQuota:
     def test_within_quota_accepted(self, user, authenticated_client, settings):
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("2/day")
         draft = self._finalizable_draft(user)
-        with patch("core.tasks.send_recipient_invitations_task.delay"):
+        with patch("core.tasks.send_recipient_invitations_task.send"):
             response = self._finalize(
                 authenticated_client, draft, ["a@example.org", "b@example.org"]
             )
@@ -346,7 +346,7 @@ class TestRecipientQuota:
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("1/day")
         _created(UserFactory(), 1)
         draft = self._finalizable_draft(user)
-        with patch("core.tasks.send_recipient_invitations_task.delay"):
+        with patch("core.tasks.send_recipient_invitations_task.send"):
             response = self._finalize(authenticated_client, draft, ["b@example.org"])
         assert response.status_code == 200, response.data
 
@@ -354,7 +354,7 @@ class TestRecipientQuota:
         self, user, authenticated_client, settings
     ):
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = RATE("2/day")
-        with patch("core.tasks.send_recipient_invitations_task.delay"):
+        with patch("core.tasks.send_recipient_invitations_task.send"):
             response = self._finalize(
                 authenticated_client,
                 self._finalizable_draft(user),
@@ -378,7 +378,7 @@ class TestRecipientQuota:
     ):
         settings.THROTTLE_USER_OUTBOUND_RECIPIENTS = None
         draft = self._finalizable_draft(user)
-        with patch("core.tasks.send_recipient_invitations_task.delay"):
+        with patch("core.tasks.send_recipient_invitations_task.send"):
             response = self._finalize(
                 authenticated_client, draft, ["a@example.org", "b@example.org"]
             )
@@ -414,7 +414,7 @@ def test_concurrent_finalizes_share_one_quota(settings):
             connection.close()
 
     threads = [threading.Thread(target=finalize, args=(d,)) for d in drafts]
-    with patch("core.tasks.send_recipient_invitations_task.delay"):
+    with patch("core.tasks.send_recipient_invitations_task.send"):
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -470,7 +470,7 @@ def test_hard_delete_is_journaled_with_its_actor(user, authenticated_client):
 @pytest.mark.django_db
 def test_resend_is_journaled(user, authenticated_client):
     transfer = TransferFactory(owner=user, sharing_mode=SharingMode.EMAIL)
-    with patch("core.tasks.send_recipient_invitations_task.delay"):
+    with patch("core.tasks.send_recipient_invitations_task.send"):
         response = authenticated_client.post(f"{API}/transfers/{transfer.id}/resend/")
     assert response.status_code == 200
     assert models.TransferEvent.objects.filter(
