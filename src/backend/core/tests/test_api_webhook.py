@@ -394,7 +394,7 @@ class TestFinalizeScanGate:
         # reset-and-retry. The file is untouched and no scan is re-submitted —
         # the user retries on the form (the /rescan/ path) instead.
         draft, f = self._draft_with_file(user, ScanStatus.ERROR, "transient")
-        with patch("core.api.viewsets.draft.submit_scan_task.delay") as submit:
+        with patch("core.api.viewsets.draft.submit_scan_task.send") as submit:
             resp = self._finalize(authenticated_client, draft.id)
         assert resp.status_code == 400
         assert resp.data["reason"] == "scan_error"

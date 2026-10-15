@@ -805,7 +805,7 @@ class TestDraftEncryption:
         settings.SCAN_ENABLED = True
         initiate = _initiate_with_file(authenticated_client, plaintext_size=1024)
         with (
-            patch("core.api.viewsets.draft.submit_scan_task.delay") as scan_mock,
+            patch("core.api.viewsets.draft.submit_scan_task.send") as scan_mock,
             # on_commit callbacks don't run inside the test transaction, so
             # without firing them inline this assertion would pass vacuously.
             patch(
@@ -937,7 +937,7 @@ class TestDraftEncryption:
             # Run the task inline instead of stubbing it out — the point is what
             # reaches the scanner, not merely that something was enqueued.
             patch(
-                "core.api.viewsets.draft.submit_scan_task.delay",
+                "core.api.viewsets.draft.submit_scan_task.send",
                 side_effect=submit_scan_task,
             ),
             patch(
@@ -1003,7 +1003,7 @@ class TestDraftEncryption:
 
         with (
             patch(
-                "core.api.viewsets.draft.submit_scan_task.delay",
+                "core.api.viewsets.draft.submit_scan_task.send",
                 side_effect=submit_scan_task,
             ),
             patch(
@@ -1067,7 +1067,7 @@ class TestDraftEncryption:
 
         # Once finalize hands it to the scanner, the flag flips.
         with (
-            patch("core.api.viewsets.draft.submit_scan_task.delay"),
+            patch("core.api.viewsets.draft.submit_scan_task.send"),
             patch(
                 "core.api.viewsets.draft.transaction.on_commit",
                 side_effect=lambda fn: fn(),
@@ -1094,7 +1094,7 @@ class TestDraftEncryption:
         )
 
         with (
-            patch("core.api.viewsets.draft.submit_scan_task.delay") as scan_mock,
+            patch("core.api.viewsets.draft.submit_scan_task.send") as scan_mock,
             patch(
                 "core.api.viewsets.draft.transaction.on_commit",
                 side_effect=lambda fn: fn(),
@@ -1121,7 +1121,7 @@ class TestDraftEncryption:
             initiate["transfer_file_id"],
         )
 
-        with patch("core.api.viewsets.draft.submit_scan_task.delay") as scan_mock:
+        with patch("core.api.viewsets.draft.submit_scan_task.send") as scan_mock:
             resp = _finalize(
                 authenticated_client, initiate["draft_id"], confidential=True
             )
@@ -1180,7 +1180,7 @@ class TestDraftEncryption:
             initiate["draft_id"],
             initiate["transfer_file_id"],
         )
-        with patch("core.tasks.send_recipient_invitations_task.delay"):
+        with patch("core.tasks.send_recipient_invitations_task.send"):
             resp = _finalize(
                 authenticated_client,
                 initiate["draft_id"],
@@ -1243,7 +1243,7 @@ class TestDraftEncryption:
         )
         assert resp.status_code == 201, resp.data
         with patch(
-            "core.api.viewsets.draft.import_drive_file_task.delay"
+            "core.api.viewsets.draft.import_drive_file_task.send"
         ) as import_mock:
             from django.test import TestCase as _TC
 
@@ -1252,7 +1252,7 @@ class TestDraftEncryption:
         assert finalize.status_code == 202, finalize.data
         assert finalize.data["reason"] == "drive_importing"
         import_mock.assert_called_once()
-        # Only the file id crosses Celery — the key is parked on the draft
+        # Only the file id crosses the broker — the key is parked on the draft
         # so the worker can read it from the DB without exposing it in task
         # metadata or broker payloads.
         args = import_mock.call_args.args
@@ -1279,7 +1279,7 @@ class TestDraftEncryption:
 
         with (
             patch(
-                "core.api.viewsets.draft.import_drive_file_task.delay",
+                "core.api.viewsets.draft.import_drive_file_task.send",
                 side_effect=RuntimeError("broker down"),
             ),
             pytest.raises(RuntimeError),
@@ -1317,7 +1317,7 @@ class TestDraftEncryption:
 
         with (
             patch(
-                "core.api.viewsets.draft.import_drive_file_task.delay",
+                "core.api.viewsets.draft.import_drive_file_task.send",
                 side_effect=RuntimeError("broker down"),
             ) as delay,
             pytest.raises(RuntimeError),
@@ -1360,7 +1360,7 @@ class TestDraftEncryption:
 
         with (
             patch(
-                "core.api.viewsets.draft.import_drive_file_task.delay",
+                "core.api.viewsets.draft.import_drive_file_task.send",
                 side_effect=refuse_first,
             ),
             pytest.raises(RuntimeError),
@@ -1397,7 +1397,7 @@ class TestDraftEncryption:
         from django.test import TestCase as _TC
 
         with patch(
-            "core.api.viewsets.draft.import_drive_file_task.delay"
+            "core.api.viewsets.draft.import_drive_file_task.send"
         ) as import_mock:
             with _TC.captureOnCommitCallbacks(execute=True):
                 first = _finalize(authenticated_client, draft_id)
@@ -1626,7 +1626,7 @@ class TestDraftAddFileFromDrive:
         assert tf.scan_status == ScanStatus.PENDING
 
         # Import is deferred to finalize — nothing enqueued at add-file.
-        mock_task.delay.assert_not_called()
+        mock_task.send.assert_not_called()
 
     def test_rejects_file_too_large(self, authenticated_client, settings):
         settings.TRANSFER_MAX_FILE_SIZE = 1024
@@ -1939,7 +1939,7 @@ class TestNoScanBeforeFinalize:
 
     def test_complete_upload_submits_nothing(self, patched_s3, authenticated_client):
         with (
-            patch("core.api.viewsets.draft.submit_scan_task.delay") as submit,
+            patch("core.api.viewsets.draft.submit_scan_task.send") as submit,
             # Without this the submit is scheduled on_commit and never fires in
             # the test transaction — assert_not_called() would pass no matter
             # what the code does.
@@ -1970,7 +1970,7 @@ class TestNoScanBeforeFinalize:
         )
         settings.SCAN_PENDING_REAP_MINUTES = 15
 
-        with patch("core.tasks.submit_scan_task.delay") as submit:
+        with patch("core.tasks.submit_scan_task.send") as submit:
             reap_stale_pending_scans_task()
         submit.assert_not_called()
 
@@ -1985,7 +1985,7 @@ class TestNoScanBeforeFinalize:
 
         # The endpoint really does enqueue the task...
         with (
-            patch("core.api.viewsets.draft.submit_scan_task.delay") as submit,
+            patch("core.api.viewsets.draft.submit_scan_task.send") as submit,
             patch(
                 "core.api.viewsets.draft.transaction.on_commit",
                 side_effect=lambda fn: fn(),
@@ -2053,7 +2053,7 @@ class TestReapStalePendingScans:
 
         settings.SCAN_ENABLED = True
         settings.SCAN_PENDING_REAP_MINUTES = 15
-        with patch("core.tasks.submit_scan_task.delay") as submit:
+        with patch("core.tasks.submit_scan_task.send") as submit:
             reap_stale_pending_scans_task()
         return submit
 
@@ -2139,7 +2139,7 @@ class TestReapStalePendingScans:
 
         with (
             patch("core.tasks.scan_wait_seconds", side_effect=rearm_meanwhile),
-            patch("core.tasks.submit_scan_task.delay") as submit,
+            patch("core.tasks.submit_scan_task.send") as submit,
         ):
             reap_stale_pending_scans_task()
         submit.assert_not_called()
@@ -2153,7 +2153,7 @@ class TestReapStalePendingScans:
         settings.SCAN_PENDING_REAP_MINUTES = 15
         tf = self._file(user, submitted_ago_minutes=60)
         before = tf.scan_submitted_at
-        with patch("core.tasks.submit_scan_task.delay", side_effect=OSError("broker")):
+        with patch("core.tasks.submit_scan_task.send", side_effect=OSError("broker")):
             with pytest.raises(OSError):
                 reap_stale_pending_scans_task()
         tf.refresh_from_db()
@@ -2174,7 +2174,7 @@ class TestReapStalePendingScans:
 
 @pytest.mark.django_db
 class TestImportDriveFileTask:
-    """Unit tests for the celery task ``import_drive_file_task``."""
+    """Unit tests for the background task ``import_drive_file_task``."""
 
     def _make_file(self, user, plaintext_size=100, filename="d.jpg"):
         from core.tasks import import_drive_file_task
@@ -2584,9 +2584,9 @@ class TestDraftRescan:
         return client.post(f"{DRAFTS_URL}{draft_id}/rescan/")
 
     def _patched(self):
-        # Fire on_commit callbacks inline so the .delay assertion is testable.
+        # Fire on_commit callbacks inline so the .send assertion is testable.
         return (
-            patch("core.api.viewsets.draft.submit_scan_task.delay"),
+            patch("core.api.viewsets.draft.submit_scan_task.send"),
             patch(
                 "core.api.viewsets.draft.transaction.on_commit",
                 side_effect=lambda fn: fn(),

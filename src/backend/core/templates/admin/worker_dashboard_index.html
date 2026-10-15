@@ -1,0 +1,32 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% comment %}
+Adds a "Task queue" panel to the admin home linking to the worker dashboard.
+Named differently from admin/index.html so {% extends %} resolves to Django's
+real template; wired up via admin.site.index_template in core/admin.py.
+
+The panel must live *inside* #content-main (the main column). Django's index
+lays out #content as two columns — #content-main and the #content-related
+sidebar ("Recent actions"). Appending a sibling module between them (the naive
+{{ block.super }} approach) inserts a third child into that row and pushes the
+sidebar down, so we re-render #content-main ourselves — reusing Django's own
+app_list include — and add the panel at the end of it.
+{% endcomment %}
+
+{% block content %}
+<div id="content-main">
+  {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+  <div class="module" id="worker-dashboard-module">
+    <table>
+      <caption>{% translate 'Task queue' %}</caption>
+      <tr>
+        <th scope="row">
+          <a href="{% url 'worker-dashboard' path='' %}">{% translate 'Worker dashboard' %}</a>
+        </th>
+        <td>{% translate 'Monitor queues, workers and failed tasks' %}</td>
+      </tr>
+    </table>
+  </div>
+</div>
+{% endblock %}

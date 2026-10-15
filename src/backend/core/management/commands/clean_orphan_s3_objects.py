@@ -1,7 +1,7 @@
 """Thin CLI over ``core.services.s3_sweep.run_orphan_sweep``.
 
 Two passes (objects + multipart uploads), dry-run by default. The actual
-sweep policy lives in the service module so the daily Celery task uses
+sweep policy lives in the service module so the daily scheduled task uses
 the same code path.
 """
 

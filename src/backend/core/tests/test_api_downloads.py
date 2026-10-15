@@ -269,12 +269,12 @@ class TestRecipientAttribution:
         assert event.recipient_id == recipient.id
 
     @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
-    @patch("core.tasks.send_download_receipt_task.apply_async")
-    @patch("core.tasks.send_download_receipt_task.delay")
+    @patch("core.tasks.send_download_receipt_task.send_with_options")
+    @patch("core.tasks.send_download_receipt_task.send")
     def test_receipt_queued_once_every_file_is_downloaded(
         self,
         delay,
-        apply_async,
+        send_with_options,
         _sign,
         api_client,
         transfer_with_file,
@@ -307,14 +307,14 @@ class TestRecipientAttribution:
         # Anonymous download of the first file: nothing attributed, no receipt.
         get(f"{base}/{first.id}/download/")
         assert delay.call_count == 0
-        assert apply_async.call_count == 0
+        assert send_with_options.call_count == 0
 
         # First attributed download: one of two files → arm the delayed
         # partial receipt with the configured countdown, nothing immediate.
         get(f"{base}/{first.id}/download/?r={recipient.token}")
         assert delay.call_count == 0
-        apply_async.assert_called_once_with(
-            args=(str(t.id), str(recipient.id)), countdown=1234
+        send_with_options.assert_called_once_with(
+            args=(str(t.id), str(recipient.id)), delay=1_234_000
         )
 
         recipient.refresh_from_db()
@@ -323,11 +323,11 @@ class TestRecipientAttribution:
         # Any further incomplete download finds the claim taken: no second
         # timer, whether it's the same file again or another one.
         get(f"{base}/{first.id}/download/?r={recipient.token}")
-        assert apply_async.call_count == 1
+        assert send_with_options.call_count == 1
 
         get(f"{base}/{second.id}/download/?r={recipient.token}")
         delay.assert_called_once_with(str(t.id), str(recipient.id))
-        assert apply_async.call_count == 1
+        assert send_with_options.call_count == 1
 
         # Re-downloading after the receipt was stamped must not re-queue.
         recipient.download_notified_at = timezone.now()
@@ -336,7 +336,7 @@ class TestRecipientAttribution:
         assert delay.call_count == 1
 
     @patch("core.api.viewsets.download.sign_download_url", return_value="https://s3/x")
-    @patch("core.tasks.send_download_receipt_task.delay")
+    @patch("core.tasks.send_download_receipt_task.send")
     def test_receipt_not_queued_without_opt_in(
         self, delay, _sign, api_client, transfer_with_file
     ):
