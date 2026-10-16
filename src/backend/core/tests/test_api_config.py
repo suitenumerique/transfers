@@ -103,6 +103,39 @@ class TestConfigView:
         assert response.status_code == 200
         assert response.data["TRANSFER_CONFIDENTIAL_ENABLED"] is enabled
 
+    def test_branding_defaults_are_neutral(self, api_client, settings):
+        """An instance that configures nothing must advertise no operator.
+
+        These three keys are what used to be compiled in: the theme was
+        hard-wired to ``anct-light``, the ProConnect button always rendered
+        and "Learn more" always pointed at La Suite territoriale. A default
+        install has to come out branding-free.
+        """
+        settings.FRONTEND_THEME = None
+        settings.FRONTEND_PROCONNECT_BUTTON = False
+        settings.FRONTEND_LEARN_MORE_URL = ""
+
+        response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        # Empty, not "anct-light": the frontend maps this to the neutral theme.
+        assert response.data["FRONTEND_THEME"] == ""
+        assert response.data["FRONTEND_PROCONNECT_BUTTON"] is False
+        assert response.data["FRONTEND_LEARN_MORE_URL"] == ""
+
+    def test_branding_keys_follow_settings(self, api_client, settings):
+        """An operator that opts in gets its values through verbatim."""
+        settings.FRONTEND_THEME = "anct-light"
+        settings.FRONTEND_PROCONNECT_BUTTON = True
+        settings.FRONTEND_LEARN_MORE_URL = "https://example.test/about"
+
+        response = api_client.get(CONFIG_URL)
+
+        assert response.status_code == 200
+        assert response.data["FRONTEND_THEME"] == "anct-light"
+        assert response.data["FRONTEND_PROCONNECT_BUTTON"] is True
+        assert response.data["FRONTEND_LEARN_MORE_URL"] == "https://example.test/about"
+
     def test_returns_transfer_limits(self, api_client):
         """Config must always include transfer limit settings."""
         response = api_client.get(CONFIG_URL)
