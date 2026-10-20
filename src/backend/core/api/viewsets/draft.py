@@ -560,10 +560,10 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
     def _park_encryption_key(self, draft, metadata, confidential):
         """Park the key on the draft so background workers (Drive import,
         scan submit) read it from the DB rather than receiving it as a
-        Celery kwarg — which would surface it in task metadata and broker
-        payloads. Confidential drafts never see the key, so this is a
-        no-op for them. The row (and the key with it) is discarded when
-        the Transfer is created at the end of ``finalize``."""
+        task argument — which would surface it in the broker payload.
+        Confidential drafts never see the key, so this is a no-op for them.
+        The row (and the key with it) is discarded when the Transfer is
+        created at the end of ``finalize``."""
         if not confidential and not draft.encryption_key:
             draft.encryption_key = metadata["encryption_key"]
             draft.save(update_fields=["encryption_key", "updated_at"])
@@ -589,7 +589,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         failures = []
         for file_id in file_ids:
             try:
-                import_drive_file_task.delay(file_id)
+                import_drive_file_task.send(file_id)
             except Exception as exc:
                 failures.append((file_id, exc))
         if failures:
@@ -694,7 +694,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             ):
                 f.scan_submitted_at = timezone.now()
                 f.save(update_fields=["scan_submitted_at", "updated_at"])
-                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.delay(fid))
+                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.send(fid))
 
     def _scan_gate(self, files):
         """Classify every file by scan status. A transfer is created only
@@ -805,7 +805,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             from core.tasks import send_recipient_invitations_task
 
             transaction.on_commit(
-                lambda: send_recipient_invitations_task.delay(str(transfer.id))
+                lambda: send_recipient_invitations_task.send(str(transfer.id))
             )
 
         draft.delete()
@@ -876,7 +876,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 )
                 if not claimed:
                     continue
-                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.delay(fid))
+                transaction.on_commit(lambda fid=str(f.id): submit_scan_task.send(fid))
                 rescanned.append(str(f.id))
 
         logger.info(

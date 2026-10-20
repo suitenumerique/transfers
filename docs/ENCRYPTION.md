@@ -90,8 +90,8 @@ additionally resist a full backend compromise (the key never reaches us).
 **In scope (confidential only)**
 
 - A read-only database snapshot (confidential transfers store no key).
-- A compromised Redis broker or Celery worker (no fragment ever reaches
-  Celery kwargs, task payloads, or the outbound email body — email
+- A compromised Redis broker or task worker (no fragment ever reaches
+  task arguments, broker payloads, or the outbound email body — email
   confidential transfers ship a bare link).
 - A full backend compromise short of the frontend: with only ciphertext
   (S3) and no key anywhere, the data stays unreadable.

@@ -74,7 +74,7 @@ def files_downloaded_by(transfer_id, recipient_id) -> set[str]:
 
 def activity_for(transfer_id, recipient_id) -> RecipientActivity:
     """One recipient's folded activity (empty record if none). Accepts the
-    id as a UUID or its string form — Celery task args arrive as strings,
-    while the map is keyed by the UUIDs the query returns."""
+    id as a UUID or its string form, as serialized ids arrive; the map is
+    keyed by the UUIDs the query returns."""
     key = recipient_id if isinstance(recipient_id, UUID) else UUID(str(recipient_id))
     return activity_by_recipient(transfer_id).get(key) or RecipientActivity()

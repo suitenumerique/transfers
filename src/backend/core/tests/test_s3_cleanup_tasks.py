@@ -1,4 +1,4 @@
-"""Integration tests — S3 cleanup driven by Celery tasks.
+"""Integration tests — S3 cleanup driven by background tasks.
 
 Same contract as ``test_s3_cleanup_drafts.py``: each test runs a real
 task end-to-end against a moto-backed bucket and asserts the bucket is
