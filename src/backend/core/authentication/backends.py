@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib import auth
 from django.core.exceptions import SuspiciousOperation
 
+import requests
 from lasuite.oidc_login.backends import (
     OIDCAuthenticationBackend as LaSuiteOIDCAuthenticationBackend,
 )
@@ -48,6 +49,12 @@ class OIDCAuthenticationBackend(LaSuiteOIDCAuthenticationBackend):
         except EntitlementsUnavailableError:
             logger.warning("Entitlements service unavailable during login")
             return self._fail_login(request, LOGIN_ERROR_UNAVAILABLE)
+        except requests.RequestException as exc:
+            # The provider timed out or refused: a failed login, not a 500.
+            logger.warning(
+                "OIDC provider unreachable during login: %s", type(exc).__name__
+            )
+            return None
 
     @staticmethod
     def _fail_login(request, reason):

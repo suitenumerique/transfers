@@ -647,6 +647,15 @@ class Base(Configuration):
     OIDC_RP_SCOPES = values.Value(
         "openid email", environ_name="OIDC_RP_SCOPES", environ_prefix=None
     )
+    # Seconds for the provider calls a login makes (token, JWKS, userinfo),
+    # read as OIDC_TIMEOUT. Without them a provider that stops answering
+    # holds a gunicorn worker until it is killed.
+    OIDC_CONNECT_TIMEOUT = values.FloatValue(
+        3, environ_name="OIDC_CONNECT_TIMEOUT", environ_prefix=None
+    )
+    OIDC_READ_TIMEOUT = values.FloatValue(
+        10, environ_name="OIDC_READ_TIMEOUT", environ_prefix=None
+    )
     OIDC_AUTHENTICATE_CLASS = "lasuite.oidc_login.views.OIDCAuthenticationRequestView"
     OIDC_CALLBACK_CLASS = "core.authentication.views.OIDCAuthenticationCallbackView"
     LOGIN_REDIRECT_URL = values.Value(
@@ -786,6 +795,11 @@ class Base(Configuration):
     @property
     def RELEASE(self):
         return get_release()
+
+    @property
+    def OIDC_TIMEOUT(self):
+        # mozilla-django-oidc hands it to requests as-is.
+        return (self.OIDC_CONNECT_TIMEOUT, self.OIDC_READ_TIMEOUT)
 
     @property
     def DRAMATIQ_CRONTAB(self):
