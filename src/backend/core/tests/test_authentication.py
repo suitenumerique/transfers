@@ -7,9 +7,11 @@ vs. the check could not run).
 import types
 from unittest import mock
 
+from django.conf import settings
 from django.test import override_settings
 
 import pytest
+import requests
 from lasuite.oidc_login.backends import (
     OIDCAuthenticationBackend as LaSuiteBackend,
 )
@@ -232,6 +234,31 @@ def test_authenticate_maps_outage_to_unavailable_reason():
     ):
         assert _backend_without_init().authenticate(request) is None
     assert request.session[OIDC_ACCESS_DENIED_SESSION_KEY] == LOGIN_ERROR_UNAVAILABLE
+
+
+def test_authenticate_fails_the_login_when_the_provider_is_unreachable():
+    """A provider timeout fails the login (generic error page), not a 500."""
+    request = _request()
+    with mock.patch.object(
+        LaSuiteBackend, "authenticate", side_effect=requests.ConnectTimeout("slow")
+    ):
+        assert _backend_without_init().authenticate(request) is None
+    assert OIDC_ACCESS_DENIED_SESSION_KEY not in request.session
+
+
+def test_provider_calls_are_bounded_by_the_timeout_settings():
+    """The token request carries (connect, read) from the settings."""
+    assert settings.OIDC_TIMEOUT == (
+        settings.OIDC_CONNECT_TIMEOUT,
+        settings.OIDC_READ_TIMEOUT,
+    )
+    response = mock.Mock(status_code=200)
+    response.json.return_value = {"id_token": "x", "access_token": "y"}
+    with mock.patch(
+        "mozilla_django_oidc.auth.requests.post", return_value=response
+    ) as post:
+        OIDCAuthenticationBackend().get_token({"code": "c"})
+    assert post.call_args.kwargs["timeout"] == settings.OIDC_TIMEOUT
 
 
 # --- The callback routes each reason to /errors?reason= ------------------------
