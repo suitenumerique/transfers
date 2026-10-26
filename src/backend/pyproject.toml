@@ -35,7 +35,7 @@ dependencies = [
     "django-redis==6.0.0",
     "django-storages==1.14.6",
     "django-timezone-field==7.2.1",
-    "djangorestframework==3.16.1",
+    "djangorestframework==3.18.2",
     "dramatiq==2.2.0",
     "dramatiq-crontab[sentry]==1.0.12",
     "dramatiq-redis-streams",  # pinned by rev via [tool.uv.sources]
