@@ -11,7 +11,7 @@ from django.utils import timezone
 import factory.fuzzy
 
 from core import models
-from core.enums import TransferStatus
+from core.enums import TransferDirection, TransferStatus
 
 
 class UserFactory(factory.django.DjangoModelFactory):
@@ -39,6 +39,30 @@ class TransferFactory(factory.django.DjangoModelFactory):
     # A Transfer row only exists post-finalize, so every instance carries
     # a public token by default. Override in tests that need a custom one.
     public_token = factory.LazyFunction(lambda: secrets.token_urlsafe(32))
+
+
+class DepositSpaceFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = models.DepositSpace
+
+    owner = factory.SubFactory(UserFactory)
+    name = factory.Faker("sentence", nb_words=3)
+    retention_days = factory.LazyFunction(
+        lambda: settings.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS
+    )
+
+
+class InboundTransferFactory(TransferFactory):
+    """A deposit on a space, as finalize creates it."""
+
+    direction = TransferDirection.INBOUND
+    deposit_space = factory.SubFactory(
+        DepositSpaceFactory, owner=factory.SelfAttribute("..owner")
+    )
+    depositor_name = factory.Faker("name")
+    depositor_email = factory.Faker("email")
+    encryption_chunk_size = factory.LazyFunction(lambda: settings.TRANSFER_CHUNK_SIZE)
+    encryption_key = "A" * 43
 
 
 class TransferDraftFactory(factory.django.DjangoModelFactory):

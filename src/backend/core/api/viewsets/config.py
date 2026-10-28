@@ -6,6 +6,8 @@ import rest_framework as drf
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework.permissions import AllowAny
 
+from core.services import deposits
+
 
 class ConfigView(drf.views.APIView):
     """API ViewSet for sharing public settings."""
@@ -46,6 +48,14 @@ class ConfigView(drf.views.APIView):
             # Lets the form hide the confidential toggle on instances that
             # opted out; finalize enforces the same flag server-side.
             "TRANSFER_CONFIDENTIAL_ENABLED": settings.TRANSFER_CONFIDENTIAL_ENABLED,
+            # Deposits: the cap on an anonymous send (a space serves its own),
+            # the retention a space may pick. INBOX_ENABLED shows the
+            # anonymous send page.
+            "DEPOSIT_MAX_TOTAL_SIZE": settings.DEPOSIT_MAX_TOTAL_SIZE,
+            "DEPOSIT_SPACE_RETENTION_CHOICES": settings.DEPOSIT_SPACE_RETENTION_CHOICES,
+            "DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS": settings.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS,
+            "INBOX_ENABLED": deposits.inbox_enabled(),
+            "INBOX_RETENTION_DAYS": settings.INBOX_RETENTION_DAYS,
             "HELP_URL": getattr(settings, "HELP_URL", ""),
             # The error page's support link; hidden when empty.
             "SUPPORT_URL": getattr(settings, "SUPPORT_URL", ""),

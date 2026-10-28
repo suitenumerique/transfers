@@ -1,4 +1,4 @@
-{% load humanize_size %}Vos fichiers ont été téléchargés.
+{% load humanize_size %}{% autoescape off %}Vos fichiers ont été téléchargés.
 
 {{ recipient_email }} a téléchargé {% if complete %}les fichiers{% else %}{{ downloaded_count }} {% if downloaded_count == 1 %}fichier{% else %}fichiers{% endif %} sur {{ total_count }}{% endif %} de votre transfert{% if transfer.title %} : {{ transfer.title }}{% endif %}.
 
@@ -8,3 +8,4 @@
 Voir le transfert : {{ detail_url }}
 
 Vous recevez ce message parce que vous avez demandé à être prévenu des téléchargements de ce transfert.
+{% endautoescape %}

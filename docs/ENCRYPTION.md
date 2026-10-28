@@ -467,8 +467,9 @@ TransferFile:
                            import fails at finalize (see below).
 ```
 
-`complete_upload` marks encrypted files `SKIPPED` (ClamAV can't read
-ciphertext, and it isn't wired to decrypt).
+Files stay `PENDING` at `complete_upload`: the key only arrives at
+finalize, which hands it to the scanner with each file (non-confidential
+transfers). Confidential files are marked `SKIPPED`.
 
 ## Normal vs confidential (and Drive)
 
@@ -523,10 +524,15 @@ file lands, then creates the Transfer; a failed import sets
 
 ### Antivirus
 
-ClamAV sees only opaque ciphertext and isn't wired to decrypt, so
-`complete_upload` and the Drive import task mark files `SKIPPED`
-(`draft.py`), the finalize gate accepts them, and the download view
-doesn't re-check (`SKIPPED`, not `PENDING`).
+The scanner receives the key with each file of a non-confidential
+transfer and decrypts it to scan (`submit_scan_task`). A confidential
+transfer's key never reaches us, so finalize marks its files `SKIPPED`,
+the finalize gate accepts them, and the download view doesn't re-check
+(`SKIPPED`, not `PENDING`).
+
+Deposits (files sent to an agent by someone without an account) are never
+confidential: the agent decrypts with the key stored at finalize, and the
+scanner reads them like any non-confidential transfer.
 
 The recipient UI shows a lock icon on **confidential** transfers instead
 of a "scanned" badge.

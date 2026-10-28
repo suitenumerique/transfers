@@ -146,6 +146,7 @@
   > .transfer-detail__link-box,
   > .transfer-detail__recipients-box,
   > .transfer-detail__file-list,
+  > .download-view--embedded,
   > .transfer-detail__actions {
     margin-top: var(--c--globals--spacings--md);
   }
@@ -165,6 +166,26 @@
       flex-shrink: 0;
       white-space: nowrap;
     }
+  }
+
+  // Inline rename: the input takes the title's place and type size.
+  &__header > &__title-form {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title-input {
+    width: 100%;
+    padding: 2px 6px;
+    margin-left: -7px;
+    border: 1px solid var(--c--contextuals--border--semantic--brand--primary, #3e5de7);
+    border-radius: 6px;
+    background: transparent;
+    font: inherit;
+    font-size: var(--c--globals--font--sizes--h3, 1.5rem);
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
   }
 
   // Needs h1 prefix to beat the default .app-content h1 { margin-bottom: 1.5rem }
@@ -354,7 +375,9 @@
   &__history-head,
   &__history-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    // minmax(0, …): each row is its own grid, so a column sized by its
+    // content (a depositor's email) would shift that row's columns.
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--c--globals--spacings--sm);
     padding:
       var(--c--globals--spacings--xs) 0;
@@ -399,6 +422,9 @@
     align-items: center;
     gap: var(--c--globals--spacings--sm);
     font-weight: 500;
+    // The label can carry a title or a filename with no space to break at.
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   // Same tile style as the file list above (32×32 neutral) so both lists
@@ -432,6 +458,12 @@
     padding-left: calc(14px + 6px);
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__history-actor {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -1439,6 +1471,7 @@
 
   &__auto-archive-alert,
   &__scan-alert,
+  &__depositor,
   &__encryption-error-alert,
   &__owner-alert,
   &__interrupted-alert {
@@ -1524,6 +1557,17 @@
   &__download-all.c__button {
     margin-top: var(--c--globals--spacings--md);
     justify-content: center;
+  }
+
+  // Inside the transfer page: its column, not the centered download card.
+  &--embedded {
+    max-width: none;
+    margin: 0;
+    text-align: start;
+  }
+
+  &--embedded &__file-list {
+    margin-top: 0;
   }
 }
 

@@ -39,6 +39,7 @@ from core.enums import ScanStatus, SharingMode, TransferEventType
 from core.services import s3
 from core.services.scan_budget import scan_wait_seconds
 from core.tasks import import_drive_file_task, submit_scan_task
+from core.templatetags.humanize_size import humanize_size
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,29 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         return models.TransferDraft.objects.filter(owner=self.request.user)
+
+    # -- Hooks a subclass overrides to upload into another kind of draft --
+
+    def _new_draft(self, request):
+        """Open the draft the first ``add-file`` call lands on."""
+        return models.TransferDraft.objects.create(
+            owner=request.user,
+            encryption_chunk_size=settings.TRANSFER_CHUNK_SIZE,
+        )
+
+    def _max_file_size(self):
+        return settings.TRANSFER_MAX_FILE_SIZE
+
+    def _max_total_size(self):
+        """Never below ``_max_file_size``: the first file is only checked
+        against the latter."""
+        return settings.TRANSFER_MAX_TOTAL_SIZE
+
+    def get_serializer_context(self):
+        return {
+            **super().get_serializer_context(),
+            "max_file_size": self._max_file_size(),
+        }
 
     def get_serializer_class(self):
         if self.action == "add_file":
@@ -148,10 +172,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                 # recipient SW can never disagree with the encrypt path about
                 # decryption boundaries). Whether the transfer ends up
                 # confidential is decided only at finalize.
-                draft = models.TransferDraft.objects.create(
-                    owner=request.user,
-                    encryption_chunk_size=settings.TRANSFER_CHUNK_SIZE,
-                )
+                draft = self._new_draft(request)
             else:
                 draft = self._get_locked_draft(draft_id)
 
@@ -170,13 +191,13 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
                             )
                         }
                     )
-                if (
-                    aggregates["total_size"] + data["size"]
-                    > settings.TRANSFER_MAX_TOTAL_SIZE
-                ):
-                    max_go = settings.TRANSFER_MAX_TOTAL_SIZE // (1024**3)
+                max_total_size = self._max_total_size()
+                if aggregates["total_size"] + data["size"] > max_total_size:
                     raise drf.exceptions.ValidationError(
-                        {"size": f"Total transfer size exceeds maximum of {max_go} Go."}
+                        {
+                            "size": "Total transfer size exceeds maximum of "
+                            f"{humanize_size(max_total_size)}."
+                        }
                     )
 
             # Build the TransferFile in-memory first so ``tf.id`` (auto-set by
@@ -780,9 +801,7 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
             encryption_key=draft.encryption_key,
             encryption_chunk_size=draft.encryption_chunk_size,
         )
-        models.TransferFile.objects.filter(draft=draft).update(
-            transfer=transfer, draft=None
-        )
+        self._reparent_files(draft, transfer)
         if metadata["sharing_mode"] == SharingMode.EMAIL:
             for email in metadata["recipients"]:
                 models.TransferRecipient.objects.create(
@@ -810,6 +829,13 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
 
         draft.delete()
         return transfer
+
+    @staticmethod
+    def _reparent_files(draft, transfer):
+        """Move every file of the draft to the transfer, in one UPDATE."""
+        models.TransferFile.objects.filter(draft=draft).update(
+            transfer=transfer, draft=None
+        )
 
     @extend_schema(
         request=None,

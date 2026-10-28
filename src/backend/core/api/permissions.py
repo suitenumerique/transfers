@@ -6,6 +6,7 @@ from rest_framework import permissions, status
 from rest_framework.exceptions import APIException, PermissionDenied
 
 from core.entitlements import EntitlementsUnavailableError, get_entitlements_backend
+from core.services import deposits
 
 logger = logging.getLogger(__name__)
 
@@ -61,4 +62,39 @@ class DraftUploadEntitlementPermission(permissions.BasePermission):
         if getattr(view, "action", None) not in self._UPLOAD_ACTIONS:
             return True
         enforce_upload_entitlement(request.user)
+        return True
+
+
+def deposits_closed_body():
+    return {
+        "detail": "This recipient no longer accepts deposits.",
+        "reason": "closed",
+    }
+
+
+class DepositCapabilityPermission(permissions.BasePermission):
+    """The ``X-Deposit-Token`` header carries a depositor's upload session.
+
+    Re-checked on every call: the challenge must be verified and unused,
+    its target still open (space not revoked, address still allowed), and
+    the space's owner still entitled to the app. Sets
+    ``request.deposit_challenge``. Views using it have no authentication
+    class, so a refusal is a 403, never the 401 the frontend reads as
+    "signed out"."""
+
+    def has_permission(self, request, view):
+        challenge = deposits.load_session(request.headers.get("X-Deposit-Token", ""))
+        if challenge is None:
+            raise PermissionDenied(
+                {"detail": "This deposit session is not valid.", "reason": "session"}
+            )
+        if not deposits.target_open(challenge):
+            raise PermissionDenied(deposits_closed_body())
+        if challenge.deposit_space_id is not None:
+            # Report the space as closed, without the reason the owner lost access.
+            try:
+                enforce_upload_entitlement(challenge.deposit_space.owner)
+            except PermissionDenied as exc:
+                raise PermissionDenied(deposits_closed_body()) from exc
+        request.deposit_challenge = challenge
         return True

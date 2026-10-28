@@ -1,0 +1,16 @@
+{% load humanize_size %}{% autoescape off %}Des fichiers ont été déposés pour vous.
+
+{{ transfer.depositor_name }} (adresse e-mail vérifiée : {{ transfer.depositor_email }}) vous a déposé des fichiers{% if space %} dans votre espace {{ space.name }}{% endif %}{% if transfer.title %} : {{ transfer.title }}{% endif %}.
+
+{{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %} · {{ total_size|humanize_size }}
+{% for file in files %}- {{ file.filename }} · {{ file.plaintext_size|default:file.size|humanize_size }}
+{% endfor %}{% if unscanned_count %}
+ATTENTION : {{ unscanned_count }} fichier{{ unscanned_count|pluralize }} n'{% if unscanned_count == 1 %}a{% else %}ont{% endif %} pas pu être vérifié{{ unscanned_count|pluralize }} par l'antivirus. Ne {% if unscanned_count == 1 %}l'ouvrez{% else %}les ouvrez{% endif %} que si vous connaissez l'expéditeur.
+{% endif %}
+{% if claim %}Connectez-vous avec ProConnect sous cette adresse e-mail pour récupérer le dépôt. {% endif %}Les fichiers sont conservés {{ expires_in_days }} jour{{ expires_in_days|pluralize }}.
+
+Récupérer les fichiers : {{ cta_url }}
+
+—
+Transferts — La Suite territoriale
+{% endautoescape %}

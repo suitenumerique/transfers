@@ -11,6 +11,7 @@ orphaned by the operation).
 
 import logging
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Sum
 
@@ -27,6 +28,7 @@ from core.api.serializers import (
     TransferDetailSerializer,
     TransferEventSerializer,
     TransferListSerializer,
+    TransferRenameSerializer,
 )
 from core.api.throttling import TransferResendThrottle
 from core.api.utils import log_agent_event
@@ -34,6 +36,7 @@ from core.api.viewsets import Pagination
 from core.enums import (
     DeactivationReason,
     SharingMode,
+    TransferDirection,
     TransferEventType,
     TransferStatus,
 )
@@ -45,7 +48,7 @@ class TransferViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Read-only view over finalized transfers plus the ``deactivate`` transition.
+    """Finalized transfers: list, read, rename, deactivate, delete.
 
     All the pre-finalize lifecycle (draft creation, file add/remove, upload
     signing, multipart completion, finalize) lives on ``TransferDraftViewSet``
@@ -71,6 +74,22 @@ class TransferViewSet(
     def get_queryset(self):
         if self.action == "list":
             qs = models.Transfer.objects.filter(owner=self.request.user)
+
+            # Sent transfers by default; ``direction=inbound`` lists deposits,
+            # narrowed to one space (``deposit_space=<id>``) or to anonymous
+            # sends (``inbox=true``).
+            params = self.request.query_params
+            if params.get("direction") == TransferDirection.INBOUND:
+                qs = qs.filter(direction=TransferDirection.INBOUND)
+                if params.get("deposit_space"):
+                    try:
+                        qs = qs.filter(deposit_space_id=params["deposit_space"])
+                    except DjangoValidationError:
+                        qs = qs.none()
+                elif params.get("inbox") == "true":
+                    qs = qs.filter(deposit_space__isnull=True).exclude(inbox_email="")
+            else:
+                qs = qs.filter(direction=TransferDirection.OUTBOUND)
 
             # ``deactivated`` bucket — "active" section = status ACTIVE only;
             # "deactivated" section = every other status (EXPIRED, DEACTIVATED).
@@ -190,6 +209,32 @@ class TransferViewSet(
             log_agent_event(instance, TransferEventType.TRANSFER_DELETED, self.request)
             instance.delete()
         logger.info("Transfer %s hard-deleted", transfer_id)
+
+    @extend_schema(
+        request=TransferRenameSerializer,
+        responses={200: TransferDetailSerializer},
+    )
+    def partial_update(self, request, pk=None):
+        """Rename a transfer: its title is the only field that changes after
+        finalize. A deposit's original title stays in its received event."""
+        transfer = self.get_object()
+        serializer = TransferRenameSerializer(transfer, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        old_title = transfer.title
+        new_title = serializer.validated_data["title"]
+        if new_title != old_title:
+            transfer.title = new_title
+            with transaction.atomic():
+                # Only the title: a full save would write back a status that
+                # another request changed since get_object.
+                transfer.save(update_fields=["title", "updated_at"])
+                log_agent_event(
+                    transfer,
+                    TransferEventType.TRANSFER_RENAMED,
+                    request,
+                    payload={"old_title": old_title, "new_title": new_title},
+                )
+        return drf.response.Response(TransferDetailSerializer(transfer).data)
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])

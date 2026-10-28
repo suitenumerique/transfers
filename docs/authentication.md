@@ -126,6 +126,14 @@ through environment variables (real endpoints, real secrets, persistent storage)
   existing account holding the same email, which hands that account to any
   identity provider of the federation asserting the address. Turn it on only
   for a one-off migration of accounts created without a `sub`.
+- **Anonymous sends attach on proof, not on the email alone.** An inbox
+  send (files sent straight to an agent's address) waits unowned until
+  someone claims it. The claim needs both the signed link mailed to that
+  address and a session whose identity email is that address: the link
+  alone could be forwarded, the email alone could be asserted by any
+  provider of the federation. A claim stamps `User.inbox_claimed_email`,
+  and a later send attaches at once only to the single active account whose
+  identity email and claimed email both match it.
 - **The `sub` of an account that has one is never rewritten.**
   `OIDC_USER_SUB_FIELD_IMMUTABLE` is declared `True` rather than inherited:
   django-lasuite would otherwise derive it from the setting above, so enabling
