@@ -126,6 +126,21 @@ through environment variables (real endpoints, real secrets, persistent storage)
   existing account holding the same email, which hands that account to any
   identity provider of the federation asserting the address. Turn it on only
   for a one-off migration of accounts created without a `sub`.
+- **Anonymous sends trust the identity email.** An inbox send (files sent
+  straight to an agent's address) attaches at once to the single active
+  account with that email. The ProConnect hub only logs a warning
+  (`fqdn_mismatch`) when a provider whose domain check is not blocking
+  asserts an address outside its domains, and it does not forward
+  `email_verified`: such a provider can collect the sends to an address it
+  asserts. This is accepted.
+- **A claim link covers everything else.** With no account or several, the
+  send waits unowned and its email carries a signed link. A shared mailbox
+  looks the same as an agent without an account yet, so the first account
+  to open the link collects the send, if its email is that address or on
+  the same domain. A forwarded link therefore works within the domain, and
+  can take a send from an agent who has no account yet: the page then names
+  the account that collected it. Only an account on the exact address also
+  collects the other pending sends to it.
 - **The `sub` of an account that has one is never rewritten.**
   `OIDC_USER_SUB_FIELD_IMMUTABLE` is declared `True` rather than inherited:
   django-lasuite would otherwise derive it from the setting above, so enabling

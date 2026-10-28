@@ -57,6 +57,9 @@ does, to upload them on failure).
   file starts from one with `test.use({ storageState: storageStateOf(USER1) })`.
 - `anonymousPage(browser)` opens a page with no session. `browser.newPage()`
   would inherit the file's signed-in session.
+- `createUser()` (`helpers/keycloak.ts`) signs a new Keycloak user up, for a
+  test that changes what an account owns: an address with an account gets
+  its sends at once.
 - `waitForMail()` (`helpers/mail.ts`) reads maildev. Tests run in parallel
   and share mailboxes: find your email by a unique title in its body
   (`uniqueTitle()`), or by an address only your test uses.
@@ -73,7 +76,9 @@ does, to upload them on failure).
 | `transfer-link.spec.ts` | Link transfer, anonymous download (bytes compared), history; single-use link closing after download |
 | `transfer-confidential.spec.ts` | Key in the fragment; key prompt without it (malformed key refused); confidential email keeps the key out of the invitation |
 | `transfer-email.spec.ts` | Invitations to two recipients, personal links, download receipt to the sender, recipient in the history; recipient input validation |
-| `transfer-manage.spec.ts` | Sidebar search, deactivate, delete permanently; another agent cannot open the transfer |
+| `transfer-manage.spec.ts` | Rename (and cancel), sidebar search, deactivate, delete permanently; another agent cannot open the transfer |
+| `deposit-space.spec.ts` | Space creation, deposit by someone without an account (one-time code by email), receipt and notification emails, unscanned-file confirmation and download; deposit token is no capability; wrong code; closed space |
+| `inbox.spec.ts` | Anonymous send to an agent, claim refused to another domain, claim with sign-in on the way, later sends attached at once, inbox page; shared address collected by the first colleague, the next one told who; address outside the instance pattern |
 | `public-pages.spec.ts` | Landing, language remembered, unknown links, sign-in error page, signed-out redirect, sign out |
 
 Not covered yet: the antivirus (infected, scan errors: needs the file-scanner

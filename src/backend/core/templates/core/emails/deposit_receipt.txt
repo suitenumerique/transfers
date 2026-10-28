@@ -1,0 +1,12 @@
+{% load humanize_size %}{% autoescape off %}Votre dépôt a bien été transmis.
+
+Vos fichiers ont été transmis à {{ target_label }}{% if transfer.title %} : {{ transfer.title }}{% endif %}.
+
+{{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %} · {{ total_size|humanize_size }}
+{% for file in files %}- {{ file.filename }} · {{ file.plaintext_size|default:file.size|humanize_size }}
+{% endfor %}
+Vous recevez ce message parce que vous avez déposé ces fichiers. Si ce n'est pas le cas, ignorez-le.
+
+—
+Transferts — La Suite territoriale
+{% endautoescape %}
