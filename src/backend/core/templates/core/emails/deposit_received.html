@@ -1,0 +1,28 @@
+{% extends "core/emails/_base.html" %}
+
+{% block content %}
+  <tr>
+    <td style="padding:0 32px 24px;font-size:15px;line-height:1.5;color:#25252f;">
+      <strong>{{ transfer.depositor_name }}</strong> (adresse e-mail vérifiée : {{ transfer.depositor_email }}) vous a déposé des fichiers{% if space %} dans votre espace <strong>{{ space.name }}</strong>{% endif %}{% if transfer.title %} : <strong><em>{{ transfer.title }}</em></strong>{% endif %}.
+    </td>
+  </tr>
+  {% include "core/emails/_deposit_files.html" %}
+  {% if unscanned_count %}
+  <tr>
+    <td style="padding:16px 32px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fee9e9;border-radius:8px;">
+        <tr>
+          <td style="padding:14px 16px;color:#ce0500;font-weight:600;font-size:14px;line-height:1.5;">
+            &#x26A0; {{ unscanned_count }} fichier{{ unscanned_count|pluralize }} n'{% if unscanned_count == 1 %}a{% else %}ont{% endif %} pas pu être vérifié{{ unscanned_count|pluralize }} par l'antivirus. Ne {% if unscanned_count == 1 %}l'ouvrez{% else %}les ouvrez{% endif %} que si vous connaissez l'expéditeur.
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td style="padding:16px 32px 8px;font-size:13px;line-height:1.5;color:#5d5d70;">
+      {% if claim %}Connectez-vous avec ProConnect sous cette adresse e-mail pour récupérer le dépôt. {% endif %}Les fichiers sont conservés {{ expires_in_days }} jour{{ expires_in_days|pluralize }}.
+    </td>
+  </tr>
+{% endblock %}

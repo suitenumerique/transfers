@@ -246,33 +246,43 @@
     }
   }
 
-  // Each section: header at the top, scrollable list below. Collapsed
-  // sections take only the header's height. Expanded sections split the
-  // tree asymmetrically:
-  //   - Active (top): shrink-to-content, capped at 50% of the tree so a
-  //     long active list doesn't squeeze the deactivated section out.
-  //     The inner collapse is also content-sized so the section's
-  //     natural height includes the list — without that, the collapse's
-  //     ``flex: 1 1 0`` contributes zero and the section ends up the
-  //     header height only.
-  //   - Deactivated (bottom): grow to fill whatever space the active
-  //     section didn't claim, including the slack when active is short.
+  // Each section: header at the top, its list below, sized to content.
+  // A long list scrolls inside its own capped height (see section-list),
+  // and the tree scrolls when the open sections overflow it together.
   &__section {
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    flex: none;
+  }
 
-    &--active.shell-sidebar__section--open {
-      flex: 0 1 auto;
-      max-height: 50%;
+  // Header with an optional action. The action sits just left of the
+  // chevron, so every section's chevron stays in the same column.
+  &__section-head {
+    position: relative;
+  }
 
-      > .shell-sidebar__section-collapse--open {
-        flex: 0 1 auto;
-      }
+  &__section-action {
+    position: absolute;
+    top: 50%;
+    // The header's 24px right inset, the 16px chevron, then a 4px gap.
+    right: 44px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    svg {
+      width: 16px;
+      height: 16px;
     }
 
-    &--deactivated.shell-sidebar__section--open {
-      flex: 1 1 0;
+    &:hover {
+      background: rgba(30, 37, 57, 0.08);
+      color: var(--c--contextuals--content--semantic--neutral--primary);
     }
   }
 
@@ -290,10 +300,12 @@
       var(--c--globals--spacings--xs);
     background: transparent;
     border: 0;
-    color: var(--c--contextuals--content--semantic--neutral--tertiary);
+    // Same size as the rows below and heavier, so a section reads as the
+    // parent of its items, not as a caption under them.
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
     font-family: inherit;
-    font-size: var(--c--globals--font--sizes--xs);
-    font-weight: 500;
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 600;
     cursor: pointer;
 
     > span:first-child {
@@ -302,7 +314,7 @@
     }
 
     &:hover {
-      color: var(--c--contextuals--content--semantic--neutral--secondary);
+      color: var(--c--contextuals--content--semantic--neutral--primary);
     }
   }
 
@@ -329,8 +341,6 @@
     &--open {
       display: flex;
       flex-direction: column;
-      flex: 1 1 0;
-      min-height: 0;
       animation: shell-sidebar-section-reveal 220ms cubic-bezier(0.4, 0, 0.2, 1);
     }
 
@@ -352,7 +362,17 @@
     // ``TransferSection`` is rooted here, so only vertical scrolling
     // inside this list drives pagination for that section.
     overflow-y: auto;
-    min-height: 0;
+    max-height: 40vh;
+
+    // A space's deposits, under the space's row: indented and lighter.
+    &--nested {
+      max-height: 240px;
+      padding-left: var(--c--globals--spacings--md);
+
+      .shell-sidebar__tree-row-link {
+        font-weight: 400;
+      }
+    }
   }
 
   &__tree {
@@ -360,7 +380,7 @@
     flex-direction: column;
     flex: 1 1 0;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
     padding-bottom: var(--c--globals--spacings--2xs);
   }
 
@@ -386,6 +406,15 @@
     }
   }
 
+  // A space's row unfolds its deposits: a button styled as a link row.
+  &__tree-row-toggle {
+    background: transparent;
+    border: 0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
   &__tree-row-link {
     flex: 1;
     min-width: 0;
@@ -398,6 +427,11 @@
     font-weight: 500;
     text-decoration: none;
     user-select: none;
+  }
+
+  // The spaces' "New deposit space" row: an action, not an item.
+  &__tree-row-link--muted {
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
   }
 
   // Folder glyph sized a hair above the label text so icon and name align
@@ -422,6 +456,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    &--muted {
+      color: var(--c--contextuals--content--semantic--neutral--tertiary);
+    }
   }
 
   &__tree-row-menu {

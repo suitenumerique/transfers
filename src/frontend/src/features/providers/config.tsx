@@ -41,6 +41,15 @@ export interface AppConfig {
   // the toggle and the backend rejects a confidential finalize. Transfers
   // already created in that mode stay downloadable.
   TRANSFER_CONFIDENTIAL_ENABLED: boolean;
+  // Deposits: the cap on one deposit (a space may override it), and the
+  // retention days an agent picks from for a space.
+  DEPOSIT_MAX_TOTAL_SIZE: number;
+  DEPOSIT_SPACE_RETENTION_CHOICES: number[];
+  DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS: number;
+  // Whether visitors may send files straight to an agent's address
+  // (``/send``), and how long those are kept.
+  INBOX_ENABLED: boolean;
+  INBOX_RETENTION_DAYS: number;
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).
   HELP_URL: string;
