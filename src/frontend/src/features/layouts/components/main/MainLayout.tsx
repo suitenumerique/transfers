@@ -6,7 +6,7 @@ import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { ShellLayout } from "@/features/layouts/components/shell";
 import { Gaufre } from "../gaufre";
-import { useAuth, login } from "@/features/auth";
+import { useAuth, loginAndReturn } from "@/features/auth";
 
 export function MainLayout({ children }: PropsWithChildren) {
   const { t } = useTranslation();
@@ -30,7 +30,7 @@ export function MainLayout({ children }: PropsWithChildren) {
         <>
           <Gaufre />
           <LanguagePicker size="small" compact />
-          <Button size="small" onClick={login}>
+          <Button size="small" onClick={() => loginAndReturn()}>
             {t("Sign in")}
           </Button>
         </>

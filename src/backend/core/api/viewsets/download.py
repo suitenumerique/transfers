@@ -28,6 +28,7 @@ from core.enums import (
     TransferEventType,
     TransferStatus,
 )
+from core.services import deposits
 from core.services.recipient_activity import files_downloaded_by
 from core.services.s3 import sign_download_url
 
@@ -62,13 +63,20 @@ def _resume_token_valid(token, transfer, file_id) -> bool:
     return value == f"{transfer.id}:{file_id}"
 
 
-def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
+def _fetch_transfer_by_token(public_token: str, request) -> models.Transfer | None:
+    """The transfer behind a public token, as this visitor may see it. An
+    inbound transfer (a deposit) is for its owner and the members of its
+    space alone: for anyone else the token is no capability, and the
+    transfer reads as unknown."""
     try:
-        return models.Transfer.objects.prefetch_related("files").get(
+        transfer = models.Transfer.objects.prefetch_related("files").get(
             public_token=public_token
         )
     except models.Transfer.DoesNotExist:
         return None
+    if transfer.is_inbound and not deposits.can_read_deposit(request.user, transfer):
+        return None
+    return transfer
 
 
 def _denied_access_response(transfer: models.Transfer) -> Response | None:
@@ -121,8 +129,11 @@ def _record_visitor_event(
 ) -> bool:
     """Journal a visitor action. Returns False when nothing was recorded:
     an authenticated agent visiting/downloading their own transfer —
-    recipient activity is the audit signal here, owner self-checks aren't."""
-    if request.user.is_authenticated and request.user.id == transfer.owner_id:
+    recipient activity is the audit signal here, owner self-checks aren't.
+    A deposit is only ever read by its owner and their colleagues."""
+    if request.user.is_authenticated and (
+        request.user.id == transfer.owner_id or transfer.is_inbound
+    ):
         return False
     models.TransferEvent.objects.create(
         transfer_id=transfer.id,
@@ -203,7 +214,7 @@ class DownloadTransferView(APIView):
     throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token):
-        transfer = _fetch_transfer_by_token(public_token)
+        transfer = _fetch_transfer_by_token(public_token, request)
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
@@ -228,7 +239,7 @@ class DownloadFileView(APIView):
     throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token, file_id):
-        transfer = _fetch_transfer_by_token(public_token)
+        transfer = _fetch_transfer_by_token(public_token, request)
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 

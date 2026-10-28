@@ -26,6 +26,40 @@ export const login = () => {
   window.location.replace(`${getApiOrigin()}/api/v1.0/authenticate/`);
 };
 
+// Sign-in always lands on the home page: remember where it started, so the
+// home page sends the user back (a deposit page, a space shared by email).
+const RETURN_PATH_KEY = "auth-return-path";
+// Owned by features/deposits/api/claimInbound.ts.
+const PENDING_CLAIM_KEY = "transfers.pendingInboundClaim";
+
+// ``returnTo``: the page to come back to, when the current URL has lost
+// part of it (a download page strips its key fragment once read).
+export const loginAndReturn = (returnTo?: string) => {
+  try {
+    const { pathname, search, hash } = window.location;
+    sessionStorage.setItem(
+      RETURN_PATH_KEY,
+      returnTo ?? `${pathname}${search}${hash}`,
+    );
+    // A claim left from an abandoned sign-in would take over this one.
+    sessionStorage.removeItem(PENDING_CLAIM_KEY);
+  } catch {
+    // Storage blocked: the user reopens the page after signing in.
+  }
+  login();
+};
+
+export function takeReturnPath(): string | null {
+  try {
+    const path = sessionStorage.getItem(RETURN_PATH_KEY);
+    sessionStorage.removeItem(RETURN_PATH_KEY);
+    // Same-origin paths only.
+    return path && path.startsWith("/") && !path.startsWith("//") ? path : null;
+  } catch {
+    return null;
+  }
+}
+
 interface AuthContextInterface {
   user?: User | null;
 }

@@ -28,6 +28,8 @@ test("the language choice is remembered", async ({ page }) => {
 test("unknown links say so", async ({ page }) => {
   await page.goto("/t/does-not-exist");
   await expect(page.getByText("This link does not exist.")).toBeVisible();
+  await page.goto("/d/does-not-exist");
+  await expect(page.getByText("This deposit link does not exist.")).toBeVisible();
 });
 
 test("a failed sign-in lands on the error page", async ({ page }) => {

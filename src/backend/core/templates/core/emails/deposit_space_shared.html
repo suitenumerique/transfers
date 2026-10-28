@@ -1,0 +1,14 @@
+{% extends "core/emails/_base.html" %}
+
+{% block content %}
+  <tr>
+    <td style="padding:0 32px 24px;font-size:15px;line-height:1.5;color:#25252f;">
+      <strong>{{ owner_label }}</strong> vous a donné accès à son espace de dépôt <strong>{{ space.name }}</strong> : vous voyez les fichiers qui y sont déposés et pouvez les télécharger.
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:0 32px 8px;font-size:13px;line-height:1.5;color:#5d5d70;">
+      Connectez-vous avec ProConnect avec l'adresse {{ email }} pour y accéder.
+    </td>
+  </tr>
+{% endblock %}

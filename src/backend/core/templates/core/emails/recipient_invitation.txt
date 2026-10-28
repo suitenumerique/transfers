@@ -1,4 +1,4 @@
-{% load humanize_size %}Nouveau transfert partagé avec vous.
+{% load humanize_size %}{% autoescape off %}Nouveau transfert partagé avec vous.
 
 {{ sender_name }}{% if sender_email and sender_email != sender_name %} ({{ sender_email }}){% endif %} vous a transféré{% if transfer.title %} : {{ transfer.title }}{% endif %}.
 
@@ -11,3 +11,4 @@ Télécharger les fichiers : {{ download_url }}
 
 —
 Transferts — La Suite territoriale
+{% endautoescape %}

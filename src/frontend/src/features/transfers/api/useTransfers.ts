@@ -1,22 +1,32 @@
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
 import type { PaginatedResponse, TransferListItem } from "@/features/api/types";
 
 interface UseTransfersParams {
-  deactivated: boolean;
+  // Omitted: every status (the deposit lists show expired ones muted).
+  deactivated?: boolean;
   search?: string;
+  // Extra list filters, e.g. ``{ direction: "inbound", inbox: "true" }``.
+  filters?: Record<string, string>;
 }
 
 // Fetch in chunks large enough that a fast wheel/trackpad flick doesn't
 // run through an entire page in a single tick.
 const PAGE_SIZE = 50;
 
-function buildUrl({ deactivated, search, page }: UseTransfersParams & { page: number }) {
+function buildUrl({ deactivated, search, filters, page }: UseTransfersParams & { page: number }) {
   const params = new URLSearchParams({
-    deactivated: String(deactivated),
+    ...filters,
     page: String(page),
     page_size: String(PAGE_SIZE),
   });
+  if (deactivated !== undefined) {
+    params.set("deactivated", String(deactivated));
+  }
   if (search) {
     params.set("search", search);
   }
@@ -31,15 +41,18 @@ function extractNextPage(next: string | null): number | undefined {
   return page ? Number(page) : undefined;
 }
 
-export function useTransfers({ deactivated, search }: UseTransfersParams) {
+export function useTransfers({ deactivated, search, filters }: UseTransfersParams) {
   return useInfiniteQuery({
-    queryKey: ["transfers", { deactivated, search: search || "" }],
+    queryKey: ["transfers", { deactivated, search: search || "", filters }],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       apiFetch<PaginatedResponse<TransferListItem>>(
-        buildUrl({ deactivated, search, page: pageParam as number }),
+        buildUrl({ deactivated, search, filters, page: pageParam as number }),
       ),
     getNextPageParam: (last) => extractNextPage(last.next),
+    // Each keystroke of a search is a new query: keep the previous rows
+    // until its results arrive, rather than emptying the list meanwhile.
+    placeholderData: keepPreviousData,
   });
 }
 
