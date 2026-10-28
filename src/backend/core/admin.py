@@ -17,12 +17,25 @@ class UserAdmin(auth_admin.UserAdmin):
     search_fields = ("email", "full_name", "sub")
     ordering = ("email",)
     fieldsets = (
-        (None, {"fields": ("sub", "email", "full_name")}),
+        (
+            None,
+            {
+                "fields": (
+                    "sub",
+                    "email",
+                    "full_name",
+                    "claims",
+                    "inbox_claimed_email",
+                )
+            },
+        ),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser")}),
     )
     add_fieldsets = ((None, {"fields": ("admin_email", "password1", "password2")}),)
-    # Logins match on sub: editing it signs in as that person. Only the IdP sets it.
-    readonly_fields = ("sub",)
+    # Logins match on sub: editing it signs in as that person. Only the IdP
+    # sets sub and claims; inbox_claimed_email comes from a claim, and editing
+    # it would hand that address's anonymous sends to this account.
+    readonly_fields = ("sub", "claims", "inbox_claimed_email")
 
 
 # File rows inlined on a transfer or draft, all read-only.
@@ -74,11 +87,16 @@ class TransferAdmin(admin.ModelAdmin):
         "expires_at",
         "created_at",
     )
-    list_filter = ("status",)
-    search_fields = ("id", "title", "public_token", "owner__email")
+    list_filter = ("status", "direction")
+    search_fields = ("id", "title", "public_token", "owner__email", "inbox_email")
     readonly_fields = (
         "id",
         "owner",
+        "direction",
+        "deposit_space",
+        "inbox_email",
+        "depositor_name",
+        "depositor_email",
         "public_token",
         "encryption_key",
         "confidential",
@@ -104,11 +122,12 @@ class TransferDraftAdmin(admin.ModelAdmin):
     so an operator can eyeball which uploads are stuck.
     """
 
-    list_display = ("id", "owner", "created_at")
+    list_display = ("id", "owner", "deposit_challenge", "created_at")
     search_fields = ("id", "owner__email")
     readonly_fields = (
         "id",
         "owner",
+        "deposit_challenge",
         "encryption_key",
         "encryption_chunk_size",
         "created_at",
@@ -116,6 +135,71 @@ class TransferDraftAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "created_at"
     inlines = [TransferDraftFileInline]
+
+
+@admin.register(models.DepositSpace)
+class DepositSpaceAdmin(admin.ModelAdmin):
+    """Admin for deposit spaces. ``max_deposit_size`` is only settable here."""
+
+    list_display = ("name", "owner", "retention_days", "revoked_at", "created_at")
+    list_filter = (("revoked_at", admin.EmptyFieldListFilter),)
+    search_fields = ("id", "name", "owner__email")
+    fields = (
+        "id",
+        "owner",
+        "name",
+        "retention_days",
+        "max_deposit_size",
+        "revoked_at",
+        "created_at",
+        "updated_at",
+    )
+    # The link token is a capability: it never shows here. The owner picks
+    # retention_days among DEPOSIT_SPACE_RETENTION_CHOICES.
+    readonly_fields = (
+        "id",
+        "owner",
+        "retention_days",
+        "revoked_at",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    # A space is closed, not deleted: its deposits keep pointing at it.
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(models.DepositChallenge)
+class DepositChallengeAdmin(admin.ModelAdmin):
+    """Admin for depositor challenges, read-only."""
+
+    list_display = (
+        "id",
+        "depositor_email",
+        "deposit_space",
+        "inbox_email",
+        "verified_at",
+        "consumed_at",
+        "created_at",
+    )
+    search_fields = ("id", "depositor_email", "inbox_email")
+    exclude = ("code_hash",)
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    # Deleting one would cascade to its draft and leave the draft's S3
+    # objects to the orphan sweep. The daily purge removes challenges.
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(models.TransferFile)

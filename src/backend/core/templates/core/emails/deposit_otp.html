@@ -1,0 +1,19 @@
+{% extends "core/emails/_base.html" %}
+
+{% block content %}
+  <tr>
+    <td style="padding:0 32px 16px;font-size:15px;line-height:1.5;color:#25252f;">
+      Voici votre code pour déposer des fichiers à l'attention de <strong>{{ target_label }}</strong> :
+    </td>
+  </tr>
+  <tr>
+    <td align="center" style="padding:8px 32px 24px;">
+      <span style="display:inline-block;padding:12px 24px;font-size:28px;font-weight:700;letter-spacing:6px;color:#25252f;background:#fafbfc;border:1px solid #e1e2e5;border-radius:10px;">{{ code }}</span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:0 32px 32px;font-size:13px;line-height:1.5;color:#5d5d70;">
+      Ce code est valable {{ ttl_minutes }} minute{{ ttl_minutes|pluralize }}. Si vous n'êtes pas à l'origine de cette demande, ignorez ce message.
+    </td>
+  </tr>
+{% endblock %}

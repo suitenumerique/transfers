@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import tomllib
 from socket import gethostbyname, gethostname
 
@@ -10,6 +11,7 @@ from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
 import sentry_sdk
 from configurations import Configuration, values
+from corsheaders.defaults import default_headers
 from sentry_sdk.integrations.django import DjangoIntegration
 
 from core.utils import ThrottleRateValue
@@ -201,6 +203,76 @@ class Base(Configuration):
         environ_name="TRANSFER_PRESIGNED_URL_EXPIRY",
         environ_prefix=None,
     )
+    # Deposits: files sent to an agent by someone without an account, on a
+    # deposit space's link or straight to the agent's email (an inbox send).
+
+    # -- Deposits, both ways --
+    # Cap on one deposit, all files together. A space may override it in the
+    # Django admin.
+    DEPOSIT_MAX_TOTAL_SIZE = values.PositiveIntegerValue(
+        10 * 1024 * 1024 * 1024,  # 10 Go
+        environ_name="DEPOSIT_MAX_TOTAL_SIZE",
+        environ_prefix=None,
+    )
+    # The depositor's one-time code: lifetime (seconds) and wrong tries.
+    DEPOSIT_OTP_TTL_SECONDS = values.PositiveIntegerValue(
+        600, environ_name="DEPOSIT_OTP_TTL_SECONDS", environ_prefix=None
+    )
+    DEPOSIT_OTP_MAX_ATTEMPTS = values.PositiveIntegerValue(
+        5, environ_name="DEPOSIT_OTP_MAX_ATTEMPTS", environ_prefix=None
+    )
+    # Lifetime (seconds) of the upload session a verified code opens. Must
+    # cover the slowest upload of a full deposit.
+    DEPOSIT_SESSION_MAX_AGE = values.PositiveIntegerValue(
+        12 * 3600, environ_name="DEPOSIT_SESSION_MAX_AGE", environ_prefix=None
+    )
+    # Deposits a space or an agent's email may receive, and one verified
+    # depositor may make, over a sliding window ("count/period"; None to
+    # disable). Counted from DEPOSIT_RECEIVED events.
+    THROTTLE_DEPOSITS_PER_TARGET = ThrottleRateValue(
+        "30/day", environ_name="THROTTLE_DEPOSITS_PER_TARGET", environ_prefix=None
+    )
+    THROTTLE_DEPOSITS_PER_DEPOSITOR = ThrottleRateValue(
+        "10/day",
+        environ_name="THROTTLE_DEPOSITS_PER_DEPOSITOR",
+        environ_prefix=None,
+    )
+    # Codes one depositor address may be sent, from any IP. Each allows
+    # DEPOSIT_OTP_MAX_ATTEMPTS guesses, so this bounds guessing per address.
+    # Counted in the database, so it holds over days; the
+    # deposit_challenge_email throttle only stops bursts. Counts challenges,
+    # which the daily purge keeps past this period.
+    THROTTLE_DEPOSIT_CODES_PER_EMAIL = ThrottleRateValue(
+        "20/day",
+        environ_name="THROTTLE_DEPOSIT_CODES_PER_EMAIL",
+        environ_prefix=None,
+    )
+
+    # -- Deposit spaces --
+    # Days a deposit is kept, chosen per space among these. Comma-separated;
+    # must include DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS.
+    DEPOSIT_SPACE_RETENTION_CHOICES = values.ListValue(
+        [7, 30, 90],
+        environ_name="DEPOSIT_SPACE_RETENTION_CHOICES",
+        environ_prefix=None,
+        converter=int,
+    )
+    DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS = values.PositiveIntegerValue(
+        30, environ_name="DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS", environ_prefix=None
+    )
+
+    # -- Inbox sends --
+    # An agent's email an anonymous send may target, matched whole and
+    # case-insensitively, e.g. ``[^@\s]+@([a-z0-9-]+\.)*gouv\.fr``. Empty
+    # turns inbox sends off.
+    INBOX_RECIPIENT_EMAIL_REGEX = values.Value(
+        "", environ_name="INBOX_RECIPIENT_EMAIL_REGEX", environ_prefix=None
+    )
+    # Days an anonymous send is kept (claimed or not).
+    INBOX_RETENTION_DAYS = values.PositiveIntegerValue(
+        30, environ_name="INBOX_RETENTION_DAYS", environ_prefix=None
+    )
+
     # Grace period between the moment a transfer becomes terminal (expiry
     # reached, or auto-archive triggered by the last file being downloaded)
     # and the moment the periodic sweep is allowed to purge the S3 objects.
@@ -501,6 +573,31 @@ class Base(Configuration):
                 environ_name="API_PUBLIC_DOWNLOAD_THROTTLE_RATE",
                 environ_prefix=None,
             ),
+            # Asking for a depositor's one-time code: per IP, and per
+            # depositor email, which bounds mail sent to a third party (see
+            # also THROTTLE_DEPOSIT_CODES_PER_EMAIL).
+            "deposit_challenge": values.Value(
+                default="20/hour",
+                environ_name="API_DEPOSIT_CHALLENGE_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+            "deposit_challenge_email": values.Value(
+                default="5/hour",
+                environ_name="API_DEPOSIT_CHALLENGE_EMAIL_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+            # Code guesses, per IP. Each code also allows only a few.
+            "deposit_verify": values.Value(
+                default="30/hour",
+                environ_name="API_DEPOSIT_VERIFY_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
+            # The public page of a deposit space, per IP.
+            "deposit_public": values.Value(
+                default="300/hour",
+                environ_name="API_DEPOSIT_PUBLIC_THROTTLE_RATE",
+                environ_prefix=None,
+            ),
         },
         # Anonymous throttling keys on REMOTE_ADDR: the rightmost
         # X-Forwarded-For entry when USE_X_FORWARDED_FOR is on (set by
@@ -524,6 +621,8 @@ class Base(Configuration):
     CORS_ALLOW_ALL_ORIGINS = values.BooleanValue(False)
     CORS_ALLOWED_ORIGINS = values.ListValue([])
     CORS_ALLOWED_ORIGIN_REGEXES = values.ListValue([])
+    # A depositor's upload session rides in this header (deposit drafts).
+    CORS_ALLOW_HEADERS = (*default_headers, "x-deposit-token")
 
     # Sentry
     SENTRY_DSN = values.Value(None, environ_name="SENTRY_DSN", environ_prefix=None)
@@ -819,6 +918,22 @@ class Base(Configuration):
                 f"TRANSFER_DEFAULT_EXPIRY_DAYS ({cls.TRANSFER_DEFAULT_EXPIRY_DAYS}) "
                 f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
+
+        if (
+            cls.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS
+            not in cls.DEPOSIT_SPACE_RETENTION_CHOICES
+        ):
+            raise ValueError(
+                "DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS "
+                f"({cls.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS}) must be one of "
+                f"DEPOSIT_SPACE_RETENTION_CHOICES ({cls.DEPOSIT_SPACE_RETENTION_CHOICES})."
+            )
+        try:
+            re.compile(cls.INBOX_RECIPIENT_EMAIL_REGEX)
+        except re.error as err:
+            raise ValueError(
+                f"INBOX_RECIPIENT_EMAIL_REGEX is not a valid pattern: {err}"
+            ) from err
 
         # Fail fast: scanning enabled but its endpoints/credentials unset would
         # otherwise surface only later, as silently-skipped scans in the worker.

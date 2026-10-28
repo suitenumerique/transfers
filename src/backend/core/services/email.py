@@ -9,6 +9,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils import timezone
 
+from core.enums import ScanStatus
 from core.services.recipient_activity import activity_for
 
 logger = logging.getLogger(__name__)
@@ -229,3 +230,115 @@ def send_download_receipt(transfer, recipient, connection=None):
         transfer.id,
         recipient.id,
     )
+
+
+def _deposit_target_label(transfer_or_challenge) -> str:
+    """Who a deposit is for, in the depositor's words: the space name (set
+    by the agent) or the agent's address (typed by the depositor, but
+    vetted by INBOX_RECIPIENT_EMAIL_REGEX)."""
+    space = transfer_or_challenge.deposit_space
+    if space is not None:
+        # Never the owner's email: anyone with the link can ask for a code.
+        owner_name = space.owner.full_name
+        return f"{space.name} ({owner_name})" if owner_name else space.name
+    return transfer_or_challenge.inbox_email
+
+
+def send_deposit_otp(challenge, code):
+    """Email a depositor their one-time code. Sent from the request, not a
+    task, so the code never sits in the broker. Carries nothing the
+    depositor typed: the address is theirs to prove, not to write to."""
+    base_url = _public_base_url()
+    subject = f"Votre code de vérification : {code}"
+    ctx = {
+        **_common_context(base_url),
+        "subject": subject,
+        "code": code,
+        "target_label": _deposit_target_label(challenge),
+        "ttl_minutes": max(1, settings.DEPOSIT_OTP_TTL_SECONDS // 60),
+        "banner_label": "Vérification de votre adresse e-mail.",
+        "banner_icon": "&#x1F512;",
+    }
+    _send_multipart(
+        subject=subject,
+        text_body=render_to_string("core/emails/deposit_otp.txt", ctx),
+        html_body=render_to_string("core/emails/deposit_otp.html", ctx),
+        to=[challenge.depositor_email],
+    )
+    logger.info("Sent deposit code for challenge %s", challenge.id)
+
+
+def _unscanned_count(files) -> int:
+    return sum(1 for f in files if f.scan_status != ScanStatus.CLEAN)
+
+
+def send_deposit_notification(transfer, claim_token=""):
+    """Tell the agent a deposit arrived: the space's owner, or for an
+    anonymous send the address it was sent to. ``claim_token`` is set when
+    that address has no account attached yet."""
+    owner = transfer.owner
+    to = owner.email if owner is not None else transfer.inbox_email
+    if not to:
+        logger.warning("No address to notify of deposit %s", transfer.id)
+        return
+    base_url = _public_base_url()
+    files = list(transfer.files.all())
+    total_size = sum(f.plaintext_size or f.size for f in files)
+    expires_in_days = max(
+        1,
+        math.ceil((transfer.expires_at - timezone.now()).total_seconds() / 86400),
+    )
+    if claim_token:
+        cta_url = f"{base_url}/inbox/claim?token={claim_token}"
+    else:
+        cta_url = f"{base_url}/transfers/{transfer.id}"
+    subject = f"Nouveau dépôt de {transfer.depositor_email}"
+    ctx = {
+        **_common_context(base_url),
+        "subject": subject,
+        "transfer": transfer,
+        "space": transfer.deposit_space,
+        "files": files,
+        "total_size": total_size,
+        "unscanned_count": _unscanned_count(files),
+        "expires_in_days": expires_in_days,
+        "claim": bool(claim_token),
+        "banner_label": "Des fichiers ont été déposés pour vous.",
+        "banner_icon": "&#x21C5;",
+        "cta_url": cta_url,
+        "cta_label": "Récupérer les fichiers",
+        "cta_icon": "&#x2B07;",
+    }
+    _send_multipart(
+        subject=subject,
+        text_body=render_to_string("core/emails/deposit_received.txt", ctx),
+        html_body=render_to_string("core/emails/deposit_received.html", ctx),
+        to=[to],
+    )
+    logger.info("Sent deposit notification for transfer %s", transfer.id)
+
+
+def send_deposit_receipt(transfer):
+    """Confirm to the depositor what they sent and to whom. No link: the
+    depositor has no access to the files once sent."""
+    base_url = _public_base_url()
+    files = list(transfer.files.all())
+    total_size = sum(f.plaintext_size or f.size for f in files)
+    subject = "Votre dépôt a bien été transmis"
+    ctx = {
+        **_common_context(base_url),
+        "subject": subject,
+        "transfer": transfer,
+        "target_label": _deposit_target_label(transfer),
+        "files": files,
+        "total_size": total_size,
+        "banner_label": "Votre dépôt a bien été transmis.",
+        "banner_icon": "&#x2714;",
+    }
+    _send_multipart(
+        subject=subject,
+        text_body=render_to_string("core/emails/deposit_receipt.txt", ctx),
+        html_body=render_to_string("core/emails/deposit_receipt.html", ctx),
+        to=[transfer.depositor_email],
+    )
+    logger.info("Sent deposit receipt for transfer %s", transfer.id)

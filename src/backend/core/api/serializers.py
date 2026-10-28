@@ -11,6 +11,7 @@ from core import models
 from core.enums import SharingMode
 from core.services import encryption, safe_http
 from core.services.recipient_activity import activity_by_recipient
+from core.templatetags.humanize_size import humanize_size
 
 # URL-safe base64 alphabet, no padding required. The frontend ships exactly
 # 43 chars for a 256-bit key, but accept the padded 44-char form too so a
@@ -23,6 +24,31 @@ _ENCRYPTION_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 # the recipient Service Worker share this constant; the value must stay in
 # sync across all three.
 CRYPTO_OVERHEAD_PER_CHUNK = 12 + 16
+
+
+def validate_encryption_key(value):
+    """base64url key material only, decoding to a full AES-256 key, so a
+    malformed value can't be stored and later served as an un-decryptable
+    key."""
+    if not value:
+        return value
+    if not _ENCRYPTION_KEY_RE.match(value):
+        raise serializers.ValidationError(
+            "Must be URL-safe base64 (A-Z, a-z, 0-9, '-', '_'; '=' padding optional)."
+        )
+    try:
+        encryption.decode_key(value)
+    except ValueError as err:
+        raise serializers.ValidationError(
+            "Must decode to a 32-byte AES-256 key."
+        ) from err
+    return value
+
+
+def single_line(value: str) -> str:
+    """Join the lines of a depositor's text: in a plain-text email, an
+    embedded line break would let it pass as a line of the message."""
+    return " ".join(value.splitlines())
 
 
 def _expected_ciphertext_size(plaintext_size: int, chunk_size: int) -> int:
@@ -211,6 +237,26 @@ class TransferEventSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+# Who an inbound transfer came from, and where it was deposited.
+_DEPOSIT_FIELDS = (
+    "direction",
+    "deposit_space",
+    "inbox_email",
+    "depositor_name",
+    "depositor_email",
+)
+
+
+class TransferRenameSerializer(serializers.ModelSerializer):
+    """The one field an owner may change on a finalized transfer."""
+
+    title = serializers.CharField(max_length=80)
+
+    class Meta:
+        model = models.Transfer
+        fields = ["title"]
+
+
 class TransferListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for transfer list.
 
@@ -242,6 +288,7 @@ class TransferListSerializer(serializers.ModelSerializer):
             "pending_deletion_at",
             "deactivation_reason",
             "confidential",
+            *_DEPOSIT_FIELDS,
         ]
         read_only_fields = fields
 
@@ -272,6 +319,7 @@ class TransferDetailSerializer(serializers.ModelSerializer):
             "deactivation_reason",
             "confidential",
             "encryption_chunk_size",
+            *_DEPOSIT_FIELDS,
         ]
         read_only_fields = fields
 
@@ -338,10 +386,13 @@ class DraftAddFileSerializer(serializers.Serializer):
         return value
 
     def validate_size(self, value):
-        if value > settings.TRANSFER_MAX_FILE_SIZE:
-            max_go = settings.TRANSFER_MAX_FILE_SIZE // (1024**3)
+        # The viewset sets the cap: deposits use a lower one.
+        max_file_size = self.context.get(
+            "max_file_size", settings.TRANSFER_MAX_FILE_SIZE
+        )
+        if value > max_file_size:
             raise serializers.ValidationError(
-                f"File exceeds maximum size of {max_go} Go."
+                f"File exceeds maximum size of {humanize_size(max_file_size)}."
             )
         return value
 
@@ -473,23 +524,7 @@ class DraftFinalizeSerializer(serializers.Serializer):
     )
 
     def validate_encryption_key(self, value):
-        # base64url key material only, and it must decode to a full AES-256
-        # key — reject any other alphabet or wrong size so a malformed value
-        # can't be stored and later served to a recipient as an un-decryptable
-        # key.
-        if not value:
-            return value
-        if not _ENCRYPTION_KEY_RE.match(value):
-            raise serializers.ValidationError(
-                "Must be URL-safe base64 (A-Z, a-z, 0-9, '-', '_'; '=' padding optional)."
-            )
-        try:
-            encryption.decode_key(value)
-        except ValueError as err:
-            raise serializers.ValidationError(
-                "Must decode to a 32-byte AES-256 key."
-            ) from err
-        return value
+        return validate_encryption_key(value)
 
     def validate(self, attrs):
         mode = attrs.get("sharing_mode", SharingMode.LINK)
@@ -601,6 +636,11 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             "confidential",
             "encryption_chunk_size",
             "encryption_key",
+            # Only the owner reaches an inbound transfer here.
+            "direction",
+            "deposit_space",
+            "depositor_name",
+            "depositor_email",
         ]
         read_only_fields = fields
 
@@ -624,3 +664,139 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
         # filter as a belt-and-suspenders defense against any stray row.
         completed = obj.files.filter(upload_completed_at__isnull=False)
         return DownloadTransferFileSerializer(completed, many=True).data
+
+
+# -- Deposit serializers --
+
+
+class DepositSpaceSerializer(serializers.ModelSerializer):
+    """An agent's deposit space. ``max_deposit_size`` is the effective cap;
+    only the Django admin can change it."""
+
+    deposit_count = serializers.IntegerField(read_only=True)
+    max_deposit_size = serializers.IntegerField(
+        source="effective_max_deposit_size", read_only=True
+    )
+    retention_days = serializers.IntegerField(
+        required=False, default=settings.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS
+    )
+
+    class Meta:
+        model = models.DepositSpace
+        fields = [
+            "id",
+            "name",
+            "link_token",
+            "retention_days",
+            "max_deposit_size",
+            "revoked_at",
+            "created_at",
+            "deposit_count",
+        ]
+        read_only_fields = ["id", "link_token", "revoked_at", "created_at"]
+
+    def validate_name(self, value):
+        return single_line(value)
+
+    def validate_retention_days(self, value):
+        if value not in settings.DEPOSIT_SPACE_RETENTION_CHOICES:
+            raise serializers.ValidationError(
+                f"Must be one of {settings.DEPOSIT_SPACE_RETENTION_CHOICES}."
+            )
+        return value
+
+
+class PublicDepositSpaceSerializer(serializers.ModelSerializer):
+    """What a depositor sees of a space: never the owner's email."""
+
+    owner_name = serializers.SerializerMethodField()
+    max_deposit_size = serializers.IntegerField(
+        source="effective_max_deposit_size", read_only=True
+    )
+    max_files = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.DepositSpace
+        fields = ["name", "owner_name", "max_deposit_size", "max_files"]
+        read_only_fields = fields
+
+    def get_owner_name(self, obj) -> str:
+        return obj.owner.full_name or ""
+
+    def get_max_files(self, obj) -> int:
+        return settings.TRANSFER_MAX_FILES_PER_TRANSFER
+
+
+class DepositChallengeCreateSerializer(serializers.Serializer):
+    """POST /deposit-challenges/: a deposit space's link token or, for an
+    inbox send, an agent's email, and who the depositor is."""
+
+    space_token = serializers.CharField(required=False, max_length=64)
+    recipient_email = serializers.EmailField(required=False)
+    depositor_name = serializers.CharField(max_length=100)
+    depositor_email = serializers.EmailField()
+
+    def validate_depositor_name(self, value):
+        return single_line(value)
+
+    def validate(self, attrs):
+        if bool(attrs.get("space_token")) == bool(attrs.get("recipient_email")):
+            raise serializers.ValidationError(
+                "Give exactly one of space_token and recipient_email."
+            )
+        return attrs
+
+
+class DepositVerifySerializer(serializers.Serializer):
+    code = serializers.RegexField(r"^[0-9]{6}\Z")
+
+
+class InboxClaimSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=200)
+
+
+class DepositAddFileSerializer(DraftAddFileSerializer):
+    """Deposits are browser uploads only: no server-side Drive import."""
+
+    def validate_source_url(self, value):
+        if value:
+            raise serializers.ValidationError("Deposits cannot import from Drive.")
+        return value
+
+    def validate_filename(self, value):
+        return single_line(value)
+
+
+class DepositFinalizeSerializer(serializers.Serializer):
+    """POST /deposit-drafts/{id}/finalize/. A deposit is never confidential:
+    its owner decrypts with the stored key, and the scanner reads it."""
+
+    title = serializers.CharField(
+        max_length=80, required=False, allow_blank=True, default=""
+    )
+    encryption_key = serializers.CharField(max_length=64)
+
+    def validate_title(self, value):
+        return single_line(value)
+
+    def validate_encryption_key(self, value):
+        return validate_encryption_key(value)
+
+
+class DepositReceiptSerializer(serializers.ModelSerializer):
+    """What finalize answers the depositor. No token, no key: the depositor
+    has no access to the files once sent."""
+
+    file_count = serializers.SerializerMethodField()
+    total_size = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Transfer
+        fields = ["title", "file_count", "total_size", "created_at"]
+        read_only_fields = fields
+
+    def get_file_count(self, obj) -> int:
+        return len(obj.files.all())
+
+    def get_total_size(self, obj) -> int:
+        return sum(f.plaintext_size or f.size for f in obj.files.all())

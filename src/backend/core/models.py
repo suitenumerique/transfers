@@ -20,6 +20,7 @@ from core.enums import (
     DeactivationReason,
     ScanStatus,
     SharingMode,
+    TransferDirection,
     TransferEventType,
     TransferStatus,
     UserAbilities,
@@ -184,6 +185,9 @@ class User(AbstractBaseUser, BaseModel, auth_models.PermissionsMixin):
             "(e.g. DeployCenter entitlements). Keys come from OIDC_STORE_CLAIMS."
         ),
     )
+    # The address this user proved they read, by claiming an anonymous send
+    # mailed to it. Later sends to it attach to them without a claim.
+    inbox_claimed_email = models.EmailField(blank=True, default="")
 
     objects = UserManager()
 
@@ -213,13 +217,101 @@ def _generate_recipient_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-class Transfer(BaseModel):
-    """A file transfer created by an agent."""
+class DepositSpace(BaseModel):
+    """A link an agent hands out so people without an account can deposit
+    files for them. Each deposit becomes an inbound ``Transfer``. The space
+    lives until revoked; deposits expire after ``retention_days``."""
 
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="deposit_spaces",
+    )
+    name = models.CharField(max_length=80)
+    link_token = models.CharField(
+        max_length=64,
+        unique=True,
+        default=_generate_public_token,
+    )
+    # Checked against DEPOSIT_SPACE_RETENTION_CHOICES by the API, not here, so
+    # changing the setting needs no migration.
+    retention_days = models.PositiveSmallIntegerField()
+    max_deposit_size = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        validators=[validators.MinValueValidator(1)],
+        help_text="Bytes one deposit may hold. Empty means "
+        "DEPOSIT_MAX_TOTAL_SIZE. Only set from this admin.",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "core_deposit_space"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def effective_max_deposit_size(self) -> int:
+        return self.max_deposit_size or settings.DEPOSIT_MAX_TOTAL_SIZE
+
+    @property
+    def is_open(self) -> bool:
+        return self.revoked_at is None and self.owner.is_active
+
+
+class DepositChallenge(BaseModel):
+    """A depositor proving their email with a one-time code, then holding
+    the upload session it unlocks. Targets a deposit space, or an agent's
+    email for an inbox send. One challenge yields one deposit."""
+
+    deposit_space = models.ForeignKey(
+        DepositSpace,
+        on_delete=models.CASCADE,
+        related_name="challenges",
+        null=True,
+        blank=True,
+    )
+    inbox_email = models.EmailField(blank=True, default="")
+    depositor_email = models.EmailField()
+    depositor_name = models.CharField(max_length=100)
+    # HMAC-SHA256 of the code, hex (see services.deposits._code_hash).
+    code_hash = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    # Stamped at finalize, so a session cannot produce a second deposit.
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        db_table = "core_deposit_challenge"
+        ordering = ["-created_at"]
+        constraints = [
+            CheckConstraint(
+                condition=(
+                    Q(deposit_space__isnull=False, inbox_email="")
+                    | (Q(deposit_space__isnull=True) & ~Q(inbox_email=""))
+                ),
+                name="depositchallenge_exactly_one_target",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Challenge {self.id}"
+
+
+class Transfer(BaseModel):
+    """A file transfer created by an agent, or deposited for one (inbound)."""
+
+    # Empty once its agent is deleted, and on an anonymous send nobody has
+    # claimed yet.
     owner = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name="transfers",
     )
     title = models.CharField(max_length=80, blank=True, default="")
@@ -304,6 +396,27 @@ class Transfer(BaseModel):
         "non-confidential encrypted transfers; empty for confidential ones "
         "(key never reaches us) and legacy plaintext transfers.",
     )
+    # Inbound transfers are deposits: files sent *to* the owner by someone
+    # without an account. Only the owner may open them, the public token is
+    # no capability (see the download views).
+    direction = models.CharField(
+        max_length=8,
+        choices=TransferDirection.choices,
+        default=TransferDirection.OUTBOUND,
+    )
+    deposit_space = models.ForeignKey(
+        DepositSpace,
+        on_delete=models.SET_NULL,
+        related_name="deposits",
+        null=True,
+        blank=True,
+    )
+    # Anonymous send: the agent's address it was sent to. ``owner`` stays
+    # empty until that agent claims it.
+    inbox_email = models.EmailField(blank=True, default="")
+    # Copied from the verified challenge, never from the request.
+    depositor_name = models.CharField(max_length=100, blank=True, default="")
+    depositor_email = models.EmailField(blank=True, default="")
 
     class Meta:
         db_table = "core_transfer"
@@ -315,6 +428,20 @@ class Transfer(BaseModel):
                 # posted key; this makes it a database-level invariant too.
                 condition=Q(confidential=False) | Q(encryption_key=""),
                 name="transfer_confidential_has_no_key",
+            ),
+            CheckConstraint(
+                # The owner of a deposit can only read it with the stored key.
+                condition=Q(direction=TransferDirection.OUTBOUND)
+                | (Q(confidential=False) & ~Q(encryption_key="")),
+                name="transfer_inbound_has_key",
+            ),
+        ]
+        indexes = [
+            # Claiming looks up unclaimed sends by address.
+            models.Index(
+                fields=["inbox_email"],
+                condition=Q(owner__isnull=True, direction=TransferDirection.INBOUND),
+                name="transfer_unclaimed_inbox_idx",
             ),
         ]
 
@@ -344,6 +471,10 @@ class Transfer(BaseModel):
         # ``TransferDraft`` and never promote to Transfer until finalize.
         # So accessibility only depends on status + expiry.
         return self.status == TransferStatus.ACTIVE and not self.is_expired
+
+    @property
+    def is_inbound(self) -> bool:
+        return self.direction == TransferDirection.INBOUND
 
     @property
     def is_encrypted(self) -> bool:
@@ -451,12 +582,27 @@ class TransferDraft(BaseModel):
     never surfaced publicly and hold no transfer-level metadata: title,
     sharing_mode, recipients and expiry all come from the finalize
     request body.
+
+    A deposit's draft has no owner: it belongs to the depositor's challenge
+    instead, so the agent cannot drive it through ``/drafts/``.
     """
 
     owner = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="drafts",
+        null=True,
+        blank=True,
+    )
+    # Deleting a challenge (with its space or user) drops the draft without
+    # its S3 objects; the orphan sweep reclaims them. The purge task only
+    # removes challenges that no longer hold a draft.
+    deposit_challenge = models.ForeignKey(
+        DepositChallenge,
+        on_delete=models.CASCADE,
+        related_name="drafts",
+        null=True,
+        blank=True,
     )
     # Set on the first add-file call and copied to the Transfer at finalize.
     # Every draft is encrypted (the client encrypts before upload), so this
@@ -478,6 +624,21 @@ class TransferDraft(BaseModel):
     class Meta:
         db_table = "core_transfer_draft"
         ordering = ["-created_at"]
+        constraints = [
+            CheckConstraint(
+                condition=(
+                    Q(owner__isnull=False, deposit_challenge__isnull=True)
+                    | Q(owner__isnull=True, deposit_challenge__isnull=False)
+                ),
+                name="transferdraft_owner_xor_challenge",
+            ),
+            # One challenge, one upload.
+            models.UniqueConstraint(
+                fields=["deposit_challenge"],
+                condition=Q(deposit_challenge__isnull=False),
+                name="transferdraft_one_per_challenge",
+            ),
+        ]
 
     def __str__(self):
         return f"Draft {self.id}"
@@ -675,8 +836,16 @@ class TransferEvent(BaseModel):
     class Meta:
         db_table = "core_transfer_event"
         ordering = ["-created_at"]
-        # The outbound recipient quota reads an agent's recent creations.
-        indexes = [models.Index(fields=["actor_id", "event_type", "created_at"])]
+        indexes = [
+            # The outbound recipient quota reads an agent's recent creations.
+            models.Index(fields=["actor_id", "event_type", "created_at"]),
+            # The deposit caps read recent deposits.
+            models.Index(
+                fields=["created_at"],
+                condition=Q(event_type=TransferEventType.DEPOSIT_RECEIVED),
+                name="transferevent_deposit_idx",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.event_type} on {self.transfer_id}"

@@ -54,6 +54,49 @@ Abuse limits:
 
 Throttle counters live in the default cache (Redis in production).
 
+## Receiving files (deposits)
+
+People without an account can send files to an agent, two ways:
+
+- **Deposit spaces.** An agent creates spaces (`/spaces`), each with a link
+  `/d/<token>` they hand out. The space lives until the agent closes it;
+  each deposit is kept for the space's retention.
+- **Anonymous sends.** On `/send`, a visitor sends files straight to an
+  agent's address, if it matches `INBOX_RECIPIENT_EMAIL_REGEX`.
+
+Either way the depositor gives a name, an email and a subject, and proves
+the email with a 6-digit code sent to it. The code opens an upload session
+(`X-Deposit-Token`) for one deposit. The agent is emailed at each deposit,
+the depositor gets a receipt. A deposit is an inbound transfer: only its
+owner can open its link, and it is never confidential, since the owner
+decrypts with the stored key and the antivirus reads it. An infected file
+refuses the deposit; a file the antivirus could not check goes through,
+and the agent must confirm before downloading it.
+
+An anonymous send to an address nobody has claimed yet carries a claim
+link: the agent signs in with ProConnect as that address and collects it.
+That also records that this account reads the mailbox, so later sends to
+it attach at once. Matching the identity email alone would not do: any
+provider asserting the address would get the files (see
+`docs/authentication.md`).
+
+| Setting | Default | Effect |
+|---|---|---|
+| `DEPOSIT_MAX_TOTAL_SIZE` | 10 GiB | Cap on one deposit, all files together. A space can override it in the Django admin (`max_deposit_size`), nowhere else |
+| `DEPOSIT_SPACE_RETENTION_CHOICES` | `7,30,90` | Days a space may keep its deposits for |
+| `DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS` | 30 | Default retention; must be in `DEPOSIT_SPACE_RETENTION_CHOICES` |
+| `INBOX_RECIPIENT_EMAIL_REGEX` | _(empty: off)_ | Agent addresses an anonymous send may target, matched whole and case-insensitively, e.g. `[^@\s]+@([a-z0-9-]+\.)*gouv\.fr`. Empty hides `/send` |
+| `INBOX_RETENTION_DAYS` | 30 | Days an anonymous send is kept |
+| `DEPOSIT_OTP_TTL_SECONDS` / `DEPOSIT_OTP_MAX_ATTEMPTS` | 600 / 5 | Lifetime and wrong tries of a code |
+| `DEPOSIT_SESSION_MAX_AGE` | 43200 | Seconds the upload session a code opens lasts; must cover the slowest full upload |
+| `THROTTLE_DEPOSITS_PER_TARGET` | `30/day` | Deposits one space or one agent address may receive per sliding period (429 past it) |
+| `THROTTLE_DEPOSIT_CODES_PER_EMAIL` | `20/day` | Codes one depositor address may be sent, from any IP; each allows `DEPOSIT_OTP_MAX_ATTEMPTS` guesses, so this bounds guessing per address |
+| `THROTTLE_DEPOSITS_PER_DEPOSITOR` | `10/day` | Deposits one verified depositor email may make per sliding period |
+| `API_DEPOSIT_CHALLENGE_THROTTLE_RATE` | `20/hour` | Code requests per IP |
+| `API_DEPOSIT_CHALLENGE_EMAIL_THROTTLE_RATE` | `5/hour` | Code requests per depositor email, from any IP: bounds the mail one address can be sent |
+| `API_DEPOSIT_VERIFY_THROTTLE_RATE` | `30/hour` | Code guesses per IP |
+| `API_DEPOSIT_PUBLIC_THROTTLE_RATE` | `300/hour` | Deposit page loads per IP |
+
 ## Configuration
 
 S3 / storage:
@@ -136,6 +179,8 @@ Django admin, at `/admin/worker-dashboard/` (superusers only).
 | `sweep_orphan_s3_storage_task` | daily, at 00:45 | Safety net — should report 0; non-zero signals a leak in a per-row path |
 | `reap_stale_pending_scans_task` | every 5 min, from :02 | Re-submits scans whose result never came back |
 | `send_recipient_invitations_task` | on-demand | Triggered by `finalize` (email mode) and `resend` |
+| `send_deposit_notification_task` / `send_deposit_receipt_task` | on-demand | Triggered by a deposit's finalize |
+| `purge_deposit_challenges_task` | daily, at 00:50 | Drops depositor codes and sessions that hold no upload, once past the upload session and the `THROTTLE_DEPOSIT_CODES_PER_EMAIL` period (25 h by default) |
 
 `python worker.py --ping` is the worker's healthcheck: it sends a ping on a
 queue only this container consumes and exits 0 once the answer comes back.

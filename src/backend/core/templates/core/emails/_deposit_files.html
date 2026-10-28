@@ -1,0 +1,30 @@
+{% load humanize_size %}
+  <tr>
+    <td style="padding:0 32px 8px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fafbfc;border:1px solid #e1e2e5;border-radius:10px;">
+        <tr>
+          <td style="padding:16px 20px;font-weight:600;font-size:14px;color:#25252f;border-bottom:1px solid #ebedf0;">
+            {{ files|length }} {% if files|length == 1 %}élément{% else %}éléments{% endif %}
+            <span style="color:#5d5d70;font-weight:400;"> &middot; {{ total_size|humanize_size }}</span>
+          </td>
+        </tr>
+        {% for file in files %}
+        <tr>
+          <td style="padding:12px 20px;{% if not forloop.last %}border-bottom:1px solid #ebedf0;{% endif %}font-size:14px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="22" style="vertical-align:middle;color:#5d5d70;">
+                  <span style="font-size:18px;">&#128196;</span>
+                </td>
+                <td style="vertical-align:middle;color:#25252f;font-weight:600;">{{ file.filename }}</td>
+                <td style="vertical-align:middle;color:#5d5d70;font-weight:400;text-align:right;white-space:nowrap;">
+                  &middot; {{ file.plaintext_size|default:file.size|humanize_size }}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </td>
+  </tr>
