@@ -62,13 +62,23 @@ def _resume_token_valid(token, transfer, file_id) -> bool:
     return value == f"{transfer.id}:{file_id}"
 
 
-def _fetch_transfer_by_token(public_token: str) -> models.Transfer | None:
+def _fetch_transfer_by_token(public_token: str, request) -> models.Transfer | None:
+    """The transfer behind a public token, as this visitor may see it. An
+    inbound transfer (a deposit) is its owner's alone: for anyone else the
+    token is no capability, and the transfer reads as unknown."""
     try:
-        return models.Transfer.objects.prefetch_related("files").get(
+        transfer = models.Transfer.objects.prefetch_related("files").get(
             public_token=public_token
         )
     except models.Transfer.DoesNotExist:
         return None
+    if transfer.is_inbound and not (
+        request.user.is_authenticated
+        and transfer.owner_id is not None
+        and request.user.id == transfer.owner_id
+    ):
+        return None
+    return transfer
 
 
 def _denied_access_response(transfer: models.Transfer) -> Response | None:
@@ -203,7 +213,7 @@ class DownloadTransferView(APIView):
     throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token):
-        transfer = _fetch_transfer_by_token(public_token)
+        transfer = _fetch_transfer_by_token(public_token, request)
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 
@@ -228,7 +238,7 @@ class DownloadFileView(APIView):
     throttle_classes = [PublicDownloadThrottle]
 
     def get(self, request, public_token, file_id):
-        transfer = _fetch_transfer_by_token(public_token)
+        transfer = _fetch_transfer_by_token(public_token, request)
         if transfer is None:
             return Response(TRANSFER_NOT_FOUND_BODY, status=404)
 

@@ -59,7 +59,7 @@ function StorageGauge({
 // Plain CSS rotation — the SVG node itself is stable across draft
 // re-renders (row `key` is df.key, which doesn't change during polling),
 // so the animation keeps spinning without resetting every 2s tick.
-function ImportSpinner() {
+export function ImportSpinner() {
   return (
     <svg
       width="22"
@@ -91,7 +91,7 @@ function ImportSpinner() {
 // shrinks as percent grows so the brand-colored arc stretches clockwise
 // starting from the top. Clamped to [0, 100] in case upstream reports
 // floats / overshoot.
-function UploadRing({ percent }: { percent: number }) {
+export function UploadRing({ percent }: { percent: number }) {
   const p = Math.max(0, Math.min(100, percent));
   const radius = 9;
   const circumference = 2 * Math.PI * radius;
@@ -133,7 +133,7 @@ function stripExtension(filename: string): string {
   return filename.replace(/\.[^.]+$/, "");
 }
 
-function percent(df: DraftFile): number {
+export function percent(df: DraftFile): number {
   if (df.total === 0) return 0;
   return Math.min(100, Math.round((df.loaded / df.total) * 100));
 }

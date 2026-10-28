@@ -229,8 +229,33 @@ interface FinalizePendingResponse {
   import_progress?: DriveImportProgress[];
 }
 
-export function useTransferDraft(): TransferDraftHandle {
+export interface TransferDraftOptions {
+  // The draft endpoints: ``/drafts`` for an agent, ``/deposit-drafts`` for a
+  // depositor, whose session token rides in ``headers``.
+  basePath?: string;
+  headers?: Record<string, string>;
+}
+
+type DraftFetch = <T>(path: string, init?: RequestInit) => Promise<T>;
+
+function makeDraftFetch({
+  basePath = "/drafts",
+  headers,
+}: TransferDraftOptions): DraftFetch {
+  return <T>(path: string, init?: RequestInit) =>
+    apiFetch<T>(`${basePath}${path}`, {
+      ...init,
+      headers: { ...init?.headers, ...headers },
+    });
+}
+
+export function useTransferDraft(
+  options: TransferDraftOptions = {},
+): TransferDraftHandle {
   const queryClient = useQueryClient();
+  // Fixed for the hook's lifetime: a depositor's session token is known
+  // before the upload step mounts.
+  const draftFetchRef = useRef<DraftFetch>(makeDraftFetch(options));
   // Canonical chunk size for the whole upload + encryption pipeline. Pulled from
   // /config/ so we can never disagree with the backend (which imposes its
   // own ``settings.TRANSFER_CHUNK_SIZE`` on encryption drafts) about where one
@@ -350,7 +375,7 @@ export function useTransferDraft(): TransferDraftHandle {
     resetLocal();
     if (id) {
       try {
-        await apiFetch(`/drafts/${id}/abort/`, { method: "POST" });
+        await draftFetchRef.current(`/${id}/abort/`, { method: "POST" });
       } catch {
         // best-effort; the server cleanup task sweeps stale drafts anyway
       }
@@ -411,8 +436,8 @@ export function useTransferDraft(): TransferDraftHandle {
       signPart: async (partNumber) => {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
-        const resp = await apiFetch<SignPartResponse>(
-          `/drafts/${id}/sign-part/`,
+        const resp = await draftFetchRef.current<SignPartResponse>(
+          `/${id}/sign-part/`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -437,7 +462,7 @@ export function useTransferDraft(): TransferDraftHandle {
       .then(async (parts) => {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
-        await apiFetch(`/drafts/${id}/complete-upload/`, {
+        await draftFetchRef.current(`/${id}/complete-upload/`, {
           method: "POST",
           body: JSON.stringify({
             transfer_file_id: backendId,
@@ -541,7 +566,7 @@ export function useTransferDraft(): TransferDraftHandle {
         return;
       }
       try {
-        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
+        const resp = await draftFetchRef.current<DraftDetailResponse>(`/${id}/`);
         // Do NOT bail on ``cancelled`` here — this effect re-runs on every
         // ``files`` change (each upload completion), so a strict cancel
         // would drop the response of a poll started for file N whenever
@@ -623,7 +648,7 @@ export function useTransferDraft(): TransferDraftHandle {
     isRetryingRef.current = true;
     setIsRetrying(true);
     try {
-      await apiFetch(`/drafts/${id}/rescan/`, { method: "POST" });
+      await draftFetchRef.current(`/${id}/rescan/`, { method: "POST" });
     } catch {
       // Network/hiccup — keep the timed-out state so the user can retry again.
       return;
@@ -661,8 +686,8 @@ export function useTransferDraft(): TransferDraftHandle {
           draftFile.size,
           chunkSizeFromConfig,
         );
-        const resp = await apiFetch<AddFileResponse>(
-          "/drafts/add-file/",
+        const resp = await draftFetchRef.current<AddFileResponse>(
+          "/add-file/",
           {
             method: "POST",
             body: JSON.stringify({
@@ -694,16 +719,16 @@ export function useTransferDraft(): TransferDraftHandle {
             // file we just created IS the draft's only row, so aborting
             // the whole thing is the right cleanup.
             if (knownDraftId === null) {
-              await apiFetch(
-                `/drafts/${resp.draft_id}/abort/`,
+              await draftFetchRef.current(
+                `/${resp.draft_id}/abort/`,
                 { method: "POST" },
               );
               draftIdRef.current = null;
               draftInitPromiseRef.current = null;
               setDraftId(null);
             } else {
-              await apiFetch(
-                `/drafts/${resp.draft_id}/remove-file/`,
+              await draftFetchRef.current(
+                `/${resp.draft_id}/remove-file/`,
                 {
                   method: "POST",
                   body: JSON.stringify({
@@ -905,8 +930,8 @@ export function useTransferDraft(): TransferDraftHandle {
       if (!target.backendId || !draftIdRef.current) return;
 
       try {
-        await apiFetch(
-          `/drafts/${draftIdRef.current}/remove-file/`,
+        await draftFetchRef.current(
+          `/${draftIdRef.current}/remove-file/`,
           {
             method: "POST",
             body: JSON.stringify({ transfer_file_id: target.backendId }),
@@ -1007,8 +1032,8 @@ export function useTransferDraft(): TransferDraftHandle {
         let driveInterval = DRIVE_IMPORT_POLL_INITIAL_MS;
         let finalized: TransferDetail;
         for (;;) {
-          const resp = await apiFetch<TransferDetail | FinalizePendingResponse>(
-            `/drafts/${id}/finalize/`,
+          const resp = await draftFetchRef.current<TransferDetail | FinalizePendingResponse>(
+            `/${id}/finalize/`,
             {
               method: "POST",
               body: JSON.stringify(finalizeBody),

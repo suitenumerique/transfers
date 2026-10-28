@@ -1,4 +1,4 @@
-import type { ScanStatus } from "@/features/api/types";
+import type { ScanStatus, TransferDirection } from "@/features/api/types";
 
 // Statuses that mean "this file finalized without an antivirus verdict"
 // (either the scanner never got a chance, or the file itself couldn't be
@@ -52,4 +52,26 @@ export function isScanBlocking<T>(
     const s = statusOf(f);
     return s === "error" || s === "infected";
   });
+}
+
+// A deposit comes from someone without an account: an agent opening one
+// with a file the antivirus could not check must say so first. True when
+// the transfer is inbound and any file lacks a clean verdict.
+export function requiresUnscannedAck<T>(
+  direction: TransferDirection | undefined,
+  files: readonly T[],
+  statusOf: (file: T) => ScanStatus | undefined,
+): boolean {
+  return direction === "inbound" && hasUnscannedFiles(files, statusOf);
+}
+
+// The deposited files among ``files`` that the antivirus could not check:
+// downloading any of them asks for a confirmation first.
+export function unscannedDepositFiles<T>(
+  direction: TransferDirection | undefined,
+  files: readonly T[],
+  statusOf: (file: T) => ScanStatus | undefined,
+): T[] {
+  if (direction !== "inbound") return [];
+  return files.filter((f) => hasUnscannedFiles([f], statusOf));
 }
