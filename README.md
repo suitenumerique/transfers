@@ -28,6 +28,10 @@ Services:
 (`user1@example.local` / `user1`). Dev runs the real OIDC flow against a
 local Keycloak — no ProConnect needed. See [`docs/authentication.md`](docs/authentication.md).
 
+**Tests:** `make test` runs the backend and frontend unit tests. `make e2e`
+runs the end-to-end tests (Playwright) on a separate stack, beside the dev
+one. See [`src/e2e/README.md`](src/e2e/README.md).
+
 ## Configurable limits
 
 | Setting | Default | Effect |
