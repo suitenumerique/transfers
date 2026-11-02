@@ -43,6 +43,8 @@ FROM ${FRONTEND_IMAGE} AS frontend-source
 FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS go-build
 ARG TARGETARCH
 ARG GO_X_NET_VERSION=v0.60.0
+# Caddy 2.11.7 and lprobe 0.2.1 pull go-jose 4.1.5 / 4.1.4: GHSA-mgcc-cww5-fp2q.
+ARG GO_JOSE_VERSION=v4.1.7
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH}
 
 # Caddy's own cmd/caddy/main.go: the standard modules, no plugin.
@@ -56,6 +58,7 @@ RUN printf '%s\n' 'package main' \
       'func main() { caddycmd.Main() }' > main.go \
     && go mod init caddy \
     && go get "github.com/caddyserver/caddy/v2@${CADDY_VERSION}" "golang.org/x/net@${GO_X_NET_VERSION}" \
+       "github.com/go-jose/go-jose/v4@${GO_JOSE_VERSION}" \
     && go mod tidy \
     && go build -trimpath -ldflags="-w -s" -o /out/caddy .
 
@@ -67,6 +70,7 @@ RUN apk add --no-cache git \
     && test "$(git -C /src rev-parse HEAD)" = "${LPROBE_COMMIT}" \
     && cd /src \
     && go get "golang.org/x/net@${GO_X_NET_VERSION}" \
+       "github.com/go-jose/go-jose/v4@${GO_JOSE_VERSION}" \
     && go build -trimpath -ldflags="-w -s" -o /out/lprobe .
 
 FROM gcr.io/distroless/static-debian13:nonroot AS runtime-prod
