@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { TransferDetail } from "@/features/transfers/components/TransferDetail";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
 
 const TransferDetailPage = () => {
+  const { t } = useTranslation();
   const { id } = Route.useParams();
   const { data: transfer, isLoading, isError } = useTransfer(id);
 
@@ -14,7 +16,7 @@ const TransferDetailPage = () => {
       </div>
     );
   if (isError || !transfer)
-    return <p className="app-content">Transfert introuvable.</p>;
+    return <p className="app-content">{t("Transfer not found.")}</p>;
 
   return (
     <div className="app-content">

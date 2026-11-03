@@ -27,6 +27,15 @@ MANAGE_DB           = $(COMPOSE_RUN_APP_DB) python manage.py
 # ==============================================================================
 # RULES
 
+# These targets pass the extra goals through as arguments (`make test-back
+# core/tests/test_api_config.py`). Swallow them so make does not look for a
+# rule named after a path; other targets keep failing on unknown goals.
+ARGS_TARGETS = test-back test-front install-front
+ifneq ($(filter $(ARGS_TARGETS),$(firstword $(MAKECMDGOALS))),)
+%:
+	@:
+endif
+
 default: help
 
 data/media:
@@ -164,6 +173,36 @@ test-front: ## run the frontend tests
 	@args="$(filter-out $@,$(MAKECMDGOALS))" && \
 	$(COMPOSE) run --rm frontend-tools npm run test -- $${args:-${1}}
 .PHONY: test-front
+
+# -- End-to-end tests (compose.e2e.yaml, see src/e2e/README.md)
+
+E2E_COMPOSE = $(COMPOSE) -f compose.e2e.yaml --profile runner
+
+e2e: ## run the end-to-end tests on a fresh stack
+	@$(MAKE) e2e-up
+	@$(MAKE) e2e-test
+.PHONY: e2e
+
+e2e-up: ## start the end-to-end stack from scratch (ports 79xx)
+	@# Unlike `down`, also drops the anonymous volumes (node_modules, Redis),
+	@# which pile up otherwise. The report volume stays.
+	@$(E2E_COMPOSE) rm --force --stop --volumes
+	@$(E2E_COMPOSE) down
+	@$(E2E_COMPOSE) up -d --build --wait frontend worker
+.PHONY: e2e-up
+
+e2e-test: ## run Playwright on the running end-to-end stack (ARGS="tests/transfer-link.spec.ts")
+	@$(E2E_COMPOSE) run --rm --build playwright npx playwright test $(ARGS)
+.PHONY: e2e-test
+
+e2e-report: ## serve the last end-to-end report on http://localhost:9323
+	@$(E2E_COMPOSE) run --rm --no-deps -p 127.0.0.1:9323:9323 playwright \
+		npx playwright show-report /e2e-output/playwright-report --host 0.0.0.0
+.PHONY: e2e-report
+
+e2e-down: ## stop the end-to-end stack and drop its data
+	@$(E2E_COMPOSE) down --volumes
+.PHONY: e2e-down
 
 # -- Backend
 

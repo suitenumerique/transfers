@@ -1,0 +1,24 @@
+# End-to-end stack (compose.e2e.yaml): read after
+# env.d/development/backend.defaults, so only what differs is set here.
+# The e2e stack runs beside the dev stack, on ports 79xx instead of 89xx.
+
+DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:7980,http://localhost:7981
+
+# The browser uploads to and downloads from these presigned URLs.
+AWS_S3_DOMAIN_REPLACE=http://localhost:7986
+
+# Keycloak issues its URLs for localhost:7902 (see compose.e2e.yaml).
+OIDC_OP_AUTHORIZATION_ENDPOINT=http://localhost:7902/realms/transfers/protocol/openid-connect/auth
+OIDC_OP_LOGOUT_ENDPOINT=http://localhost:7902/realms/transfers/protocol/openid-connect/logout
+
+LOGIN_REDIRECT_URL=http://localhost:7980
+LOGIN_REDIRECT_URL_FAILURE=http://localhost:7980/errors
+LOGOUT_REDIRECT_URL=http://localhost:7980
+OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:7980,http://localhost:7981
+
+# Every test runs from one IP and reuses a few addresses: limits sized for
+# real traffic would fail the suite partway.
+THROTTLE_USER_OUTBOUND_RECIPIENTS=10000/day
+API_DRAFT_ADD_FILE_THROTTLE_RATE=10000/hour
+API_TRANSFER_RESEND_THROTTLE_RATE=10000/hour
+API_PUBLIC_DOWNLOAD_THROTTLE_RATE=10000/hour
