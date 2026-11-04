@@ -1,0 +1,210 @@
+# End-to-end test stack: the whole app, isolated from the dev stack
+# (compose.yaml) so both can run at once. Own project name, own ports (79xx
+# instead of 89xx), no persistent volume: `make e2e-down` leaves nothing.
+#
+# The browser must reach every service on the URLs the app hands out
+# (localhost:79xx: OIDC redirects, presigned S3 URLs, links in emails). The
+# Playwright runner relays those ports to the services from inside its own
+# container (src/e2e/scripts/forward-ports.mjs). It does not use the host
+# network: a host-network container renames the host and resets its network,
+# which drops the project's sshfs mount on a Lima VM.
+name: transfers-e2e
+
+services:
+  postgresql:
+    image: postgres:16.6
+    env_file:
+      - env.d/development/postgresql.defaults
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 1s
+      timeout: 2s
+      retries: 300
+
+  redis:
+    image: redis:7
+
+  # Tests read the emails through its REST API (GET /email).
+  mailcatcher:
+    image: maildev/maildev:2.2.1
+    ports:
+      - "127.0.0.1:7984:1080"
+
+  objectstorage:
+    image: rustfs/rustfs:1.0.0-alpha.83
+    environment:
+      - RUSTFS_ACCESS_KEY=transfers
+      - RUSTFS_SECRET_KEY=password
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CORS_ALLOWED_ORIGINS=*
+    # Owned by the image's user (rustfs, 10001), or it cannot write there.
+    tmpfs:
+      - /data:uid=10001,gid=10001
+    ports:
+      - "127.0.0.1:7986:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/health"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+
+  # Same realm as the dev stack (src/keycloak/realm.json lists the e2e ports
+  # among its redirect URIs). See compose.yaml for the hostname split.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.1
+    command:
+      - start-dev
+      - --import-realm
+      - --http-enabled=true
+      - --http-port=8802
+      - --hostname=http://localhost:7902
+      - --hostname-admin=http://localhost:7902
+      - --proxy-headers=xforwarded
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./src/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "127.0.0.1:7902:8802"
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/localhost/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3"
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+
+  backend:
+    image: transfers-e2e-backend
+    build:
+      context: src/backend
+      target: runtime-dev
+      args:
+        DOCKER_USER: ${DOCKER_USER:-1000}
+    user: ${DOCKER_USER:-1000}
+    environment:
+      - DJANGO_CONFIGURATION=Development
+    env_file:
+      - env.d/development/backend.defaults
+      - env.d/e2e/backend.e2e
+    volumes:
+      - ./src/backend:/app
+    # Migrates and creates the bucket on start. The bucket outlives a restart
+    # of the stack without `down`, hence the check.
+    command:
+      - sh
+      - -c
+      - >-
+        python manage.py migrate --noinput &&
+        python manage.py shell -c "import boto3; from django.conf import settings as s;
+        c = boto3.client('s3', endpoint_url=s.AWS_S3_ENDPOINT_URL, aws_access_key_id=s.AWS_S3_ACCESS_KEY_ID,
+        aws_secret_access_key=s.AWS_S3_SECRET_ACCESS_KEY);
+        names = [b['Name'] for b in c.list_buckets()['Buckets']];
+        s.AWS_STORAGE_BUCKET_NAME in names or c.create_bucket(Bucket=s.AWS_STORAGE_BUCKET_NAME)" &&
+        python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "127.0.0.1:7981:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/__heartbeat__/', timeout=1)"]
+      interval: 3s
+      retries: 40
+      start_period: 10s
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      objectstorage:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mailcatcher:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+
+  # Sends the emails (invitations, download receipts).
+  worker:
+    # The image the backend service builds.
+    image: transfers-e2e-backend
+    pull_policy: never
+    user: ${DOCKER_USER:-1000}
+    command: ["python", "worker.py"]
+    environment:
+      - DJANGO_CONFIGURATION=Development
+    env_file:
+      - env.d/development/backend.defaults
+      - env.d/e2e/backend.e2e
+    volumes:
+      - ./src/backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "worker.py", "--ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
+
+  frontend:
+    user: "${DOCKER_USER:-1000}"
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+      target: frontend-deps
+      args:
+        DOCKER_USER: ${DOCKER_USER:-1000}
+    env_file:
+      - env.d/development/frontend.defaults
+      - env.d/e2e/frontend.e2e
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./src/frontend/:/home/frontend/
+      # Keeps the image's node_modules (see compose.yaml).
+      - /home/frontend/node_modules/
+    ports:
+      - "127.0.0.1:7980:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 3s
+      retries: 40
+      start_period: 5s
+
+  playwright:
+    profiles:
+      - runner
+    build:
+      context: src/e2e
+    user: ${DOCKER_USER:-1000}
+    # Chromium needs more shared memory than Docker's 64 MB default.
+    shm_size: 1gb
+    # Opens localhost:79xx towards the services, then runs the command.
+    entrypoint: ["node", "/e2e/scripts/forward-ports.mjs"]
+    command: ["npx", "playwright", "test"]
+    environment:
+      - CI=${CI:-}
+      - HOME=/tmp
+      - E2E_OUTPUT=/e2e-output
+    volumes:
+      - ./src/e2e:/e2e
+      # Keeps the image's node_modules.
+      - /e2e/node_modules/
+      # Reports, traces and saved sessions: a volume by default, as Playwright
+      # writes many files at once, which network file systems handle badly.
+      # Set E2E_OUTPUT_DIR to a host folder to get them there (CI does).
+      - ${E2E_OUTPUT_DIR:-e2e-output}:/e2e-output
+    working_dir: /e2e
+    depends_on:
+      frontend:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+
+volumes:
+  e2e-output:

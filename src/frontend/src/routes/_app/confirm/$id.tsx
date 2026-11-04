@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
 import { TransferSuccess } from "@/features/transfers/components/TransferSuccess";
 import { useTransfer } from "@/features/transfers/api/useTransfer";
 
 const TransferConfirmPage = () => {
+  const { t } = useTranslation();
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const { data: transfer, isLoading, isError } = useTransfer(id);
@@ -42,7 +44,7 @@ const TransferConfirmPage = () => {
       </div>
     );
   if (isError || !transfer)
-    return <p className="app-content">Transfert introuvable.</p>;
+    return <p className="app-content">{t("Transfer not found.")}</p>;
 
   return (
     <div className="app-content home">
