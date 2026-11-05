@@ -1,0 +1,42 @@
+# Runs the end-to-end suite against what we actually ship: the production
+# frontend image (distroless + Caddy + the built bundle) instead of the Vite
+# dev server. Layered on top of compose.e2e.yaml, which it only overrides
+# where the two differ:
+#
+#   make e2e-prod        the whole run on a fresh stack
+#   make e2e-up-prod     just the stack, to browse it on localhost:7980
+#
+# What this covers that the dev server cannot: the real Content-Security-Policy
+# and the other security headers, Caddy's SPA fallback on a cold deep link
+# (/t/<token>), the Cache-Control split, the Host it forwards to Django -- and
+# the minified bundle rather than on-the-fly modules.
+#
+# The cost: a frontend source change needs an image rebuild (`make e2e-up-prod`
+# does it), and the bundle is minified, so a failure reads less well than on
+# the dev server. Keep the plain `make e2e` for writing and debugging specs.
+
+services:
+  frontend:
+    image: transfers-e2e-frontend-prod
+    build:
+      target: runtime-prod
+    # Caddy listens on $PORT, so the service keeps answering on 3000: the
+    # runner's port forwarder and the published port stay as they are, and
+    # specs need no change. The image's own HEALTHCHECK has 8080 compiled in
+    # (distroless has no shell to expand $PORT), hence the one below.
+    environment:
+      - PORT=3000
+      # rustfs, as the browser reaches it (AWS_S3_DOMAIN_REPLACE). Without it
+      # connect-src falls back to the Scaleway default and every upload is
+      # blocked by the CSP. TRANSFERS_FRONTEND_BACKEND_SERVER comes from
+      # env.d/e2e/frontend.e2e: Caddy and the dev proxy read the same variable.
+      - TRANSFERS_FRONTEND_S3_ORIGIN=http://localhost:7986
+    # The dev server's command and source mounts, dropped: this image serves a
+    # bundle baked in at build time.
+    command: !reset null
+    volumes: !reset []
+    healthcheck:
+      test: ["CMD", "/usr/bin/lprobe", "-mode=http", "-port=3000", "-endpoint=/__lbheartbeat__"]
+      interval: 3s
+      retries: 40
+      start_period: 5s

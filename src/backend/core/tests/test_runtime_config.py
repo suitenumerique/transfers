@@ -20,22 +20,6 @@ from core.runtime_config import (
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture(name="blank_config")
-def fixture_blank_config(settings):
-    """An instance that configures nothing.
-
-    The development env file carries a demonstration configuration, and the
-    test container reads it, so a test about resolution has to start from a
-    blank environment rather than inherit one.
-    """
-    settings.THEME_CUSTOMIZATION_FILE_PATH = ""
-    settings.DEFAULT_CONFIG = ""
-    settings.DEFAULT_CONFIG_FILE_PATH = ""
-    settings.CONFIG_OVERRIDES = ""
-    settings.CONFIG_OVERRIDES_FILE_PATH = ""
-    return settings
-
-
 def write_json(path, payload):
     """Write one of the configuration files a deployment would mount."""
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -46,9 +30,11 @@ class TestDeepMerge:
     """The merge rule the whole mechanism rests on."""
 
     def test_adds_missing_keys(self):
+        """An override adds what the base never had."""
         assert deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
 
     def test_recurses_into_dicts(self):
+        """A nested key is merged, not replaced along with its siblings."""
         merged = deep_merge(
             {"help": {"documentation_url": "d", "support_url": "s"}},
             {"help": {"support_url": "s2"}},
@@ -65,6 +51,7 @@ class TestDeepMerge:
         assert deep_merge({"logo": {"src": "a.svg"}}, {"logo": None}) == {"logo": None}
 
     def test_scalar_over_dict_replaces(self):
+        """Only two dicts recurse; anything else replaces wholesale."""
         assert deep_merge({"a": {"b": 1}}, {"a": "x"}) == {"a": "x"}
 
     def test_leaves_the_base_untouched(self):
@@ -79,6 +66,8 @@ class TestSections:
     """The public/private frontier."""
 
     def test_theme_is_the_only_public_section(self):
+        """Pinned on purpose: adding a public section is a security decision,
+        so it has to break this test and be made deliberately."""
         public = {name for name, key in SECTIONS.items() if key is not None}
         assert public == {"theme_customization"}
 
@@ -94,17 +83,22 @@ class TestCheckConfiguration:
     """Boot-time validation of the plumbing — not of the keys."""
 
     def test_accepts_an_empty_environment(self):
+        """A default install configures nothing, and must still boot."""
         check_configuration("", "")
 
     def test_rejects_malformed_json(self):
+        """A stray comma fails the boot rather than serving nobody's theme."""
         with pytest.raises(ImproperlyConfigured, match="DEFAULT_CONFIG is not valid"):
             check_configuration('{"theme_customization": }', "")
 
     def test_rejects_a_non_object(self):
+        """The envelope is an object; a list configures nothing."""
         with pytest.raises(ImproperlyConfigured, match="must be a JSON object"):
             check_configuration("[1, 2]", "")
 
     def test_rejects_a_non_object_override(self):
+        """Named in the message: with several domains, which one is wrong is
+        the only thing the operator needs to know."""
         with pytest.raises(
             ImproperlyConfigured, match=r"CONFIG_OVERRIDES\['opsn1.fr'\]"
         ):
@@ -128,6 +122,7 @@ class TestCheckConfiguration:
             check_configuration("", json.dumps({domain: {"theme_customization": {}}}))
 
     def test_accepts_a_base_and_an_override(self):
+        """The shape an instance with two domains actually ships."""
         check_configuration(
             json.dumps({"theme_customization": {"fontFamily": "Inter"}}),
             json.dumps({"opsn1.fr": {"theme_customization": {"colors": {}}}}),
@@ -186,6 +181,37 @@ class TestFileSources:
         )
 
         theme = resolve_for_domain("example.test")["theme_customization"]
+
+        assert theme["fontFamily"] == "Georgia"
+        assert theme["colors"] == {"--a": "#000"}
+
+    def test_the_two_override_sources_merge_across_spellings(
+        self, blank_config, tmp_path
+    ):
+        """One domain, written two ways, is still one domain.
+
+        The same contract as ``test_the_inline_variable_wins_over_its_file``,
+        and it has to survive a file that spells the key ``CD33.test`` while
+        the environment spells it ``cd33.test``. Both fold to the domain the
+        request resolves on, so the inline source must merge onto the file's
+        configuration rather than replace it.
+        """
+        blank_config.CONFIG_OVERRIDES_FILE_PATH = write_json(
+            tmp_path / "overrides.json",
+            {
+                "CD33.test": {
+                    "theme_customization": {
+                        "fontFamily": "Inter",
+                        "colors": {"--a": "#000"},
+                    }
+                }
+            },
+        )
+        blank_config.CONFIG_OVERRIDES = json.dumps(
+            {"cd33.test": {"theme_customization": {"fontFamily": "Georgia"}}}
+        )
+
+        theme = resolve_for_domain("cd33.test")["theme_customization"]
 
         assert theme["fontFamily"] == "Georgia"
         assert theme["colors"] == {"--a": "#000"}
@@ -278,6 +304,7 @@ class TestDocsCompatibility:
 
     @classmethod
     def docs_theme(cls):
+        """``docs``' own default theme, parsed afresh for each comparison."""
         return json.loads(cls.DOCS_THEME.read_text(encoding="utf-8"))
 
     def test_the_docs_default_theme_travels_through_unchanged(self, blank_config):
@@ -346,6 +373,20 @@ class TestDocsCompatibility:
         assert resolved == {}
         assert error.called
 
+    def test_a_file_that_cannot_be_read_is_not_read_again_at_once(
+        self, blank_config, tmp_path
+    ):
+        """The failure is cached too, or a missing mount costs an ``open()``
+        and an ERROR line on every request for as long as it is missing --
+        which on a public instance is a log flood, not a hint."""
+        blank_config.THEME_CUSTOMIZATION_FILE_PATH = str(tmp_path / "absent.json")
+
+        with mock.patch.object(runtime_config.logger, "error") as error:
+            assert resolve_for_domain("example.test") == {}
+            assert resolve_for_domain("example.test") == {}
+
+        assert error.call_count == 1
+
 
 @pytest.mark.usefixtures("blank_config")
 class TestResolveForDomain:
@@ -359,12 +400,30 @@ class TestResolveForDomain:
 
     @pytest.fixture(autouse=True)
     def _two_domains(self, blank_config):
+        """A base and one override, the smallest multi-operator instance."""
         blank_config.DEFAULT_CONFIG = json.dumps(
             {"theme_customization": {"fontFamily": "Inter"}}
         )
         blank_config.CONFIG_OVERRIDES = json.dumps(
             {"opsn1.test": {"theme_customization": {"fontFamily": "Georgia"}}}
         )
+
+    def test_a_non_object_override_serves_the_base(self, blank_config, tmp_path):
+        """``check_configuration`` refuses this at boot, but only in the
+        environment variable: the file is read per request and can be replaced
+        under a running process. Merging a scalar would hand every caller a
+        string where a mapping is expected, so the domain would answer 500
+        until someone noticed. It gets the base instead, and a log line."""
+        blank_config.CONFIG_OVERRIDES = ""
+        blank_config.CONFIG_OVERRIDES_FILE_PATH = write_json(
+            tmp_path / "overrides.json", {"opsn1.test": "not-an-object"}
+        )
+
+        with mock.patch.object(runtime_config.logger, "error") as error:
+            resolved = resolve_for_domain("opsn1.test")
+
+        assert resolved == {"theme_customization": {"fontFamily": "Inter"}}
+        assert error.called
 
     @pytest.mark.parametrize("domain", ["opsn1.test", "OPSN1.test"])
     def test_resolves_an_override_with_no_request_in_sight(self, domain):

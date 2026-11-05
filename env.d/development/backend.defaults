@@ -86,7 +86,9 @@ LOGOUT_REDIRECT_URL=http://localhost:8980
 # url_has_allowed_host_and_scheme, which compares the candidate URL's
 # netloc. An entry carrying a scheme can therefore never match, and a
 # ?next= to that host is silently dropped back to LOGIN_REDIRECT_URL.
-OIDC_REDIRECT_ALLOWED_HOSTS=localhost:8980,localhost:8981
+# opsn1.localhost is the alias of the multi-domain demo further down, so a
+# login started there comes back there.
+OIDC_REDIRECT_ALLOWED_HOSTS=localhost:8980,localhost:8981,opsn1.localhost:8980
 
 # OIDC userinfo claim names persisted on ``User.claims`` (JSON). Use the same
 # names as in ``ENTITLEMENTS_BACKEND_PARAMETERS`` → ``oidc_claims`` when using
@@ -154,6 +156,11 @@ FRONTEND_THEME=default
 # http://opsn1.localhost:8980 instead of http://localhost:8980. Same image,
 # another brand. Most browsers resolve *.localhost to loopback on their own;
 # add "127.0.0.1 opsn1.localhost" to /etc/hosts if yours does not.
+#
+# Signing in on the alias works too: the Keycloak realm lists it among its
+# redirect URIs, and OIDC_REDIRECT_ALLOWED_HOSTS above carries it, so the
+# login comes back to the domain it started from rather than to
+# LOGIN_REDIRECT_URL's single host.
 #
 # One thing dev does not reproduce: the theme carries URLs, and in production
 # the browser only loads an image or a font the frontend's CSP allows -- its

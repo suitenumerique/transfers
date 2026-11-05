@@ -33,6 +33,17 @@ describe("login", () => {
     );
   });
 
+  it("leaves the fragment behind, where a confidential key lives", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_ORIGIN", "");
+    const replace = stubLocation("http://example.test/t/abc123#Zm9vYmFyLWtleQ");
+
+    login();
+
+    const next = new URL(replace.mock.calls[0][0]).searchParams.get("next");
+    expect(next).toBe("http://example.test/t/abc123");
+    expect(replace.mock.calls[0][0]).not.toContain("Zm9vYmFyLWtleQ");
+  });
+
   it("falls back to the page's own origin when no API origin is configured", () => {
     vi.stubEnv("NEXT_PUBLIC_API_ORIGIN", "");
     const replace = stubLocation("http://example.test/");

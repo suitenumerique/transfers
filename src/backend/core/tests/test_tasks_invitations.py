@@ -65,6 +65,7 @@ def test_a_transfer_expiring_mid_batch_stops_before_the_next_recipient():
     transfer = _transfer_with_recipients(3)
 
     def expire_after_the_first(transfer, recipient, connection=None, origin=None):
+        """Stand in for the mail send, and let the transfer die mid-batch."""
         transfer.expires_at = timezone.now() - timedelta(minutes=1)
 
     with (

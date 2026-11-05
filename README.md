@@ -305,10 +305,15 @@ restricted to an IP allowlist. Both rely on the client IP that Caddy
 establishes: the TCP peer, unless that peer is a trusted proxy — then
 the address in `X-Forwarded-For`, walked from the right to the first
 one that is not a trusted proxy (`trusted_proxies_strict`). A prefix a
-client writes into the header never wins. Caddy forwards that single
+client writes into the header loses — as long as
+`TRANSFERS_FRONTEND_TRUSTED_PROXIES` lists only real proxies, since the
+walk skips whatever it trusts and a CIDR covering a client's own address
+lets it reach the entries that client wrote. Caddy forwards that single
 address to the backend as `X-Forwarded-For`, where
 `XForwardedForMiddleware` (`src/backend/core/middlewares.py`, enabled
-by `USE_X_FORWARDED_FOR=True`) sets `REMOTE_ADDR` from it.
+by `USE_X_FORWARDED_FOR=True`, off by default) sets `REMOTE_ADDR` from
+it. Left off, `REMOTE_ADDR` is Caddy's own address: one audit-log entry
+and one anonymous throttle bucket for every client alike.
 
 In production the request chain is:
 

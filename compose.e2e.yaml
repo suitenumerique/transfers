@@ -8,6 +8,9 @@
 # container (src/e2e/scripts/forward-ports.mjs). It does not use the host
 # network: a host-network container renames the host and resets its network,
 # which drops the project's sshfs mount on a Lima VM.
+#
+# compose.e2e.prod.yaml layers the production frontend image over this one
+# (`make e2e-prod`), to run the same specs against what we ship.
 name: transfers-e2e
 
 services:

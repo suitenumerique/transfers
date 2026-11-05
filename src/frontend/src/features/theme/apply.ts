@@ -115,12 +115,32 @@ function cssString(value: string): string {
   return `"${value.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
 }
 
+/**
+ * The configuration is never validated key by key -- that is what lets the
+ * products share one file -- so a value can be of any JSON type. Anything but
+ * a string reads as absent here, rather than throwing on ``.trim()`` and
+ * taking the whole app down for that domain.
+ */
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// Rejected in both the family and the URL: no legitimate one carries a
+// control character, and a raw newline inside the string ``cssString`` quotes
+// does not escape -- it leaves the string unterminated, which costs the rule
+// it sits in rather than that one descriptor.
+const CONTROL_CHARACTERS = /[\u0000-\u001f]/;
+
 function fontFaceRule(face: ThemeFontFace): string | null {
-  const family = face.family?.trim();
-  const source = face.src?.trim();
-  // A face missing either names nothing or loads nothing. Control characters
-  // in a URL are rejected outright: no legitimate one carries them.
-  if (!family || !source || /[\u0000-\u001f]/.test(source)) {
+  const family = text(face?.family);
+  const source = text(face?.src);
+  // A face missing either names nothing or loads nothing.
+  if (
+    !family ||
+    !source ||
+    CONTROL_CHARACTERS.test(family) ||
+    CONTROL_CHARACTERS.test(source)
+  ) {
     return null;
   }
 
@@ -156,7 +176,9 @@ function fontFaceRule(face: ThemeFontFace): string | null {
  * format a font bundle usually drags along is pure weight.
  */
 export function applyFontFaces(faces: ThemeCustomization["fontFaces"]): Cleanup {
-  const rules = (faces ?? [])
+  // Array.isArray, not ``?? []``: an operator who writes one face as an
+  // object instead of a list of one would otherwise crash on ``.map``.
+  const rules = (Array.isArray(faces) ? faces : [])
     .map(fontFaceRule)
     .filter((rule): rule is string => rule !== null);
   if (rules.length === 0) {

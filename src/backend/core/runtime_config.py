@@ -43,6 +43,11 @@ SECTIONS = {
 # anymore once a private section exists; memoize on the request object.
 _REQUEST_ATTR = "_runtime_config"
 
+# How long a file that could not be read is remembered as unreadable. Kept
+# short -- putting the file back should take effect without a restart -- and
+# never longer than a successful read is kept.
+_FAILURE_CACHE_TIMEOUT = 60
+
 # Characters that cannot appear in a bare hostname. An override key carrying
 # one of them would never match, which is the failure the boot check exists to
 # catch: a theme that silently never shows.
@@ -121,7 +126,9 @@ def _load_file(path, label):
     and logs — same behaviour as ``docs``, and for the same reason: the file
     usually comes from a mounted ConfigMap that can be replaced under a running
     process, and taking the instance down for it would be worse than serving
-    the neutral theme.
+    the neutral theme. The failure is cached as well, briefly: a path that is
+    simply missing would otherwise cost an ``open()`` and an ERROR line on
+    every request, for as long as it stays missing.
     """
     if not path:
         return {}
@@ -135,14 +142,21 @@ def _load_file(path, label):
         with open(path, "r", encoding="utf-8") as handle:
             parsed = json.load(handle)
     except OSError:
-        logger.error("Configuration file cannot be read: %s", path)
-        return {}
+        failure = "Configuration file cannot be read: %s"
     except json.JSONDecodeError:
-        logger.error("Configuration file is not valid JSON: %s", path)
-        return {}
+        failure = "Configuration file is not valid JSON: %s"
+    else:
+        failure = (
+            None
+            if isinstance(parsed, dict)
+            else "Configuration file must hold a JSON object: %s"
+        )
 
-    if not isinstance(parsed, dict):
-        logger.error("Configuration file must hold a JSON object: %s", path)
+    if failure:
+        logger.error(failure, path)
+        cache.set(
+            cache_key, {}, min(_FAILURE_CACHE_TIMEOUT, settings.CONFIG_CACHE_TIMEOUT)
+        )
         return {}
 
     cache.set(cache_key, parsed, settings.CONFIG_CACHE_TIMEOUT)
@@ -164,18 +178,26 @@ def _base():
     return deep_merge(base, _load_inline(settings.DEFAULT_CONFIG, "DEFAULT_CONFIG"))
 
 
-def _overrides():
-    """``{domain: <partial sectioned config>}``.
+def _by_domain(mapping):
+    """Fold override keys to lower case, before the two sources merge.
 
-    Keys are lower-cased here because DNS is case-insensitive and the request
-    side folds case too — a ``CD33.fr`` key is a cosmetic choice, not a
-    different domain.
+    DNS is case-insensitive and the request side folds case too — a ``CD33.fr``
+    key is a cosmetic choice, not a different domain. Folding *after* the merge
+    would leave two spellings of one domain looking like two keys, so
+    ``deep_merge`` would never recurse into them and the inline source would
+    replace the file's configuration for that domain instead of merging onto
+    it, which is the opposite of what every other source pair does.
     """
-    overrides = _load_file(settings.CONFIG_OVERRIDES_FILE_PATH, "overrides")
-    overrides = deep_merge(
-        overrides, _load_inline(settings.CONFIG_OVERRIDES, "CONFIG_OVERRIDES")
+    return {str(domain).lower(): value for domain, value in mapping.items()}
+
+
+def _overrides():
+    """``{domain: <partial sectioned config>}``, the file then the inline."""
+    overrides = _by_domain(_load_file(settings.CONFIG_OVERRIDES_FILE_PATH, "overrides"))
+    return deep_merge(
+        overrides,
+        _by_domain(_load_inline(settings.CONFIG_OVERRIDES, "CONFIG_OVERRIDES")),
     )
-    return {str(domain).lower(): value for domain, value in overrides.items()}
 
 
 def _domain(request):
@@ -200,8 +222,21 @@ def resolve_for_domain(domain):
     survive a ``.send()`` on its own. A task that needs configuration
     carries the request origin and resolves from its hostname.
     """
-    override = _overrides().get((domain or "").lower()) or {}
-    return deep_merge(_base(), override)
+    override = _overrides().get((domain or "").lower())
+    if override is not None and not isinstance(override, dict):
+        # ``check_configuration`` refuses this in CONFIG_OVERRIDES at boot, but
+        # the file form is read per request and can be replaced under a running
+        # process. Merging a scalar onto the base would return that scalar, and
+        # every caller treats the result as a mapping: the domain would answer
+        # 500 until someone fixed the file. Serve the base instead.
+        logger.error(
+            "Configuration override for '%s' must be a JSON object, got %s; "
+            "serving the base configuration instead.",
+            domain,
+            type(override).__name__,
+        )
+        override = None
+    return deep_merge(_base(), override or {})
 
 
 def resolve(request):

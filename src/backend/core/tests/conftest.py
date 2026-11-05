@@ -250,3 +250,21 @@ def completed_file(authenticated_client, live_s3_bucket):
     )
     assert complete.status_code == 204, complete.data
     return dict(resp.data)
+
+
+@pytest.fixture(name="blank_config")
+def fixture_blank_config(settings):
+    """An instance that configures nothing.
+
+    The development env file carries a demonstration configuration, and the
+    test container reads it, so a test that asserts on a resolved
+    configuration has to start from a blank environment rather than inherit
+    one. Shared, because both the resolver's tests and the config endpoint's
+    need the same empty start.
+    """
+    settings.THEME_CUSTOMIZATION_FILE_PATH = ""
+    settings.DEFAULT_CONFIG = ""
+    settings.DEFAULT_CONFIG_FILE_PATH = ""
+    settings.CONFIG_OVERRIDES = ""
+    settings.CONFIG_OVERRIDES_FILE_PATH = ""
+    return settings

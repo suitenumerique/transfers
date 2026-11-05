@@ -22,7 +22,9 @@
         "http://localhost:8900/*",
         "http://localhost:8901/*",
         "http://localhost:7980/*",
-        "http://localhost:7981/*"
+        "http://localhost:7981/*",
+        "http://opsn1.localhost:8980/*",
+        "http://opsn1.localhost:7980/*"
       ],
       "webOrigins": [
         "http://localhost:8980",
@@ -30,10 +32,12 @@
         "http://localhost:8900",
         "http://localhost:8901",
         "http://localhost:7980",
-        "http://localhost:7981"
+        "http://localhost:7981",
+        "http://opsn1.localhost:8980",
+        "http://opsn1.localhost:7980"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "http://localhost:8980/*##http://localhost:8981/*##http://localhost:8900/*##http://localhost:8901/*##http://localhost:7980/*##http://localhost:7981/*"
+        "post.logout.redirect.uris": "http://localhost:8980/*##http://localhost:8981/*##http://localhost:8900/*##http://localhost:8901/*##http://localhost:7980/*##http://localhost:7981/*##http://opsn1.localhost:8980/*##http://opsn1.localhost:7980/*"
       }
     }
   ],
@@ -46,7 +50,11 @@
       "firstName": "User",
       "lastName": "Un",
       "credentials": [
-        { "type": "password", "value": "user1", "temporary": false }
+        {
+          "type": "password",
+          "value": "user1",
+          "temporary": false
+        }
       ]
     },
     {
@@ -57,7 +65,11 @@
       "firstName": "User",
       "lastName": "Deux",
       "credentials": [
-        { "type": "password", "value": "user2", "temporary": false }
+        {
+          "type": "password",
+          "value": "user2",
+          "temporary": false
+        }
       ]
     },
     {
@@ -68,7 +80,11 @@
       "firstName": "User",
       "lastName": "Trois",
       "credentials": [
-        { "type": "password", "value": "user3", "temporary": false }
+        {
+          "type": "password",
+          "value": "user3",
+          "temporary": false
+        }
       ]
     }
   ]

@@ -14,7 +14,14 @@ class XForwardedForMiddleware:
     walk (see ``src/frontend/caddy/Caddyfile``), so the rightmost entry is
     the only entry. Any other topology has to put a hop in front that
     appends or replaces the header, or ``REMOTE_ADDR`` becomes whatever a
-    client chose to send — and the admin IP allowlist filters on it.
+    client chose to send — and here that address keys DRF's anonymous
+    throttles (``NUM_PROXIES = 0``) and is what the audit log records.
+
+    The admin IP allowlist is not enforced here: Caddy answers 403 on
+    ``DJANGO_ADMIN_IP_ALLOWLIST`` using its own ``client_ip``, before the
+    request is ever proxied. Django never checks it, so exposing this
+    backend directly — without Caddy in front — serves the admin to every
+    client, whatever the allowlist says.
     """
 
     def __init__(self, get_response):

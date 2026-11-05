@@ -21,6 +21,14 @@ and this project adheres to
   (`THEME_CUSTOMIZATION_FILE_PATH`)
 - Let a deployment serve its own font files, declared in the theme
   (`fontFaces`) and turned into `@font-face` rules at runtime
+- `TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN`, the origin a deployment
+  serves its theme's images and font files from. It is added to the
+  frontend's `img-src` and `font-src`, and defaults to empty, which
+  allows none: no existing instance sees its policy change. Several
+  origins are separated by spaces, never commas. A font file served
+  from there also needs CORS permission, the policy alone is not
+  enough; an operator with nowhere to host inlines its assets as
+  `data:` URIs, which both directives still allow
 - `USE_X_FORWARDED_HOST`, for an edge that rewrites `Host` and sets
   `X-Forwarded-Host`. The resolver reads the host to pick a theme, so
   an edge that rewrites it without this serves the neutral theme to
@@ -58,12 +66,18 @@ and this project adheres to
 
 ### Fixed
 
-- Email links now point at the domain the transfer was created on. They
-  were built from a single instance-wide URL (`PUBLIC_BASE_URL`, which
-  was declared nowhere, falling through to `LOGIN_REDIRECT_URL`), so on
-  an instance serving several domains a recipient could receive a link
-  to another operator's hostname. The origin of the request now travels
-  with the task that sends the mail, and `PUBLIC_BASE_URL` is gone
+- Email links now point at the domain the request came in on, rather
+  than at a single instance-wide URL (`PUBLIC_BASE_URL`, which was
+  declared nowhere and fell through to `LOGIN_REDIRECT_URL`): on an
+  instance serving several domains a recipient could receive a link to
+  another operator's hostname. Which domain that is depends on what
+  caused the mail -- an invitation uses the domain the transfer was
+  created on, a resent invitation the one the agent is on when they
+  resend it, and a download receipt the one the download happened on.
+  The origin travels with the task, and `PUBLIC_BASE_URL` is gone. A
+  task enqueued by an earlier release and still in the queue across the
+  deploy carries no origin: it falls back to `LOGIN_REDIRECT_URL`, and
+  logs a warning saying so
 - `OIDC_REDIRECT_ALLOWED_HOSTS` is documented and shipped as bare
   hosts. The values in `env.d` carried a scheme, which the host check
   compares against a netloc and can never match, so a `?next=` to one

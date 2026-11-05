@@ -30,7 +30,14 @@ export const login = () => {
   // different host, so apparently logged out. The backend validates ``next``
   // against OIDC_REDIRECT_ALLOWED_HOSTS and silently drops anything else, so
   // an unlisted domain simply keeps today's behaviour.
-  const params = new URLSearchParams({ next: window.location.href });
+  // Without its fragment: on the download page that fragment carries the
+  // decryption key (/t/<token>#<key>), and ``next`` is a query parameter, so
+  // the key would travel to the backend and into its access log -- the one
+  // place it must never reach. A browser never sends a fragment on its own;
+  // putting the URL inside a parameter is what would.
+  const destination = new URL(window.location.href);
+  destination.hash = "";
+  const params = new URLSearchParams({ next: destination.href });
   window.location.replace(
     `${getApiOrigin()}/api/v1.0/authenticate/?${params.toString()}`,
   );

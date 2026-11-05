@@ -195,6 +195,27 @@ e2e-test: ## run Playwright on the running end-to-end stack (ARGS="tests/transfe
 	@$(E2E_COMPOSE) run --rm --build playwright npx playwright test $(ARGS)
 .PHONY: e2e-test
 
+# Same stack, same specs, but the frontend we actually ship: the production
+# image (distroless + Caddy + the built bundle) in place of the dev server.
+# See compose.e2e.prod.yaml for what it covers and what it costs. One project
+# name for both, so `make e2e-down` tears either of them down.
+E2E_COMPOSE_PROD = $(COMPOSE) -f compose.e2e.yaml -f compose.e2e.prod.yaml --profile runner
+
+e2e-prod: ## run the end-to-end tests against the production frontend image
+	@$(MAKE) e2e-up-prod
+	@$(MAKE) e2e-test-prod
+.PHONY: e2e-prod
+
+e2e-up-prod: ## start the end-to-end stack on the production frontend image (ports 79xx)
+	@$(E2E_COMPOSE_PROD) rm --force --stop --volumes
+	@$(E2E_COMPOSE_PROD) down
+	@$(E2E_COMPOSE_PROD) up -d --build --wait frontend worker
+.PHONY: e2e-up-prod
+
+e2e-test-prod: ## run Playwright on the running production stack (ARGS="tests/theming.spec.ts")
+	@$(E2E_COMPOSE_PROD) run --rm --build playwright npx playwright test $(ARGS)
+.PHONY: e2e-test-prod
+
 e2e-report: ## serve the last end-to-end report on http://localhost:9323
 	@$(E2E_COMPOSE) run --rm --no-deps -p 127.0.0.1:9323:9323 playwright \
 		npx playwright show-report /e2e-output/playwright-report --host 0.0.0.0

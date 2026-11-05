@@ -9,7 +9,13 @@ test("the landing page invites to sign in", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Send and receive in a snap" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  // Twice: the header's and the page's own. The landing repeats the
+  // affordance rather than leaving the fold without one, so two is the
+  // assertion, not an ambiguity to work around.
+  const signIn = page.getByRole("button", { name: "Sign in" });
+  await expect(signIn).toHaveCount(2);
+  await expect(signIn.first()).toBeVisible();
+  await expect(signIn.last()).toBeVisible();
 });
 
 test("the language choice is remembered", async ({ page }) => {
@@ -21,7 +27,9 @@ test("the language choice is remembered", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Envoyer et recevoir en un clin d'œil" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Se connecter" }).first(),
+  ).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", /fr/);
 });
 
@@ -62,7 +70,9 @@ test("an agent signs in and out", async ({ page, playwright }) => {
     .getByText("Logout", { exact: true })
     .click();
   await page.waitForURL(/localhost:7980\/$/);
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Sign in" }).first(),
+  ).toBeVisible();
   // The session is gone on the server, not just the cookie in the browser.
   const after = await oldSession.get(`${API_URL}/api/v1.0/users/me/`);
   expect(after.status()).toBe(401);

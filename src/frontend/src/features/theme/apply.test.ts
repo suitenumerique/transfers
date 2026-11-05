@@ -39,7 +39,8 @@ describe("themeTargets", () => {
   it("also targets a wrapper that carries the theme class", () => {
     // Guards against a provider version that scopes the theme to a subtree:
     // its class would otherwise beat the value inherited from :root.
-    document.body.innerHTML = '<div class="cunningham-theme--dsfr-light"></div>';
+    document.body.innerHTML =
+      '<div class="cunningham-theme--dsfr-light"></div>';
     const wrapper = document.querySelector("div")!;
 
     expect(themeTargets()).toEqual([document.documentElement, wrapper]);
@@ -50,7 +51,9 @@ describe("applyColors", () => {
   it("writes each key as the CSS property it names", () => {
     applyColors({ [BRAND]: "#C83F49" });
 
-    expect(document.documentElement.style.getPropertyValue(BRAND)).toBe("#C83F49");
+    expect(document.documentElement.style.getPropertyValue(BRAND)).toBe(
+      "#C83F49",
+    );
   });
 
   it("overrides the compiled token, which is the point", () => {
@@ -59,16 +62,19 @@ describe("applyColors", () => {
     document.documentElement.className = "cunningham-theme--anct-light";
     applyColors({ [BRAND]: "#C83F49" });
 
-    expect(document.documentElement.style.getPropertyValue(BRAND)).toBe("#C83F49");
+    expect(document.documentElement.style.getPropertyValue(BRAND)).toBe(
+      "#C83F49",
+    );
   });
 
   it("reaches a themed wrapper too", () => {
-    document.body.innerHTML = '<div class="cunningham-theme--dsfr-light"></div>';
+    document.body.innerHTML =
+      '<div class="cunningham-theme--dsfr-light"></div>';
     applyColors({ [BRAND]: "#C83F49" });
 
-    expect(
-      document.querySelector("div")!.style.getPropertyValue(BRAND),
-    ).toBe("#C83F49");
+    expect(document.querySelector("div")!.style.getPropertyValue(BRAND)).toBe(
+      "#C83F49",
+    );
   });
 
   it("removes what it set on cleanup", () => {
@@ -199,6 +205,37 @@ describe("applyFontFaces", () => {
       { family: "", src: "/a.woff2" },
       { family: "A", src: "" },
     ]);
+
+    expect(sheet()).toBeNull();
+  });
+
+  it("survives a face of the wrong shape, rather than taking the app down", () => {
+    // Nothing validates the configuration key by key -- that is what lets the
+    // products share one file -- so any of these can reach us, and a thrown
+    // TypeError here would blank the page for that domain.
+    const malformed = [
+      null,
+      "https://assets.example.org/marianne.woff2",
+      { family: 42, src: "/a.woff2" },
+      { family: "A", src: ["/a.woff2"] },
+    ] as unknown as Parameters<typeof applyFontFaces>[0];
+
+    expect(() => applyFontFaces(malformed)).not.toThrow();
+    expect(sheet()).toBeNull();
+
+    const notAList = { family: "A", src: "/a.woff2" } as unknown as Parameters<
+      typeof applyFontFaces
+    >[0];
+
+    expect(() => applyFontFaces(notAList)).not.toThrow();
+    expect(sheet()).toBeNull();
+  });
+
+  it("skips a face whose family carries a control character", () => {
+    // A raw newline inside the quoted family would leave the CSS string
+    // unterminated, which costs the whole rule rather than one descriptor --
+    // and no legitimate family name carries one.
+    applyFontFaces([{ family: "A\nB", src: "/a.woff2" }]);
 
     expect(sheet()).toBeNull();
   });

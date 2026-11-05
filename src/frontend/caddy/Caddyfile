@@ -5,7 +5,10 @@
 		# {client_ip} is the TCP peer, unless the peer is one of these
 		# proxies: then it comes from X-Forwarded-For, walked right to
 		# left to the first address that is not a trusted proxy
-		# (trusted_proxies_strict). A client-appended prefix never wins.
+		# (trusted_proxies_strict). A client-appended prefix loses, so
+		# long as the list below holds only real proxies: the walk skips
+		# whatever it trusts, and a range covering a client's own address
+		# lets it carry on into the entries that client wrote.
 		trusted_proxies static {$TRANSFERS_FRONTEND_TRUSTED_PROXIES}
 		trusted_proxies_strict
 	}

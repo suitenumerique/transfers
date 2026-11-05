@@ -105,7 +105,7 @@ class TestConfigView:
         assert response.status_code == 200
         assert response.data["TRANSFER_CONFIDENTIAL_ENABLED"] is enabled
 
-    def test_branding_defaults_are_neutral(self, api_client, settings):
+    def test_branding_defaults_are_neutral(self, api_client, blank_config):
         """An instance that configures nothing must advertise no operator.
 
         This is what used to be compiled in: the theme was hard-wired to
@@ -113,9 +113,7 @@ class TestConfigView:
         always pointed at La Suite territoriale. A default install has to come
         out branding-free.
         """
-        settings.FRONTEND_THEME = None
-        settings.THEME_CUSTOMIZATION_FILE_PATH = ""
-        settings.DEFAULT_CONFIG = ""
+        blank_config.FRONTEND_THEME = None
 
         response = api_client.get(CONFIG_URL)
 
@@ -124,9 +122,14 @@ class TestConfigView:
         assert response.data["FRONTEND_THEME"] == ""
         assert response.data["theme_customization"] == {}
 
-    def test_theme_comes_from_default_config(self, api_client, settings):
-        """The base configuration lands under the key ``docs`` already uses."""
-        settings.DEFAULT_CONFIG = json.dumps(
+    def test_theme_comes_from_default_config(self, api_client, blank_config):
+        """The base configuration lands under the key ``docs`` already uses.
+
+        ``blank_config`` rather than ``settings``: the assertion is on the
+        whole section, so the env file's own demonstration configuration --
+        which the test container reads -- has to be out of the way first.
+        """
+        blank_config.DEFAULT_CONFIG = json.dumps(
             {
                 "theme_customization": {
                     "help": {"documentation_url": "https://help.example.test"}
@@ -227,14 +230,14 @@ class TestConfigView:
             {"label": "b", "href": "#b"}
         ]
 
-    def test_unknown_theme_keys_travel_through(self, api_client, settings):
+    def test_unknown_theme_keys_travel_through(self, api_client, blank_config):
         """A key this build doesn't know must reach the browser untouched.
 
         ``docs`` guarantees the same thing for its own theme file, and it is
         what lets the products converge on one shared file without each of
         them having to know every key in it.
         """
-        settings.DEFAULT_CONFIG = json.dumps(
+        blank_config.DEFAULT_CONFIG = json.dumps(
             {
                 "theme_customization": {
                     "onboarding": {"ready_template_url": "https://example.test/t"}
@@ -248,14 +251,14 @@ class TestConfigView:
             "ready_template_url": "https://example.test/t"
         }
 
-    def test_unknown_section_is_never_served(self, api_client, settings):
+    def test_unknown_section_is_never_served(self, api_client, blank_config):
         """A section this build doesn't know stays server-side.
 
         The resolver will carry non-public sections one day — per-domain
         authentication, for one. Not knowing what a section holds is reason
         enough never to hand it to a browser.
         """
-        settings.DEFAULT_CONFIG = json.dumps(
+        blank_config.DEFAULT_CONFIG = json.dumps(
             {
                 "theme_customization": {"fontFamily": "Inter"},
                 "auth": {"client_secret": "must-not-leak"},
