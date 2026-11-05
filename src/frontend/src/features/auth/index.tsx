@@ -23,7 +23,17 @@ export const logout = () => {
 };
 
 export const login = () => {
-  window.location.replace(`${getApiOrigin()}/api/v1.0/authenticate/`);
+  // Carry the page we are leaving, so the user comes back to the instance they
+  // logged in from. Without it the backend falls back to LOGIN_REDIRECT_URL,
+  // which names one host for the whole deployment: on any domain but that one,
+  // logging in lands the user elsewhere -- and on a session cookie set for a
+  // different host, so apparently logged out. The backend validates ``next``
+  // against OIDC_REDIRECT_ALLOWED_HOSTS and silently drops anything else, so
+  // an unlisted domain simply keeps today's behaviour.
+  const params = new URLSearchParams({ next: window.location.href });
+  window.location.replace(
+    `${getApiOrigin()}/api/v1.0/authenticate/?${params.toString()}`,
+  );
 };
 
 interface AuthContextInterface {

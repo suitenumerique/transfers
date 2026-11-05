@@ -245,8 +245,13 @@ class TransferViewSet(
             transfer.notifications_completed_at = None
             transfer.save(update_fields=["notifications_completed_at", "updated_at"])
             log_agent_event(transfer, TransferEventType.INVITATIONS_RESENT, request)
+            # Resent from the domain the agent is on now, which is the one
+            # their recipients should land on. See ``email._base_url``.
+            origin = request.build_absolute_uri("/")
             transaction.on_commit(
-                lambda: send_recipient_invitations_task.send(str(transfer.id))
+                lambda: send_recipient_invitations_task.send(
+                    str(transfer.id), origin=origin
+                )
             )
 
         serializer = TransferDetailSerializer(transfer)

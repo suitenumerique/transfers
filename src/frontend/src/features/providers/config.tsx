@@ -1,6 +1,9 @@
 import { PropsWithChildren, createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/features/api/client";
+// Straight from the module rather than its index: the index re-exports the
+// link hooks, which import this file back.
+import type { ThemeCustomization } from "@/features/theme";
 
 export interface DriveConfig {
   base_url: string;
@@ -43,23 +46,29 @@ export interface AppConfig {
   TRANSFER_CONFIDENTIAL_ENABLED: boolean;
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).
+  // @deprecated superseded by `theme_customization.help.documentation_url`.
   HELP_URL: string;
   // Support contact linked from the error page. Empty string when the
   // operator hasn't configured one (link hidden).
+  // @deprecated superseded by `theme_customization.help.support_url`.
   SUPPORT_URL: string;
-  // Cunningham theme name. Empty string when the operator set none: the root
-  // shell then mounts the neutral "default" theme.
+  // Cunningham theme name, selecting one of the compiled palettes. Empty
+  // string when the operator set none: the root shell then mounts the
+  // neutral "default" theme. Stays outside the theme object, as in `docs`:
+  // it picks the compiled base that `theme_customization.colors` then
+  // overrides at runtime.
   FRONTEND_THEME: string;
-  // True swaps the neutral "Sign in" button for the ProConnect one. Off
-  // unless the instance is actually federated with ProConnect.
-  FRONTEND_PROCONNECT_BUTTON: boolean;
-  // "Learn more" link on the public landing. Empty hides the button.
-  FRONTEND_LEARN_MORE_URL: string;
+  // The theme, resolved by the backend for this request's hostname. Always
+  // present, `{}` on an instance that configured nothing — every consumer
+  // reads an absent key as "hide it", so the default install carries no
+  // operator's branding.
+  theme_customization: ThemeCustomization;
   // Absent when the operator hasn't wired Drive up (DRIVE_BASE_URL empty).
   DRIVE?: DriveConfig;
   // Absent unless the operator set both LAGAUFRE_WIDGET_URL and
   // LAGAUFRE_API_URL — the app switcher is opt-in, since it loads a
   // third-party script and lists another operator's services.
+  // @deprecated superseded by `theme_customization.waffle`.
   LAGAUFRE?: LaGaufreConfig;
 }
 

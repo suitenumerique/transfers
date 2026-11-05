@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { ArrowRight } from "@gouvfr-lasuite/ui-kit/icons";
 import { LoginButton } from "@/features/auth/LoginButton";
-import { useConfig } from "@/features/providers/config";
+import { ProductIcon, useTheme } from "@/features/theme";
 
 // Public landing, pre-login. Single centered column for now — the mock
 // pairs it with an illustration on the right which isn't ready yet.
@@ -10,19 +10,33 @@ import { useConfig } from "@/features/providers/config";
 
 export function HomeLanding() {
   const { t } = useTranslation();
-  const { FRONTEND_LEARN_MORE_URL: learnMoreUrl } = useConfig();
+  const theme = useTheme();
+  const learnMoreUrl = theme.home?.learn_more_url;
+  // ``home["icon-banner"]`` is the key ``docs`` already uses for this slot.
+  // Decorative unless the operator gives it a label: the heading right below
+  // says the same thing, and a screen reader would otherwise hear it twice.
+  const banner = theme.home?.["icon-banner"];
 
   return (
     <section className="home-landing">
       <div className="home-landing__content">
-        <img
-          className="home-landing__icon"
-          src="/images/transfers-icon.svg"
-          alt=""
-          aria-hidden="true"
-          width={48}
-          height={48}
-        />
+        {banner?.src ? (
+          <img
+            className="home-landing__icon"
+            src={banner.src}
+            alt={banner.alt ?? ""}
+            aria-hidden={banner.alt ? undefined : true}
+            width={banner.width}
+            height={banner.height ?? 48}
+            style={banner.style}
+          />
+        ) : (
+          <ProductIcon
+            className="home-landing__icon"
+            height={banner?.height ?? 48}
+            title={banner?.alt ?? ""}
+          />
+        )}
         <h1 className="home-landing__title">
           {t("Send and receive in a snap")}
         </h1>

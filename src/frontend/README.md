@@ -55,9 +55,9 @@ namespace with English (`en-US`) and French (`fr-FR`).
 
 The static export is served by Caddy in production, which also reverse-
 proxies `/api/*`, `/admin/*`, `/static/*`, and `/__heartbeat__/*` to
-the Django backend. The `Caddyfile` propagates `X-Forwarded-For` from
-Scalingo's edge router as-is (do **not** use `{remote_host}` — see the
-comment in `caddy/Caddyfile`).
+the Django backend. The `Caddyfile` propagates `X-Forwarded-For` from the
+edge router as-is (do **not** use `{remote_host}` — see the comment in
+`caddy/Caddyfile`).
 
 ## Further reading
 

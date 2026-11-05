@@ -184,8 +184,9 @@ assert_code 403 "trusted proxy: appended XFF chain denied" \
 assert_code 403 "trusted proxy: no XFF -> peer IP denied" "$BASE/admin/"
 stop_container
 
-# private_ranges is the documented Scalingo value; the client IP is a
-# loopback or private bridge address in both modes, so it is trusted.
+# private_ranges is the catch-all value a PaaS typically documents; the
+# client IP is a loopback or private bridge address in both modes, so it
+# is trusted.
 start_container \
   -e 'TRANSFERS_FRONTEND_TRUSTED_PROXIES=private_ranges' \
   -e 'DJANGO_ADMIN_IP_ALLOWLIST=192.0.2.0/24'

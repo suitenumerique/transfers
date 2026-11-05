@@ -14,14 +14,37 @@ from core.services.recipient_activity import activity_for
 logger = logging.getLogger(__name__)
 
 
-def _public_base_url() -> str:
-    """Base URL of the deployed frontend (used to build absolute links in
-    emails). Falls back to LOGIN_REDIRECT_URL — that's the post-login
-    redirect target and points at the same hostname in every env."""
-    base = getattr(settings, "PUBLIC_BASE_URL", None) or getattr(
-        settings, "LOGIN_REDIRECT_URL", ""
+def _base_url(origin: str | None) -> str:
+    """Absolute base for the links in an email, from the origin of the
+    request that caused it.
+
+    An instance can serve several domains, each one an operator with its
+    own branding, so there is no such thing as *the* base URL: a download
+    link has to point back at the domain the transfer was created on.
+    Sending the wrong one hands a recipient a link that looks like another
+    organisation's — phishing, as far as they can tell.
+
+    The origin travels from the view that enqueued the task, where
+    ``request.build_absolute_uri("/")`` derived it from ``get_host()``.
+    That matters: ``get_host()`` is validated against ALLOWED_HOSTS, and a
+    raw ``Host`` header in an outgoing email would be a phishing vector
+    offered to anyone who can reach the service.
+
+    Falls back to ``LOGIN_REDIRECT_URL`` when nothing was carried — a task
+    enqueued by an older release and still in the queue across a deploy.
+    That value is one domain for the whole instance, so it is right on a
+    single-domain install and wrong for every operator it does not belong
+    to. Hence the warning.
+    """
+    if origin:
+        return origin.rstrip("/")
+
+    logger.warning(
+        "An email is being built without the origin of its request; "
+        "falling back to LOGIN_REDIRECT_URL, which is a single domain for "
+        "the whole instance."
     )
-    return (base or "").rstrip("/")
+    return (getattr(settings, "LOGIN_REDIRECT_URL", "") or "").rstrip("/")
 
 
 def _footer_logos() -> list[dict]:
@@ -102,12 +125,15 @@ def _send_multipart(*, subject, text_body, html_body, to, connection=None):
     msg.send()
 
 
-def send_recipient_invitation(transfer, recipient, connection=None):
+def send_recipient_invitation(transfer, recipient, connection=None, origin=None):
     """Send a download link email to a single recipient.
 
     ``connection`` is an already-open mail connection to reuse; the batch
     task passes one so a 50-recipient transfer costs one SMTP handshake
     (TCP + TLS + AUTH) instead of fifty.
+
+    ``origin`` is the origin the transfer was created on, which the link
+    must point back at — see ``_base_url``.
 
     Multipart message — HTML body matching the design mock plus a
     plain-text fallback for clients that strip HTML or filter on text.
@@ -118,7 +144,7 @@ def send_recipient_invitation(transfer, recipient, connection=None):
     sender delivers it out of band). So no fragment or key is ever
     appended to the URL here.
     """
-    base_url = _public_base_url()
+    base_url = _base_url(origin)
     sender_name = (
         (transfer.owner.full_name or transfer.owner.email)
         if transfer.owner
@@ -172,16 +198,19 @@ def send_recipient_invitation(transfer, recipient, connection=None):
     )
 
 
-def send_download_receipt(transfer, recipient, connection=None):
+def send_download_receipt(transfer, recipient, connection=None, origin=None):
     """Tell the sender what ``recipient`` has downloaded. Sent once per
     recipient (the task stamps ``download_notified_at`` before calling
     this) and only when the sender opted in (``notify_on_download``).
     Reports the state at send time: every file, or "n of N" for a
-    recipient who stopped partway (the delayed trigger)."""
+    recipient who stopped partway (the delayed trigger).
+
+    ``origin`` is the origin the download happened on, which the link back
+    to the transfer must use — see ``_base_url``."""
     owner = transfer.owner
     if owner is None or not owner.email:
         return
-    base_url = _public_base_url()
+    base_url = _base_url(origin)
     files = list(transfer.files.all())
     total_size = sum(f.plaintext_size or f.size for f in files)
     activity = activity_for(transfer.id, recipient.id)

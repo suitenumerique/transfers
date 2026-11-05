@@ -73,11 +73,20 @@ OIDC_RP_SCOPES="openid email profile"
 # comma-separated list, NOT JSON, or each entry gets mangled.
 OIDC_USERINFO_FULLNAME_FIELDS=given_name,family_name
 
+# Only behind a proxy that rewrites Host *and* sets X-Forwarded-Host.
+# The configuration resolver reads the host, so getting this wrong
+# serves the neutral theme to every domain without an error.
+# USE_X_FORWARDED_HOST=False
+
 LOGIN_REDIRECT_URL=http://localhost:8980
 LOGIN_REDIRECT_URL_FAILURE=http://localhost:8980/errors
 LOGOUT_REDIRECT_URL=http://localhost:8980
 
-OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:8980,http://localhost:8981
+# Hosts, not origins: mozilla-django-oidc hands these to Django's
+# url_has_allowed_host_and_scheme, which compares the candidate URL's
+# netloc. An entry carrying a scheme can therefore never match, and a
+# ?next= to that host is silently dropped back to LOGIN_REDIRECT_URL.
+OIDC_REDIRECT_ALLOWED_HOSTS=localhost:8980,localhost:8981
 
 # OIDC userinfo claim names persisted on ``User.claims`` (JSON). Use the same
 # names as in ``ENTITLEMENTS_BACKEND_PARAMETERS`` → ``oidc_claims`` when using
@@ -105,13 +114,54 @@ LAGAUFRE_WIDGET_URL=
 LAGAUFRE_API_URL=
 
 # Frontend
-# Cunningham theme name, now read at runtime by the root shell. Must be one of
-# the generated themes (default, dark, dsfr-light, dsfr-dark, anct-light,
-# anct-dark).
-# Leave empty for the neutral theme.
-FRONTEND_THEME=anct-light
-# ProConnect sign-in button instead of the neutral one. Dev authenticates
-# against the local Keycloak, not ProConnect, so this stays off.
-FRONTEND_PROCONNECT_BUTTON=False
-# "Learn more" link on the public landing. Empty hides the button.
-FRONTEND_LEARN_MORE_URL=
+# Compiled Cunningham palette, read at runtime by the root shell. Must be one
+# of the generated themes (default, dark, dsfr-light, dsfr-dark, anct-light,
+# anct-dark). Leave empty for the neutral theme. DEFAULT_CONFIG's
+# theme_customization.colors overrides individual tokens on top of whichever
+# one this picks,
+# so an operator whose palette nobody compiled needs no rebuild — which is why
+# dev runs on "default" rather than anct-light.
+FRONTEND_THEME=default
+
+# Deployment configuration, resolved per request. Two variables, each also
+# readable from a file via a <NAME>_FILE_PATH sibling (the file is the base,
+# the inline value merges over it).
+#
+#   DEFAULT_CONFIG    the base, sectioned: {"theme_customization": {...}}
+#   CONFIG_OVERRIDES  what differs per domain:
+#                     {"<domain>": {"theme_customization": {...}}}
+#
+# An override states only what changes, so adding a domain never means
+# restating a whole theme. Objects merge key by key; lists replace wholesale,
+# which is the only way an override can remove a link rather than add one.
+#
+# The colours below move one rung of the brand ramp, which is enough to see
+# the mechanism work but not to rebrand the interface: Cunningham components
+# reference rungs across the whole 050..950 ladder (a tertiary button's label
+# is brand-550). A real operator theme carries the whole ramp -- see the
+# README.
+#
+# Only the theme_customization section is served to the browser, under the key
+# of the same name that docs and drive already use; its shape is a superset of
+# theirs, so a theme file written for docs drops in unchanged via
+# THEME_CUSTOMIZATION_FILE_PATH. A section this version doesn't know stays
+# server-side.
+#
+# The domain is the hostname the *API* was reached on, which is the
+# frontend's own hostname: Caddy serves the app and proxies /api on the same
+# origin in production, and the dev server does the same. So exercising the
+# per-domain path locally is just a matter of browsing an alias --
+# http://opsn1.localhost:8980 instead of http://localhost:8980. Same image,
+# another brand. Most browsers resolve *.localhost to loopback on their own;
+# add "127.0.0.1 opsn1.localhost" to /etc/hosts if yours does not.
+#
+# One thing dev does not reproduce: the theme carries URLs, and in production
+# the browser only loads an image or a font the frontend's CSP allows -- its
+# own origin, a data: URI, or the origin
+# TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN declares. The Vite dev server sends no
+# CSP at all, so a logo on a third-party origin works here and is blocked
+# there, with a console violation as the only trace. Test an off-origin asset
+# against the real image (make test-front-distroless builds it), not dev.
+DEFAULT_CONFIG={"theme_customization": {"help": {"documentation_url": "https://example.test/help"}}}
+CONFIG_OVERRIDES={"opsn1.localhost": {"theme_customization": {"colors": {"--c--globals--colors--brand-500": "#C83F49"}, "fontFamily": "Georgia, serif"}}}
+# THEME_CUSTOMIZATION_FILE_PATH=/path/to/a/docs-shaped/theme.json

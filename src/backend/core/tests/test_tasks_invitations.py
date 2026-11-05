@@ -1,5 +1,6 @@
 """send_recipient_invitations_task: one SMTP session per batch, per-recipient
-failure isolation, and the completion stamp the frontend polls on."""
+failure isolation, the completion stamp the frontend polls on, and the
+request origin that decides which operator's domain a link points at."""
 
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ import pytest
 from core.enums import ActorType, SharingMode, TransferEventType
 from core.factories import TransferFactory, TransferFileFactory
 from core.models import TransferEvent, TransferRecipient
+from core.services import email as email_service
 from core.tasks import send_download_receipt_task, send_recipient_invitations_task
 
 pytestmark = pytest.mark.django_db
@@ -62,7 +64,7 @@ def test_a_transfer_expiring_mid_batch_stops_before_the_next_recipient():
     the link no longer has."""
     transfer = _transfer_with_recipients(3)
 
-    def expire_after_the_first(transfer, recipient, connection=None):
+    def expire_after_the_first(transfer, recipient, connection=None, origin=None):
         transfer.expires_at = timezone.now() - timedelta(minutes=1)
 
     with (
@@ -239,3 +241,69 @@ def test_download_receipt_html_renders_no_template_comment():
 
     html = mail.outbox[0].alternatives[0][0]
     assert "{#" not in html and "#}" not in html
+
+
+def test_the_invitation_link_points_at_the_origin_it_was_created_on():
+    """One image, several operators: the link has to bring the recipient back
+    to the domain their sender used. Pointing them at another operator's
+    hostname reads as phishing, whatever the branding says."""
+    transfer = _transfer_with_recipients(1)
+
+    send_recipient_invitations_task(
+        str(transfer.id), origin="https://opsn1.example.org/"
+    )
+
+    assert len(mail.outbox) == 1
+    assert f"https://opsn1.example.org/t/{transfer.public_token}" in mail.outbox[0].body
+
+
+def test_two_origins_send_two_different_links():
+    """The same instance, the same image, two domains — the property the whole
+    per-domain mechanism exists for, checked where it actually reaches a
+    user."""
+    first = _transfer_with_recipients(1)
+    second = _transfer_with_recipients(1)
+
+    send_recipient_invitations_task(str(first.id), origin="https://opsn1.example.org")
+    send_recipient_invitations_task(str(second.id), origin="https://opsn2.example.org")
+
+    bodies = [message.body for message in mail.outbox]
+    assert any("https://opsn1.example.org/t/" in body for body in bodies)
+    assert any("https://opsn2.example.org/t/" in body for body in bodies)
+
+
+def test_the_receipt_link_points_at_the_origin_too(settings):
+    """The sender's own notification links back to the transfer detail page,
+    which lives on the domain they were working on."""
+    settings.LOGIN_REDIRECT_URL = "https://fallback.example.org"
+    transfer = TransferFactory(sharing_mode=SharingMode.EMAIL, notify_on_download=True)
+    recipient = TransferRecipient.objects.create(
+        transfer=transfer, email="dest@example.org"
+    )
+
+    send_download_receipt_task(
+        str(transfer.id), str(recipient.id), origin="https://opsn1.example.org"
+    )
+
+    assert len(mail.outbox) == 1
+    body = mail.outbox[0].body
+    assert f"https://opsn1.example.org/transfers/{transfer.id}" in body
+    assert "fallback.example.org" not in body
+
+
+def test_no_origin_falls_back_to_the_instance_wide_url_and_says_so(settings):
+    """A task enqueued by an older release is still in the queue across a
+    deploy, so it must run rather than crash — on the instance-wide value,
+    which is right for a single domain and wrong for every other operator.
+    The warning is what makes that visible instead of silent."""
+    settings.LOGIN_REDIRECT_URL = "https://fallback.example.org"
+    transfer = _transfer_with_recipients(1)
+
+    with patch.object(email_service.logger, "warning") as warning:
+        send_recipient_invitations_task(str(transfer.id))
+
+    assert len(mail.outbox) == 1
+    assert (
+        f"https://fallback.example.org/t/{transfer.public_token}" in mail.outbox[0].body
+    )
+    assert "without the origin of its request" in warning.call_args[0][0]

@@ -10,6 +10,7 @@ import {
   ConfigProvider,
   useOptionalConfig,
 } from "@/features/providers/config";
+import { ThemeApplier } from "@/features/theme";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ const ThemedShell = () => {
       theme={config?.FRONTEND_THEME || "default"}
       currentLocale={i18n.language}
     >
+      <ThemeApplier />
       <Auth>
         <Outlet />
       </Auth>

@@ -6,6 +6,8 @@ import rest_framework as drf
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework.permissions import AllowAny
 
+from core import runtime_config
+
 
 class ConfigView(drf.views.APIView):
     """API ViewSet for sharing public settings."""
@@ -46,19 +48,23 @@ class ConfigView(drf.views.APIView):
             # Lets the form hide the confidential toggle on instances that
             # opted out; finalize enforces the same flag server-side.
             "TRANSFER_CONFIDENTIAL_ENABLED": settings.TRANSFER_CONFIDENTIAL_ENABLED,
+            # Deprecated: superseded by ``theme.help.documentation_url``.
+            # Still served so a deployment can migrate on its own schedule;
+            # the frontend reads the theme first and falls back to this.
             "HELP_URL": getattr(settings, "HELP_URL", ""),
             # The error page's support link; hidden when empty.
+            # Deprecated: superseded by ``theme.help.support_url``.
             "SUPPORT_URL": getattr(settings, "SUPPORT_URL", ""),
             # Empty means "neutral": the frontend falls back to the default
             # Cunningham theme rather than any operator's branding.
             "FRONTEND_THEME": getattr(settings, "FRONTEND_THEME", None) or "",
-            "FRONTEND_PROCONNECT_BUTTON": getattr(
-                settings, "FRONTEND_PROCONNECT_BUTTON", False
-            ),
-            "FRONTEND_LEARN_MORE_URL": getattr(
-                settings, "FRONTEND_LEARN_MORE_URL", ""
-            ),
         }
+
+        # The theme, resolved for this request's domain. Deployment-supplied
+        # and never compiled in, so one image serves every operator. This
+        # makes the response host-dependent: any cache put in front of
+        # /config/ must Vary on Host.
+        payload.update(runtime_config.public_payload(request))
 
         # Surface Drive picker config only when DRIVE_BASE_URL is set —
         # keeps the "Attach from Drive" button hidden on instances that
@@ -75,6 +81,8 @@ class ConfigView(drf.views.APIView):
         # Surface the LaGaufre widget only when both URLs are configured —
         # keeps the app switcher, and the third-party script it loads, off
         # instances that didn't opt in.
+        # Deprecated: superseded by ``theme.waffle``, which is the
+        # ``LaGaufreV2Props`` type the component already takes.
         lagaufre_config = getattr(settings, "LAGAUFRE_CONFIG", None) or {}
         if lagaufre_config.get("widget_url") and lagaufre_config.get("api_url"):
             payload["LAGAUFRE"] = {

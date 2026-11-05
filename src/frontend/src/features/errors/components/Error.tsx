@@ -1,7 +1,7 @@
 import { Mail } from "@gouvfr-lasuite/ui-kit/icons";
 import { useTranslation } from "react-i18next";
 
-import { useConfig } from "@/features/providers/config";
+import { useSupportUrl } from "@/features/theme";
 
 export type ErrorProps = {
   title: string;
@@ -10,7 +10,7 @@ export type ErrorProps = {
 
 export function Error({ title, message }: ErrorProps) {
   const { t } = useTranslation();
-  const config = useConfig();
+  const supportUrl = useSupportUrl();
   return (
     <div className="service-error" role="alert">
       <img
@@ -23,10 +23,10 @@ export function Error({ title, message }: ErrorProps) {
       />
       <p className="service-error__title">{title}</p>
       <p className="service-error__message">{message}</p>
-      {config.SUPPORT_URL && (
+      {supportUrl && (
         <a
           className="service-error__support"
-          href={config.SUPPORT_URL}
+          href={supportUrl}
           target="_blank"
           rel="noopener noreferrer"
         >

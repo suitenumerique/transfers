@@ -8,7 +8,7 @@ import { useAuth } from "@/features/auth";
 import { LoginButton } from "@/features/auth/LoginButton";
 import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
-import { useConfig } from "@/features/providers/config";
+import { ProductLogo, useHelpUrl } from "@/features/theme";
 import { useDownloadTransfer } from "@/features/transfers/api/useDownload";
 import { DownloadView } from "@/features/transfers/components/DownloadView";
 
@@ -33,7 +33,7 @@ function DownloadPage() {
   const { token } = Route.useParams();
   // ``?r=<recipient token>`` from the emailed link — see useDownload.
   const { r: recipientToken } = Route.useSearch();
-  const config = useConfig();
+  const helpUrl = useHelpUrl();
   const { user } = useAuth();
 
   const { data, isLoading, isError, error } = useDownloadTransfer(
@@ -78,14 +78,10 @@ function DownloadPage() {
           className="download-page__brand"
           aria-label={t("Transferts")}
         >
-          {/* The bundled "transfers-logo.svg" is the wordmark — icon +
-              "Transfers" text already inside the SVG. Don't double up
-              with a sibling label or you get two "Transfers" strings. */}
-          <img
-            src="/images/transfers-logo.svg"
-            alt="Transferts"
-            height={36}
-          />
+          {/* The default logo is the wordmark — icon + "Transfers" text
+              already inside the SVG. Don't double up with a sibling label
+              or you get two "Transfers" strings. */}
+          <ProductLogo height={36} />
         </Link>
         <div className="download-page__topbar-right">
           <LanguagePicker size="small" compact />
@@ -96,7 +92,7 @@ function DownloadPage() {
 
       <main className="download-page__main">{renderContent()}</main>
 
-      {config.HELP_URL && (
+      {helpUrl && (
         <Button
           color="neutral"
           variant="tertiary"
@@ -104,7 +100,7 @@ function DownloadPage() {
           icon={<QuestionMark />}
           aria-label={t("Help")}
           title={t("Help")}
-          href={config.HELP_URL}
+          href={helpUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="download-page__help"

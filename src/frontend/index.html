@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#FFFFFF" />
-    <link rel="icon" type="image/svg+xml" href="/images/transfers-favicon.svg" />
+    <!-- Two slots so a deployment's theme can supply a light and a dark
+         favicon (theme_customization.favicon). Both point at the product's
+         own icon until one does, so this changes nothing by default. -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      media="(prefers-color-scheme: light)"
+      href="/images/transfers-favicon.svg"
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      media="(prefers-color-scheme: dark)"
+      href="/images/transfers-favicon.svg"
+    />
     <link rel="alternate icon" href="/images/transfers-favicon.svg" />
     <link rel="apple-touch-icon" href="/images/transfers-favicon.svg" />
     <link rel="manifest" href="/manifest.json" />
