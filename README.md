@@ -76,6 +76,119 @@ S3 / storage:
 
 For IAM permissions required on the bucket, see [`docs/S3.md`](docs/S3.md#iam-permissions-on-the-bucket).
 
+### Theming and per-domain configuration
+
+The interface is themed at runtime, from a JSON object the backend resolves
+per request and serves on `/api/v1.0/config/`. Nothing is compiled in: one
+image serves every operator, and re-theming a deployment is a restart.
+
+The object is **sectioned**. `theme_customization` is the only section
+today, and the only
+one served to the browser — a section this version doesn't know stays
+server-side, so a shared configuration file carrying another product's
+secrets can never leak through a public endpoint.
+
+| Variable | Effect |
+|---|---|
+| `DEFAULT_CONFIG` | The base, as a JSON object of sections: `{"theme_customization": {…}}`. |
+| `CONFIG_OVERRIDES` | What differs per domain: `{"<domain>": {"theme_customization": {…}}}`. |
+| `THEME_CUSTOMIZATION_FILE_PATH` | A `docs`-shaped theme file, which becomes the `theme_customization` section. |
+| `CONFIG_CACHE_TIMEOUT` | How long a file read is cached (default 24 h). Every file the resolver reads, not just the theme's. |
+| `FRONTEND_THEME` | The compiled Cunningham palette to start from: `default`, `dark`, `dsfr-light`, `dsfr-dark`, `anct-light`, `anct-dark`. Empty ⇒ `default`, which carries no operator's colours. |
+
+Both configuration variables also read from a file through a
+`<NAME>_FILE_PATH` sibling; the file provides the base and the inline value
+merges over it, so a deployment can mount an operator's configuration and
+still override one key from the environment.
+
+Resolution is a single merge: the base, then whatever the request's domain
+overrides on it. An override states only what differs, so adding a domain
+never means restating a whole theme. Objects merge key by key; lists replace
+wholesale, which is the only way an override can *remove* a link rather than
+only add one. Malformed JSON fails the boot, as does an override keyed on
+anything but a bare hostname — an instance quietly serving nobody's theme
+because of a stray comma, or of an `https://` that can never match, is worse
+than one that refuses to start.
+
+```bash
+DEFAULT_CONFIG='{"theme_customization": {"help": {"documentation_url": "https://help.example.org"}}}'
+CONFIG_OVERRIDES='{"opsn1.example.org": {"theme_customization": {"colors": {"--c--globals--colors--brand-500": "#C83F49"}}}}'
+```
+
+The domain is the hostname the **API** was reached on. In the production
+topology that is the frontend's own hostname, since Caddy serves the app and
+proxies `/api` on the same origin. Behind a proxy that rewrites `Host`, set
+`USE_X_FORWARDED_HOST`; Django's `request.get_host()` honours it. Every
+domain an override names must also be in `DJANGO_ALLOWED_HOSTS`, which it has
+to be anyway.
+
+The response therefore varies by domain: a cache placed in front of
+`/api/v1.0/config/` must `Vary` on `Host`. Nothing caches it today.
+
+Theming per user or per group of users is not part of this: that assignment
+belongs in Espace Opérateur, which already administers who may use the
+service, and would come back as one more patch merged over the domain's.
+
+#### The theme object
+
+Shaped as a superset of the theme customization JSON of
+[docs](https://github.com/suitenumerique/docs) and
+[drive](https://github.com/suitenumerique/drive): every key those two define
+keeps its name and meaning here, so a file written for either drops in
+unchanged. Like theirs, it is **not validated key by key** — an unknown key
+travels through to the browser untouched, which is what will let the Suite's
+products converge on a single file without each of them knowing every key.
+
+| Key | Effect |
+|---|---|
+| `colors` | Cunningham custom properties by their exact CSS names, e.g. `{"--c--globals--colors--brand-500": "#C83F49"}`. Applied over the compiled palette. Give the **whole brand ramp**, not one rung — see below. |
+| `fontFamily` | Base and accent font family. Names a family; it does not load one — see `fontFaces`. |
+| `fontFaces` | Font files the deployment serves, turned into `@font-face` rules at runtime: `[{"family", "src", "weight", "style", "display", "unicodeRange"}]`. `woff2` only. The file must be same-origin, a `data:` URI, or on the origin `TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN` names — fonts are subject to the cross-origin rules *and* to `font-src`, so CORS alone is not enough. Without this a theme can name a family the browser has no way to load. |
+| `favicon.light` / `.dark` | `{"href": "…"}` per colour scheme. Setting one of the two puts it in both slots, rather than a mismatched pair. |
+| `header.icon` | The header logo, `{"src", "alt", "width", "height"}`. Empty ⇒ the Transfers wordmark. |
+| `home["with-proconnect"]` | `true` swaps the neutral "Sign in" button for the ProConnect one. Off unless the instance is actually federated with ProConnect. |
+| `home.learn_more_url` | "Learn more" on the public landing. Empty hides the button. |
+| `help.documentation_url` | Help link on the sidebar and the recipient page. |
+| `help.support_url` | Support link on the error page. `help.support_mailto` is accepted too, for parity with `docs`. |
+| `waffle` | `{"widgetPath", "apiUrl"}` for the La Suite app switcher. Opt-in: nothing renders until both are set, since the widget pulls a third-party script and lists another operator's services. |
+
+A word on fonts. The neutral theme renders in **Hanken Grotesk**, served from
+`public/fonts/` under the SIL Open Font License — two variable `woff2` files,
+54 kB in all, covering weights 100 to 900 for Latin and Latin Extended. It
+carries no institution's identity, which the themes that select Marianne do.
+An operator who wants its own face declares it in `fontFaces` and points
+`fontFamily` at it; nothing needs rebuilding.
+
+A word on `colors`. Cunningham's brand palette is a nineteen-rung ramp,
+`--c--globals--colors--brand-050` through `--brand-950` in steps of 50, and
+its components reference rungs across the whole ladder: a tertiary button's
+label is `brand-550`, a primary button's background `brand-550` with
+`brand-650` on hover, a tinted surface `brand-050`. Overriding `brand-500`
+alone therefore recolours almost nothing visible. An operator rebranding the
+interface supplies the whole ramp — generating it from one seed colour, by
+keeping the default ramp's lightness and saturation and moving the hue, gives
+a coherent result and preserves the contrast ratios the palette was built
+with.
+
+A word on images. The theme carries URLs, not files: `favicon.*.href`,
+`header.icon.src` and `home["icon-banner"].src` are fetched by the browser,
+so the content security policy decides whether they load. Three sources work,
+and nothing else does:
+
+- a **`data:` URI** written into the configuration — allowed out of the box,
+  needs no hosting, and is the shortest path for an SVG logo or favicon of a
+  few kilobytes;
+- a path on the **instance's own origin**, e.g. `/images/opsn1-logo.svg`, for
+  a deployment that can mount a file into the frontend image's document root;
+- an **external origin**, which must be declared in
+  `TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN` (see the frontend container's
+  variables below). Undeclared, the image is resolved, served in `/config/`
+  and then blocked by the browser — the theme looks broken and the only trace
+  is a console violation.
+
+`HELP_URL`, `SUPPORT_URL`, `LAGAUFRE_WIDGET_URL` and `LAGAUFRE_API_URL`
+predate the theme and are still honoured as fallbacks for one version.
+
 ### Branding (notification emails)
 
 No institutional identity ships with the code. The République Française
@@ -192,22 +305,33 @@ restricted to an IP allowlist. Both rely on the client IP that Caddy
 establishes: the TCP peer, unless that peer is a trusted proxy — then
 the address in `X-Forwarded-For`, walked from the right to the first
 one that is not a trusted proxy (`trusted_proxies_strict`). A prefix a
-client writes into the header never wins. Caddy forwards that single
+client writes into the header loses — as long as
+`TRANSFERS_FRONTEND_TRUSTED_PROXIES` lists only real proxies, since the
+walk skips whatever it trusts and a CIDR covering a client's own address
+lets it reach the entries that client wrote. Caddy forwards that single
 address to the backend as `X-Forwarded-For`, where
 `XForwardedForMiddleware` (`src/backend/core/middlewares.py`, enabled
-by `USE_X_FORWARDED_FOR=True`) sets `REMOTE_ADDR` from it.
+by `USE_X_FORWARDED_FOR=True`, off by default) sets `REMOTE_ADDR` from
+it. Left off, `REMOTE_ADDR` is Caddy's own address: one audit-log entry
+and one anonymous throttle bucket for every client alike.
 
 In production the request chain is:
 
 ```
-Client → Edge router (Scalingo) → HAProxy → Caddy → Gunicorn
+Client → Edge router / load balancer → Caddy → Gunicorn
 ```
+
+Whatever sits at the edge must either preserve `Host` or set
+`X-Forwarded-Host` with `USE_X_FORWARDED_HOST=True` — the configuration
+resolver reads the host to pick the operator's theme, and an edge that
+rewrites it without either serves the neutral theme to everyone, silently.
 
 | Variable | Default | Description |
 |---|---|---|
 | `TRANSFERS_FRONTEND_TRUSTED_PROXIES` | _(empty: trust no proxy)_ | Space-separated CIDR list of the proxies whose `X-Forwarded-For` sets the client IP. **Set it to your proxies' CIDRs, never to `private_ranges`**: a published container port is reached through a bridge gateway on a private address, so trusting that range lets any client set `X-Forwarded-For` and walk past the admin allowlist — `bin/smoke-test-front` covers exactly that. Left unset, `{client_ip}` is whatever connects to Caddy — HAProxy in the chain above, not the edge router, and behind a NAT the container's own gateway — so the audit log records that hop instead of the user and the allowlist filters on the wrong address. |
 | `DJANGO_ADMIN_IP_ALLOWLIST` | `0.0.0.0/0 ::/0` (everyone) | Space-separated CIDR list of the client IPs admitted on the admin URL; Caddy answers 403 to the others. Leave it unset to keep the admin open — an empty value admits no one. It is compared against the `{client_ip}` the row above establishes, so narrowing this one while trusting no proxy filters on the proxy's address, not the user's. A 403 you did not expect: read Caddy's access log for that request and compare `client_ip` — the address that was matched — with the address you expect the client to have. If it is not the client's, the logged `X-Forwarded-For` shows the chain the proxy sent and therefore which hop was taken instead, and the row above needs your proxies' CIDRs. The two values differ whenever the chain has more than one hop, so that on its own proves nothing. |
 | `TRANSFERS_FRONTEND_BACKEND_SERVER` | `localhost:8000` | `host:port` of the Django backend Caddy proxies `/api/*`, `/static/*` and the admin URL to. |
+| `TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN` | _(empty: none allowed)_ | Origin a deployment serves its own theme assets from — the logo and favicon of `theme_customization`, and any font file `fontFaces` points at. Added to `img-src` and `font-src`. One origin, scheme included, e.g. `https://assets.cd33.fr`; several are space-separated. Leave it empty unless a theme actually points off-origin: it is the only part of the policy a deployment widens for its own content, and an origin listed here may serve images and fonts to every page of the instance. A theme with nowhere to host inlines its assets as `data:` URIs instead. |
 
 `make test-front-distroless` builds the production image and checks all
 of this against it (allow and deny, spoofed headers, trusted proxies);

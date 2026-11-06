@@ -663,9 +663,15 @@ def delete_pending_transfer_files_task():
 
 
 @dramatiq.actor
-def send_recipient_invitations_task(transfer_id):
+def send_recipient_invitations_task(transfer_id, origin=None):
     """Send invitation emails to every recipient of ``transfer_id`` that
     doesn't have an ``email_sent_at`` yet.
+
+    ``origin`` is the origin the transfer was created on, carried from the
+    view: the domain does not survive a ``.send()`` on its own, and on a
+    multi-domain instance the link has to point back at the right
+    operator. Optional so a task enqueued before this argument existed
+    still runs across a deploy.
 
     The email carries only the download link, never the decryption key.
     A non-confidential transfer's key is served by the backend at
@@ -730,7 +736,9 @@ def send_recipient_invitations_task(transfer_id):
                 )
                 break
             try:
-                send_recipient_invitation(transfer, recipient, connection=connection)
+                send_recipient_invitation(
+                    transfer, recipient, connection=connection, origin=origin
+                )
                 recipient.email_sent_at = timezone.now()
                 recipient.save(update_fields=["email_sent_at", "updated_at"])
                 TransferEvent.objects.create(
@@ -763,8 +771,11 @@ def send_recipient_invitations_task(transfer_id):
 
 # Backoff doubles from about a minute: roughly 1, 2 then 4 min.
 @dramatiq.actor(max_retries=3, min_backoff=30_000, max_backoff=480_000)
-def send_download_receipt_task(transfer_id, recipient_id):
+def send_download_receipt_task(transfer_id, recipient_id, origin=None):
     """Email the sender about ``recipient_id``'s downloads.
+
+    ``origin`` is the origin the download happened on, carried from the
+    view for the same reason as in ``send_recipient_invitations_task``.
 
     Enqueued by the download view in two situations (see
     ``_maybe_send_download_receipt``): right away when the recipient has
@@ -793,7 +804,7 @@ def send_download_receipt_task(transfer_id, recipient_id):
         id=recipient_id
     )
     try:
-        send_download_receipt(recipient.transfer, recipient)
+        send_download_receipt(recipient.transfer, recipient, origin=origin)
     except Exception:
         logger.exception(
             "Failed to send download receipt for transfer %s (recipient %s)",

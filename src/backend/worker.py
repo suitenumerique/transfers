@@ -25,7 +25,7 @@ import sys
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "transfers.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", "Development")
 
-# Override $APP if set by the host (e.g. Scalingo)
+# Override $APP if the hosting platform set it
 os.environ.pop("APP", None)
 
 from configurations.importer import install  # pylint: disable=wrong-import-position

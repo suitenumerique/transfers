@@ -3,6 +3,10 @@
 @use "@gouvfr-lasuite/ui-kit/style";
 @use "@gouvfr-lasuite/ui-kit/sass/fonts";
 
+// Hanken Grotesk, the neutral theme's own family, self-hosted.
+// Aliased: the kit module already claims the "fonts" namespace.
+@use "./fonts.scss" as app-fonts;
+
 // Global app styles and tokens
 @use "./cunningham-tokens.css";
 @use "./globals.scss";

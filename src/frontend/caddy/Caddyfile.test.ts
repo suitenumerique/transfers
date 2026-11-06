@@ -9,6 +9,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import {
+  BACKEND_PREFIXES,
+  BACKEND_PREFIXES_NOT_PROXIED_IN_DEV,
+} from "../vite.config";
+
 const CADDYFILE = readFileSync(
   fileURLToPath(new URL("./Caddyfile", import.meta.url)),
   "utf8",
@@ -16,12 +21,14 @@ const CADDYFILE = readFileSync(
 
 const SCRIPT_ORIGIN = "{$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}";
 const API_ORIGIN = "{$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN}";
+const ASSET_ORIGIN = "{$TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN}";
 
 // Directive name -> its source list, read from the header itself so the test
 // tracks the policy rather than a copy of it.
 const policy = (): Record<string, string> => {
   const header = CADDYFILE.match(/Content-Security-Policy\s+"([^"]+)"/);
-  if (!header) throw new Error("no Content-Security-Policy header in Caddyfile");
+  if (!header)
+    throw new Error("no Content-Security-Policy header in Caddyfile");
   return Object.fromEntries(
     header[1]
       .split(";")
@@ -51,6 +58,27 @@ describe("Caddyfile CSP", () => {
     // at (/api/v1.0/servicelogo/...) was blocked.
     expect(csp["connect-src"]).toContain(API_ORIGIN);
     expect(csp["img-src"]).toContain(API_ORIGIN);
+  });
+
+  it("allows the theme's own assets wherever a theme can name one", () => {
+    // theme_customization resolves at runtime, so a logo or a font file it
+    // points at is never known when this policy is written. Both directives
+    // or neither: a deployment that may serve its logo from its own origin
+    // and not its font gets a theme that half applies, and the half that
+    // does not leaves nothing but a console violation.
+    const csp = policy();
+
+    expect(csp["img-src"]).toContain(ASSET_ORIGIN);
+    expect(csp["font-src"]).toContain(ASSET_ORIGIN);
+  });
+
+  it("keeps a data: URI usable for a theme that has nowhere to host", () => {
+    // The fallback the asset origin's default-empty relies on: inlining the
+    // favicon and the logo in the configuration itself.
+    const csp = policy();
+
+    expect(csp["img-src"]).toContain("data:");
+    expect(csp["font-src"]).toContain("data:");
   });
 
   it("keeps deployment-specific hosts out of the policy", () => {
@@ -143,5 +171,37 @@ describe("Caddyfile client IP", () => {
       /not client_ip \{\$DJANGO_ADMIN_IP_ALLOWLIST:0\.0\.0\.0\/0 ::\/0\}/,
     );
     expect(CADDYFILE).toMatch(/respond @admin_denied 403/);
+  });
+});
+
+describe("Caddyfile backend routing", () => {
+  // Prod serves the app and the API on one origin, dev used to serve them on
+  // two. That split is invisible until a second domain is added: the backend
+  // then reads the API port's host instead of the browser's, so it cannot
+  // tell the domains apart, and the session cookie belongs to a host the
+  // page is not served from. vite.config.ts mirrors this list; this test is
+  // what keeps the two from drifting as prefixes are added here.
+  const proxied = () =>
+    [...CADDYFILE.matchAll(/reverse_proxy (\/\S+)/g)].map((m) =>
+      m[1].replace(/\/\*$/, ""),
+    );
+
+  it("forwards something", () => {
+    expect(proxied().length).toBeGreaterThan(0);
+  });
+
+  it("is mirrored by the dev server, prefix for prefix", () => {
+    const known = [...BACKEND_PREFIXES, ...BACKEND_PREFIXES_NOT_PROXIED_IN_DEV];
+
+    expect([...new Set(proxied())].sort()).toEqual([...new Set(known)].sort());
+  });
+
+  it("names the exceptions rather than leaving them implicit", () => {
+    // The admin is the one prefix dev leaves on the backend's own port:
+    // Caddy's allowlist and trailing-slash redirect have no equivalent in
+    // the dev server, so proxying it would be a half-measure.
+    expect(BACKEND_PREFIXES_NOT_PROXIED_IN_DEV).toEqual([
+      "/{$DJANGO_ADMIN_URL:admin}",
+    ]);
   });
 });

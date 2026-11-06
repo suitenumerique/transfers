@@ -2,7 +2,7 @@
 # env.d/development/backend.defaults, so only what differs is set here.
 # The e2e stack runs beside the dev stack, on ports 79xx instead of 89xx.
 
-DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:7980,http://localhost:7981
+DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:7980,http://localhost:7981,http://opsn1.localhost:7980
 
 # The browser uploads to and downloads from these presigned URLs.
 AWS_S3_DOMAIN_REPLACE=http://localhost:7986
@@ -14,7 +14,9 @@ OIDC_OP_LOGOUT_ENDPOINT=http://localhost:7902/realms/transfers/protocol/openid-c
 LOGIN_REDIRECT_URL=http://localhost:7980
 LOGIN_REDIRECT_URL_FAILURE=http://localhost:7980/errors
 LOGOUT_REDIRECT_URL=http://localhost:7980
-OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:7980,http://localhost:7981
+# Bare hosts, never origins: a value carrying a scheme matches nothing, and
+# ``next`` is then silently dropped (core/tests/test_authentication.py).
+OIDC_REDIRECT_ALLOWED_HOSTS=localhost:7980,localhost:7981,opsn1.localhost:7980
 
 # Every test runs from one IP and reuses a few addresses: limits sized for
 # real traffic would fail the suite partway.
@@ -22,3 +24,20 @@ THROTTLE_USER_OUTBOUND_RECIPIENTS=10000/day
 API_DRAFT_ADD_FILE_THROTTLE_RATE=10000/hour
 API_TRANSFER_RESEND_THROTTLE_RATE=10000/hour
 API_PUBLIC_DOWNLOAD_THROTTLE_RATE=10000/hour
+
+# Deployment configuration, resolved per request (see the README). The dev
+# defaults carry a demo of this; the e2e stack states its own so the specs
+# have a fixed contract and the demo stays free to change.
+#
+# The base is the neutral deployment every other spec expects: links only, no
+# colours, no logo, no ProConnect. ``e2e_unknown_key`` is there to be served
+# untouched (the superset is additive by design), and the ``e2e_private``
+# section to never be served at all -- a section this build does not know is
+# private, which is what keeps a shared configuration file from leaking
+# another product's secrets through /config/.
+DEFAULT_CONFIG={"theme_customization": {"help": {"documentation_url": "https://help.e2e.test/docs", "support_url": "https://support.e2e.test/base"}, "home": {"learn_more_url": "https://learn.e2e.test/base"}, "e2e_unknown_key": {"kept": true}}, "e2e_private": {"never_served": "sentinel"}}
+
+# One image, two operators: opsn1.localhost:7980 is the same container, reached
+# on another name. Browsers resolve *.localhost to loopback on their own, and
+# the runner's port forwarder listens there (src/e2e/scripts/forward-ports.mjs).
+CONFIG_OVERRIDES={"opsn1.localhost": {"theme_customization": {"colors": {"--c--globals--colors--brand-050": "#FBECEE", "--c--globals--colors--brand-500": "#C83F49", "--c--globals--colors--brand-550": "#B5363F", "--c--globals--colors--brand-650": "#92262E"}, "fontFamily": "Georgia, serif", "favicon": {"light": {"href": "/images/transfers-favicon.svg"}, "dark": {"href": "/images/transfers-icon.svg"}}, "header": {"icon": {"src": "/images/transfers-logo.svg", "alt": "OPSN1", "height": 32}}, "home": {"icon-banner": {"src": "/images/transfers-icon.svg", "alt": "OPSN1 file transfer"}, "with-proconnect": true, "learn_more_url": "https://learn.e2e.test/opsn1"}, "help": {"support_url": "https://support.e2e.test/opsn1"}}}}

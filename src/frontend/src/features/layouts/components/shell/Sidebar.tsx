@@ -8,11 +8,11 @@ import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { ChevronDown, Folder, Plus, QuestionMark, XMark, Zoom } from "@gouvfr-lasuite/ui-kit/icons";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
 import { useDebouncedValue } from "@/features/utils/use-debounced-value";
-import { useConfig } from "@/features/providers/config";
+import { ProductLogo, useHelpUrl } from "@/features/theme";
 
 export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useTranslation();
-  const config = useConfig();
+  const helpUrl = useHelpUrl();
   // `strict: false` reads params from whatever route is currently matched —
   // returns `{ id }` on /transfers/$id, an empty object elsewhere.
   const { id: activeId } = useParams({ strict: false }) as { id?: string };
@@ -27,11 +27,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
           className="shell-sidebar__logo"
           aria-label={t("Transferts")}
         >
-          <img
-            src="/images/transfers-logo.svg"
-            alt="Transferts"
-            height={36}
-          />
+          <ProductLogo height={36} />
         </Link>
         {onClose && (
           // Mobile-only close button — hidden via CSS on desktop where
@@ -96,7 +92,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
       </div>
 
       <div className="shell-sidebar__footer">
-        {config.HELP_URL && (
+        {helpUrl && (
           <Button
             color="neutral"
             variant="tertiary"
@@ -104,7 +100,7 @@ export function Sidebar({ onClose }: { onClose?: () => void } = {}) {
             icon={<QuestionMark />}
             aria-label={t("Help")}
             title={t("Help")}
-            href={config.HELP_URL}
+            href={helpUrl}
             target="_blank"
             rel="noopener noreferrer"
           />

@@ -136,7 +136,7 @@ def _record_visitor_event(
     return True
 
 
-def _maybe_send_download_receipt(transfer, recipient):
+def _maybe_send_download_receipt(transfer, recipient, request):
     """Queue the download receipt for the sender (opt-in per transfer, one
     email per recipient).
 
@@ -148,7 +148,11 @@ def _maybe_send_download_receipt(transfer, recipient):
       time.
 
     The task claims ``download_notified_at`` before sending, so only one
-    of the queued tasks emails."""
+    of the queued tasks emails.
+
+    The request origin is carried into the task so the link back to the
+    transfer points at the domain this happened on, not at an
+    instance-wide setting (see ``core.services.email._base_url``)."""
     if not transfer.notify_on_download or recipient.download_notified_at:
         return
     file_count = transfer.files.count()
@@ -158,8 +162,11 @@ def _maybe_send_download_receipt(transfer, recipient):
     from core.tasks import send_download_receipt_task
 
     args = (str(transfer.id), str(recipient.id))
+    origin = request.build_absolute_uri("/")
     if len(downloaded) >= file_count:
-        transaction.on_commit(lambda: send_download_receipt_task.send(*args))
+        transaction.on_commit(
+            lambda: send_download_receipt_task.send(*args, origin=origin)
+        )
         return
     armed = models.TransferRecipient.objects.filter(
         id=recipient.id, delayed_receipt_armed_at__isnull=True
@@ -167,7 +174,9 @@ def _maybe_send_download_receipt(transfer, recipient):
     if armed:
         transaction.on_commit(
             lambda: send_download_receipt_task.send_with_options(
-                args=args, delay=settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY * 1000
+                args=args,
+                kwargs={"origin": origin},
+                delay=settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY * 1000,
             )
         )
 
@@ -309,7 +318,7 @@ class DownloadFileView(APIView):
             recipient=recipient,
         )
         if recorded and recipient is not None:
-            _maybe_send_download_receipt(transfer, recipient)
+            _maybe_send_download_receipt(transfer, recipient, request)
 
         # Auto-archive check: if this transfer was flagged as one-shot and
         # every file has now been downloaded at least once, deactivate the

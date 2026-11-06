@@ -284,7 +284,11 @@ class TestRecipientAttribution:
         """Opt-in transfer, two files. The first attributed download arms
         the delayed "partial" receipt once (persisted claim); the download
         that completes the set sends immediately; a bare link never
-        triggers anything."""
+        triggers anything.
+
+        Both enqueues carry the origin of the request: the link back to the
+        transfer has to point at the domain this happened on, which on a
+        multi-domain instance is not an instance-wide setting."""
         settings.TRANSFER_DOWNLOAD_RECEIPT_DELAY = 1234
         t = transfer_with_file
         t.notify_on_download = True
@@ -314,7 +318,9 @@ class TestRecipientAttribution:
         get(f"{base}/{first.id}/download/?r={recipient.token}")
         assert delay.call_count == 0
         send_with_options.assert_called_once_with(
-            args=(str(t.id), str(recipient.id)), delay=1_234_000
+            args=(str(t.id), str(recipient.id)),
+            kwargs={"origin": "http://testserver/"},
+            delay=1_234_000,
         )
 
         recipient.refresh_from_db()
@@ -326,7 +332,9 @@ class TestRecipientAttribution:
         assert send_with_options.call_count == 1
 
         get(f"{base}/{second.id}/download/?r={recipient.token}")
-        delay.assert_called_once_with(str(t.id), str(recipient.id))
+        delay.assert_called_once_with(
+            str(t.id), str(recipient.id), origin="http://testserver/"
+        )
         assert send_with_options.call_count == 1
 
         # Re-downloading after the receipt was stamped must not re-queue.

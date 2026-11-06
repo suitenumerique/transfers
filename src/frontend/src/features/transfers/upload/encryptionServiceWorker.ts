@@ -50,9 +50,11 @@ export async function ensureEncryptionServiceWorker(): Promise<ServiceWorker | n
   // activate handlers self-claim, so the very first visit ends up here
   // too, just one navigation tick later than subsequent visits.
   const existing = await navigator.serviceWorker.getRegistration("/");
-  const reg = existing ?? (await navigator.serviceWorker.register("/sw.js", {
-    scope: "/",
-  }));
+  const reg =
+    existing ??
+    (await navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
+    }));
   // Fetch sw.js afresh (bypassing the HTTP cache) so a deployed change
   // installs now; the worker self-claims on activate. The current worker
   // keeps serving this visit either way, so no need to wait.
@@ -82,24 +84,24 @@ export async function ensureEncryptionServiceWorker(): Promise<ServiceWorker | n
     const controlled = hardReloaded
       ? false
       : await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), CONTROLLER_WAIT_MS);
-      navigator.serviceWorker.addEventListener(
-        "controllerchange",
-        () => {
-          clearTimeout(timer);
-          resolve(true);
-        },
-        { once: true },
-      );
-      // Belt-and-suspenders: if claim has already happened, the event
-      // won't fire — re-check after a short tick.
-      setTimeout(() => {
-        if (navigator.serviceWorker.controller) {
-          clearTimeout(timer);
-          resolve(true);
-        }
-      }, 100);
-    });
+          const timer = setTimeout(() => resolve(false), CONTROLLER_WAIT_MS);
+          navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            () => {
+              clearTimeout(timer);
+              resolve(true);
+            },
+            { once: true },
+          );
+          // Belt-and-suspenders: if claim has already happened, the event
+          // won't fire — re-check after a short tick.
+          setTimeout(() => {
+            if (navigator.serviceWorker.controller) {
+              clearTimeout(timer);
+              resolve(true);
+            }
+          }, 100);
+        });
     if (!controlled && !navigator.serviceWorker.controller) {
       // Hard-reload recovery: an active registration with no controller
       // is the signature of Ctrl+Shift+R. Reload once so the next
@@ -163,12 +165,11 @@ export async function registerEncryptionKey(
     mimeType: f.mime_type || "application/octet-stream",
   }));
 
-  // In dev the backend (:8981) and the frontend (:8980) live on different
-  // origins, so the SW can't use a relative /api path — it'd resolve to
-  // the Vite server, which has no API. NEXT_PUBLIC_API_ORIGIN holds the
-  // absolute backend URL when set; in prod it's typically empty (Caddy
-  // proxies /api/* to the backend same-origin) and we send "" so the SW
-  // falls back to a relative path.
+  // Normally empty, and a relative /api path is correct: Caddy proxies
+  // /api/* to the backend same-origin in production, and the dev server
+  // does the same. NEXT_PUBLIC_API_ORIGIN holds an absolute backend URL
+  // for the one case where the app is pointed at a backend on another
+  // origin, which a relative path from the SW could never reach.
   const apiOrigin =
     (import.meta.env.NEXT_PUBLIC_API_ORIGIN as string | undefined) ?? "";
 

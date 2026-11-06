@@ -5,7 +5,10 @@
 		# {client_ip} is the TCP peer, unless the peer is one of these
 		# proxies: then it comes from X-Forwarded-For, walked right to
 		# left to the first address that is not a trusted proxy
-		# (trusted_proxies_strict). A client-appended prefix never wins.
+		# (trusted_proxies_strict). A client-appended prefix loses, so
+		# long as the list below holds only real proxies: the walk skips
+		# whatever it trusts, and a range covering a client's own address
+		# lets it carry on into the entries that client wrote.
 		trusted_proxies static {$TRANSFERS_FRONTEND_TRUSTED_PROXIES}
 		trusted_proxies_strict
 	}
@@ -43,7 +46,14 @@
 		# LAGAUFRE_WIDGET_URL / LAGAUFRE_API_URL. For La Suite territoriale:
 		#   TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN=https://static.suite.anct.gouv.fr
 		#   TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN=https://operateurs.suite.anct.gouv.fr
-		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN}; font-src 'self' data:; connect-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# THEME_ASSET_ORIGIN is the origin a deployment serves its own theme
+		# assets from -- the logo and favicon of theme_customization, and any
+		# font file fontFaces points at. It defaults to empty, which allows
+		# none: a theme hosting its logo elsewhere is resolved, served and
+		# then blocked by the browser, with a console violation as the only
+		# trace. An operator with nowhere to host them inlines them as data:
+		# URIs instead, which img-src already allows.
+		Content-Security-Policy "default-src 'self'; script-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN}; font-src 'self' data: {$TRANSFERS_FRONTEND_THEME_ASSET_ORIGIN}; connect-src 'self' {$TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN} {$TRANSFERS_FRONTEND_GAUFRE_API_ORIGIN} {$TRANSFERS_FRONTEND_S3_ORIGIN:https://s3.fr-par.scw.cloud}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	}
 
 	# Access log. Caddy writes none unless asked, which is why everything it

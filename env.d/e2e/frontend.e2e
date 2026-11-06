@@ -1,3 +1,14 @@
 # End-to-end stack (compose.e2e.yaml): read after
 # env.d/development/frontend.defaults.
-NEXT_PUBLIC_API_ORIGIN=http://localhost:7981
+#
+# NEXT_PUBLIC_API_ORIGIN stays empty, as it is in dev: the dev server proxies
+# the backend's prefixes the way Caddy does in production, so the API is
+# same-origin and the app derives it from window.location. Pointing it at
+# localhost:7981 would put the API on its own origin -- a topology we ship
+# nowhere -- and the per-domain configuration would resolve against *that*
+# host, so every domain would get the same theme however it was browsed.
+
+# Who the dev server proxies /api to. The default, backend-dev:8000, is the
+# service name of compose.yaml; this project calls it backend. Without this
+# every API call is a 502 and the app never gets its configuration.
+TRANSFERS_FRONTEND_BACKEND_SERVER=backend:8000

@@ -33,9 +33,20 @@ export async function fillKeycloak(page: Page, user: DevUser) {
 }
 
 // Sign in from the landing page, the way a visitor does.
+//
+// The affordance is the neutral button, or ProConnect's where the operator
+// declared the federation (``theme.home["with-proconnect"]``), so accept
+// either: which one shows is a per-domain setting, not something a test
+// signing in should have to know. ProConnect's goes by class because ui-kit
+// gives it no accessible name (it draws the brand as a background image).
+const signInAffordance = (page: Page) =>
+  page
+    .getByRole("button", { name: /^(Sign in|Se connecter)$/ })
+    .or(page.locator("button.pro-connect-button"));
+
 export async function signIn(page: Page, user: DevUser) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Sign in" }).first().click();
+  await signInAffordance(page).first().click();
   await fillKeycloak(page, user);
   await expect(page.getByRole("link", { name: "New", exact: true })).toBeVisible();
 }

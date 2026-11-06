@@ -56,6 +56,19 @@ class Base(Configuration):
     USE_X_FORWARDED_FOR = values.BooleanValue(
         default=False, environ_name="USE_X_FORWARDED_FOR", environ_prefix=None
     )
+    # Django's own setting, surfaced because the configuration resolver
+    # now depends on the host: ``get_host()`` decides which operator's
+    # theme a request gets. Off by default — a proxy that preserves
+    # ``Host`` needs nothing, and trusting ``X-Forwarded-Host`` where
+    # nothing sets it would let a client choose its own host.
+    #
+    # Turn it on only behind a proxy that rewrites ``Host`` *and* sets
+    # ``X-Forwarded-Host`` itself. Left off behind such a proxy, every
+    # domain silently resolves to the base configuration: the neutral
+    # theme for everyone, and no error anywhere.
+    USE_X_FORWARDED_HOST = values.BooleanValue(
+        default=False, environ_name="USE_X_FORWARDED_HOST", environ_prefix=None
+    )
 
     # Application definition
     ROOT_URLCONF = "transfers.urls"
@@ -529,8 +542,51 @@ class Base(Configuration):
     SENTRY_DSN = values.Value(None, environ_name="SENTRY_DSN", environ_prefix=None)
 
     # Frontend
+    # Cunningham theme name. Empty falls back to the neutral "default" theme
+    # front-side, so an instance that sets nothing ships no operator's
+    # colours, logo or favicon.
     FRONTEND_THEME = values.Value(
         None, environ_name="FRONTEND_THEME", environ_prefix=None
+    )
+
+    # Deployment configuration, resolved per request — see
+    # ``core.runtime_config``. The resolved object is sectioned;
+    # ``theme_customization`` is the only section served to the browser, under
+    # the key of the same name that ``docs`` and ``drive`` already use.
+    #
+    # ``THEME_CUSTOMIZATION_FILE_PATH`` keeps the name it carries in ``docs``,
+    # ``drive`` and ``calendars``, and the same shape: a theme file written for
+    # one of them drops in here unchanged and becomes the
+    # ``theme_customization`` section. Empty by default — no institutional
+    # identity ships with the code, so an instance that configures nothing
+    # shows nobody's branding.
+    THEME_CUSTOMIZATION_FILE_PATH = values.Value(
+        "", environ_name="THEME_CUSTOMIZATION_FILE_PATH", environ_prefix=None
+    )
+    # Governs every file read of the resolver, the overrides' included — hence
+    # the generic name, where a ``THEME_*`` one would suggest the theme file
+    # was the only one cached.
+    CONFIG_CACHE_TIMEOUT = values.IntegerValue(
+        60 * 60 * 24,
+        environ_name="CONFIG_CACHE_TIMEOUT",
+        environ_prefix=None,
+    )
+    # The base configuration, sectioned. Merged over the theme file above, so a
+    # deployment can mount an operator's theme and still tweak a single key.
+    DEFAULT_CONFIG = values.Value(
+        "", environ_name="DEFAULT_CONFIG", environ_prefix=None
+    )
+    DEFAULT_CONFIG_FILE_PATH = values.Value(
+        "", environ_name="DEFAULT_CONFIG_FILE_PATH", environ_prefix=None
+    )
+    # ``{"<domain>": <partial sectioned config>}`` — what differs on each
+    # domain this instance serves, merged over the base. An override states
+    # only what changes, so adding a domain never restates a whole theme.
+    CONFIG_OVERRIDES = values.Value(
+        "", environ_name="CONFIG_OVERRIDES", environ_prefix=None
+    )
+    CONFIG_OVERRIDES_FILE_PATH = values.Value(
+        "", environ_name="CONFIG_OVERRIDES_FILE_PATH", environ_prefix=None
     )
 
     # Background tasks: dramatiq on a Redis Streams broker. Point
@@ -673,6 +729,15 @@ class Base(Configuration):
     OIDC_REDIRECT_REQUIRE_HTTPS = values.BooleanValue(
         default=False, environ_name="OIDC_REDIRECT_REQUIRE_HTTPS", environ_prefix=None
     )
+    # Hosts the ``?next=`` of a login may point at, beyond the one the
+    # request came in on (which mozilla-django-oidc appends itself).
+    #
+    # Bare ``host[:port]`` entries, never origins. They are handed to
+    # Django's ``url_has_allowed_host_and_scheme``, which compares the
+    # candidate URL's **netloc**: ``http://app.example.org`` can never
+    # match, ``app.example.org`` does. An entry with a scheme is not an
+    # error anywhere — it simply never matches, and the redirect falls
+    # back to LOGIN_REDIRECT_URL without a word.
     OIDC_REDIRECT_ALLOWED_HOSTS = values.ListValue(
         default=[], environ_name="OIDC_REDIRECT_ALLOWED_HOSTS", environ_prefix=None
     )
@@ -833,6 +898,16 @@ class Base(Configuration):
                 f"TRANSFER_DEFAULT_EXPIRY_DAYS ({cls.TRANSFER_DEFAULT_EXPIRY_DAYS}) "
                 f"must be one of TRANSFER_EXPIRY_CHOICES ({cls.TRANSFER_EXPIRY_CHOICES})."
             )
+
+        # Fail fast on the configuration plumbing: malformed JSON, or an
+        # override keyed on something that can never match a request. An
+        # instance quietly serving nobody's theme because of a stray comma is
+        # worse than one that refuses to start. Local import:
+        # ``core.runtime_config`` reads settings, which aren't installed while
+        # this module is being defined.
+        from core.runtime_config import check_configuration
+
+        check_configuration(cls.DEFAULT_CONFIG, cls.CONFIG_OVERRIDES)
 
         # Fail fast: scanning enabled but its endpoints/credentials unset would
         # otherwise surface only later, as silently-skipped scans in the worker.

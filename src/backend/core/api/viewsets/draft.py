@@ -804,8 +804,16 @@ class TransferDraftViewSet(viewsets.GenericViewSet):
         if transfer.sharing_mode == SharingMode.EMAIL:
             from core.tasks import send_recipient_invitations_task
 
+            # The origin travels with the task: an instance can serve
+            # several domains, and the link in the email must point back
+            # at the one this transfer was created on. Derived from
+            # ``get_host()``, hence validated against ALLOWED_HOSTS
+            # rather than read off a raw header.
+            origin = request.build_absolute_uri("/")
             transaction.on_commit(
-                lambda: send_recipient_invitations_task.send(str(transfer.id))
+                lambda: send_recipient_invitations_task.send(
+                    str(transfer.id), origin=origin
+                )
             )
 
         draft.delete()

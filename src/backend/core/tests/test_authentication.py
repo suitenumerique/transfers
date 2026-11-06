@@ -8,7 +8,7 @@ import types
 from unittest import mock
 
 from django.conf import settings
-from django.test import override_settings
+from django.test import RequestFactory, override_settings
 
 import pytest
 import requests
@@ -322,3 +322,34 @@ def test_failure_url_on_silent_login_goes_home_and_clears_the_flag():
     assert view.failure_url == view.success_url
     assert "silent" not in view.request.session
     assert OIDC_ACCESS_DENIED_SESSION_KEY not in view.request.session
+
+
+@pytest.mark.parametrize(
+    ("allowed", "expected"),
+    [
+        (["app.example.org"], "https://app.example.org/transfers"),
+        (["https://app.example.org"], None),
+    ],
+)
+def test_oidc_redirect_allowed_hosts_takes_hosts_not_origins(allowed, expected):
+    """``OIDC_REDIRECT_ALLOWED_HOSTS`` holds bare hosts, never origins.
+
+    mozilla-django-oidc hands the list to Django's
+    ``url_has_allowed_host_and_scheme``, which compares the candidate URL's
+    *netloc*. An entry carrying a scheme matches nothing, and nothing says so:
+    the ``?next=`` is dropped and the login falls back to
+    ``LOGIN_REDIRECT_URL``. The value shipped in ``env.d`` was an origin, so
+    it had no effect at all — this test is what keeps it from drifting back.
+
+    Nothing depends on it yet (no caller passes ``?next=``, and the host the
+    request came in on is appended by the library anyway), but a post-login
+    redirect that returns an agent to their own domain will.
+    """
+    from mozilla_django_oidc.views import get_next_url
+
+    request = RequestFactory().get("/", {"next": "https://app.example.org/transfers"})
+
+    with override_settings(
+        OIDC_REDIRECT_ALLOWED_HOSTS=allowed, OIDC_REDIRECT_REQUIRE_HTTPS=False
+    ):
+        assert get_next_url(request, "next") == expected

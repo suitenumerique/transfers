@@ -55,9 +55,40 @@ namespace with English (`en-US`) and French (`fr-FR`).
 
 The static export is served by Caddy in production, which also reverse-
 proxies `/api/*`, `/admin/*`, `/static/*`, and `/__heartbeat__/*` to
-the Django backend. The `Caddyfile` propagates `X-Forwarded-For` from
-Scalingo's edge router as-is (do **not** use `{remote_host}` — see the
-comment in `caddy/Caddyfile`).
+the Django backend.
+
+Caddy establishes the client address itself rather than passing the edge
+router's header through: `trusted_proxies_strict` walks `X-Forwarded-For`
+right to left and stops at the first address that is not a trusted proxy.
+The backend is then sent that single resolved address as `X-Forwarded-For`
+(`{client_ip}`). Set `TRANSFERS_FRONTEND_TRUSTED_PROXIES` to the edge's
+CIDRs, or the address Caddy resolves is the edge itself. See the comments
+in `caddy/Caddyfile`.
+
+A prefix a client appended therefore loses — but only for as long as that
+list holds nothing but real proxies. The walk skips every entry it finds
+trusted, so a CIDR wide enough to cover a client's own address lets it
+carry on leftwards into the part of the header that client wrote. Keep it
+to the edge, never a broad range.
+
+`XForwardedForMiddleware` is what reads that rightmost entry into
+`REMOTE_ADDR`, and it is installed only when `USE_X_FORWARDED_FOR=True`,
+which is **not** the default. Until it is on, `REMOTE_ADDR` stays the TCP
+peer — Caddy — so the audit log records Caddy's address for every request
+and DRF's anonymous throttles (`NUM_PROXIES = 0`) hold every client in a
+single bucket. Turn it on once nothing but Caddy can reach the backend:
+on a backend reachable directly, the header is whatever the caller chose
+to send.
+
+Any other topology owes the backend the same guarantee: the hop in front
+of Django must **append** the address it observed, or replace the header
+outright. One that passes a client-written `X-Forwarded-For` through
+unchanged leaves the rightmost entry under the client's control, and that
+address is what DRF's anonymous throttles key on and what the audit log
+records. The admin IP allowlist is unaffected either way -- Caddy answers
+403 on its own `client_ip` before proxying, and Django never checks it --
+so a deployment that exposes the backend without Caddy in front loses the
+allowlist entirely, whatever this header says.
 
 ## Further reading
 

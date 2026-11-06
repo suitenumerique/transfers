@@ -1,9 +1,9 @@
 import { LaGaufreV2 } from "@gouvfr-lasuite/ui-kit";
-import { useConfig } from "@/features/providers/config";
+import { useWaffle } from "@/features/theme";
 
-// La Suite's app switcher. Opt-in: renders nothing until a deployment sets
-// both LAGAUFRE_WIDGET_URL and LAGAUFRE_API_URL, so an instance outside a
-// Suite deployment neither pulls the third-party script nor lists services
+// La Suite's app switcher. Opt-in: renders nothing until a deployment supplies
+// both URLs through ``theme.waffle``, so an instance outside a Suite
+// deployment neither pulls the third-party script nor lists services
 // belonging to another operator. The frontend's Caddy CSP must allow the
 // same two origins (TRANSFERS_FRONTEND_GAUFRE_SCRIPT_ORIGIN / _API_ORIGIN).
 //
@@ -11,11 +11,9 @@ import { useConfig } from "@/features/providers/config";
 // the operator's API decides which six. That is the layout the other Suite
 // apps have, so leave showMoreLimit at its default.
 export function Gaufre() {
-  const { LAGAUFRE } = useConfig();
+  const waffle = useWaffle();
 
-  if (!LAGAUFRE) return null;
+  if (!waffle) return null;
 
-  return (
-    <LaGaufreV2 widgetPath={LAGAUFRE.widget_url} apiUrl={LAGAUFRE.api_url} />
-  );
+  return <LaGaufreV2 widgetPath={waffle.widgetPath} apiUrl={waffle.apiUrl} />;
 }
