@@ -24,14 +24,20 @@ from core.enums import (
     TransferStatus,
 )
 from core.models import (
+    DepositChallenge,
     Transfer,
     TransferDraft,
     TransferEvent,
     TransferFile,
     TransferRecipient,
 )
-from core.services import encryption, s3, safe_http
-from core.services.email import send_download_receipt, send_recipient_invitation
+from core.services import deposits, encryption, s3, safe_http
+from core.services.email import (
+    send_deposit_notification,
+    send_deposit_receipt,
+    send_download_receipt,
+    send_recipient_invitation,
+)
 from core.services.s3_sweep import run_orphan_sweep
 from core.services.scan_auth import mint_request_token
 from core.services.scan_budget import scan_wait_seconds
@@ -804,3 +810,60 @@ def send_download_receipt_task(transfer_id, recipient_id):
             download_notified_at=None, delayed_receipt_armed_at=None
         )
         raise
+
+
+@dramatiq.actor(max_retries=3, min_backoff=30_000, max_backoff=480_000)
+def send_deposit_notification_task(transfer_id):
+    """Email the agent about a new deposit, once.
+
+    ``notifications_completed_at`` is the claim: only the run that stamps it
+    sends, and a failed send clears it again before retrying. An anonymous
+    send nobody has claimed carries the claim link.
+    """
+    claimed = Transfer.objects.filter(
+        id=transfer_id, notifications_completed_at__isnull=True
+    ).update(notifications_completed_at=timezone.now())
+    if not claimed:
+        return
+    transfer = (
+        Transfer.objects.select_related("owner", "deposit_space")
+        .filter(id=transfer_id)
+        .first()
+    )
+    if transfer is None:
+        return
+    claim_token = deposits.sign_claim(transfer) if transfer.owner_id is None else ""
+    try:
+        send_deposit_notification(transfer, claim_token=claim_token)
+    except Exception:
+        logger.exception("Failed to send deposit notification for %s", transfer_id)
+        Transfer.objects.filter(id=transfer_id).update(notifications_completed_at=None)
+        raise
+
+
+@dramatiq.actor(max_retries=3, min_backoff=30_000, max_backoff=480_000)
+def send_deposit_receipt_task(transfer_id):
+    """Confirm the deposit to the depositor. Best effort: a retry after a
+    partial failure may send it twice, which is harmless."""
+    transfer = (
+        Transfer.objects.select_related("deposit_space__owner")
+        .filter(id=transfer_id)
+        .first()
+    )
+    if transfer is None:
+        return
+    send_deposit_receipt(transfer)
+
+
+@cron("50 0 * * *")  # every day at 00:50
+@dramatiq.actor
+def purge_deposit_challenges_task():
+    """Delete depositor challenges past ``deposits.challenge_retention()``.
+    One still holding a draft is skipped: deleting it would cascade to the
+    draft, whose S3 objects only the abandoned-draft sweep removes."""
+    cutoff = timezone.now() - deposits.challenge_retention()
+    deleted, _ = DepositChallenge.objects.filter(
+        created_at__lte=cutoff, drafts__isnull=True
+    ).delete()
+    if deleted:
+        logger.info("Purged %d deposit challenge(s).", deleted)
