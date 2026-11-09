@@ -1,0 +1,11 @@
+{% autoescape off %}Vérification de votre adresse e-mail.
+
+Voici votre code pour déposer des fichiers à l'attention de {{ target_label }} :
+
+{{ code }}
+
+Ce code est valable {{ ttl_minutes }} minute{{ ttl_minutes|pluralize }}. Si vous n'êtes pas à l'origine de cette demande, ignorez ce message.
+
+—
+Transferts — La Suite territoriale
+{% endautoescape %}

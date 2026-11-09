@@ -5,7 +5,7 @@ import { createTransfer } from "../helpers/transfers";
 
 test.use({ storageState: storageStateOf(USER1) });
 
-test("an agent finds, deactivates and deletes a transfer", async ({
+test("an agent renames, finds, deactivates and deletes a transfer", async ({
   page,
   browser,
 }, testInfo) => {
@@ -19,11 +19,27 @@ test("an agent finds, deactivates and deletes a transfer", async ({
   await page.getByRole("button", { name: "View summary" }).click();
   await expect(page).toHaveURL(new RegExp(`/transfers/${id}$`));
 
-  // The sidebar search finds it by its title.
+  // Rename: the history keeps the old title.
+  const renamed = uniqueTitle("Renamed");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByRole("textbox", { name: "Title" }).fill(renamed);
+  await page.getByRole("textbox", { name: "Title" }).press("Enter");
+  await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
+  await expect(page.getByText(`Renamed to ${renamed}`)).toBeVisible();
+
+  // Escape cancels a rename.
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByRole("textbox", { name: "Title" }).fill("Never saved");
+  await page.getByRole("textbox", { name: "Title" }).press("Escape");
+  await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
+
+  // The sidebar search finds it by its new title.
   await page
     .getByRole("searchbox", { name: "Search transfers" })
-    .fill(title.split(" ")[1]);
-  await expect(page.getByRole("link", { name: title })).toBeVisible();
+    .fill(renamed.split(" ")[1]);
+  await expect(page.getByRole("link", { name: renamed })).toBeVisible();
   await page.getByRole("button", { name: "Clear search" }).click();
 
   // Deactivate: the link stops working at once.
@@ -47,7 +63,7 @@ test("an agent finds, deactivates and deletes a transfer", async ({
     .getByRole("button", { name: "Delete permanently" })
     .click();
   await expect(page).toHaveURL(/localhost:7980\/$/);
-  await expect(page.getByRole("link", { name: title })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: renamed })).toHaveCount(0);
 
   await visitor.reload();
   await expect(visitor.getByText("This link does not exist.")).toBeVisible();
