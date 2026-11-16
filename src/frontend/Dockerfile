@@ -71,7 +71,7 @@ RUN apk add --no-cache git \
     && cd /src \
     && go build -trimpath -ldflags="-w -s" -o /out/lprobe .
 
-FROM gcr.io/distroless/static-debian13:nonroot AS runtime-prod
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS runtime-prod
 
 COPY --from=caddy-build /out/caddy /usr/bin/caddy
 COPY --from=lprobe-build /out/lprobe /usr/bin/lprobe
