@@ -1,5 +1,5 @@
 # ---- Base OS ----
-FROM debian:trixie-slim AS base
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS base
 
 # Bump this to force an update of the apt repositories
 ENV MIN_UPDATE_DATE="2026-11-16"
@@ -179,7 +179,7 @@ COPY --from=app-prod /app/ /app/
 CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transfers.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
-  CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
+  CMD ["python", "-c", "import socket; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': socket.gethostbyname(socket.gethostname()), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
 
 
 # ---- Collect shared libraries for distroless ----
@@ -196,7 +196,7 @@ RUN mkdir -p /shared-libs/usr/lib /shared-libs/usr/share/misc && \
 # ---- Distroless production runtime ----
 # Uses cc-debian13 (C runtime only) + python-build-standalone from uv.
 # Debug with: docker run --entrypoint='' gcr.io/distroless/cc-debian13:debug-nonroot sh
-FROM gcr.io/distroless/cc-debian13:nonroot AS runtime-distroless-prod
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime-distroless-prod
 # Not derived from ``base``, so it does not inherit the variable above.
 ARG DATA_DIR=/data
 ENV DJANGO_DATA_DIR=${DATA_DIR}
@@ -224,4 +224,4 @@ ENV LD_LIBRARY_PATH=/usr/lib
 CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "transfers.wsgi:application"]
 
 HEALTHCHECK --interval=30s --timeout=2s --start-period=30s \
-  CMD ["python", "-c", "import os; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0].strip(), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
+  CMD ["python", "-c", "import socket; from urllib.request import Request, urlopen; urlopen(Request('http://localhost:8000/__heartbeat__/', headers={'Host': socket.gethostbyname(socket.gethostname()), 'X-Forwarded-Proto': 'https'}), timeout=2)"]
