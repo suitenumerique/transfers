@@ -37,19 +37,19 @@ COPY --from=frontend-build /home/frontend/dist /app
 # frontend-deps, frontend-build, and frontend-build-output entirely
 FROM ${FRONTEND_IMAGE} AS frontend-source
 
-# Caddy and lprobe release binaries lag Go's security fixes (Caddy 2.11.7 ships
-# go1.26.8), so both are built with a patched toolchain and golang.org/x/net
-# raised past their pins. The Go checksum database verifies every module.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS go-build
+# Caddy and lprobe release binaries lag Go's security fixes, so both are built
+# with a patched toolchain. The Go checksum database verifies every module.
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS go-build
 ARG TARGETARCH
-ARG GO_X_NET_VERSION=v0.60.0
-# Caddy 2.11.7 and lprobe 0.2.1 pull go-jose 4.1.5 / 4.1.4: GHSA-mgcc-cww5-fp2q.
-ARG GO_JOSE_VERSION=v4.1.7
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH}
 
-# Caddy's own cmd/caddy/main.go: the standard modules, no plugin.
+# Caddy's own cmd/caddy/main.go: the standard modules, no plugin. Caddy 2.11.9
+# pins x/net 0.60.0 (GO-2026-6860, GO-2026-6866) and klauspost/compress 1.20.1
+# (GO-2026-6865): both are raised past those pins.
 FROM go-build AS caddy-build
-ARG CADDY_VERSION=v2.11.7
+ARG CADDY_VERSION=v2.11.9
+ARG GO_X_NET_VERSION=v0.62.0
+ARG COMPRESS_VERSION=v1.20.4
 WORKDIR /src
 RUN printf '%s\n' 'package main' \
       'import (' '	_ "time/tzdata"' \
@@ -58,19 +58,17 @@ RUN printf '%s\n' 'package main' \
       'func main() { caddycmd.Main() }' > main.go \
     && go mod init caddy \
     && go get "github.com/caddyserver/caddy/v2@${CADDY_VERSION}" "golang.org/x/net@${GO_X_NET_VERSION}" \
-       "github.com/go-jose/go-jose/v4@${GO_JOSE_VERSION}" \
+       "github.com/klauspost/compress@${COMPRESS_VERSION}" \
     && go mod tidy \
     && go build -trimpath -ldflags="-w -s" -o /out/caddy .
 
 FROM go-build AS lprobe-build
-ARG LPROBE_VERSION=v0.2.1
-ARG LPROBE_COMMIT=e2b91f80dfbebbb7b244a7daa515d6d71ef9f68b
+ARG LPROBE_VERSION=v0.2.3
+ARG LPROBE_COMMIT=25b6246ef04988a77c4d8ca0aaa6af64bd85c680
 RUN apk add --no-cache git \
     && git clone --depth 1 --branch "${LPROBE_VERSION}" https://github.com/fivexl/lprobe.git /src \
     && test "$(git -C /src rev-parse HEAD)" = "${LPROBE_COMMIT}" \
     && cd /src \
-    && go get "golang.org/x/net@${GO_X_NET_VERSION}" \
-       "github.com/go-jose/go-jose/v4@${GO_JOSE_VERSION}" \
     && go build -trimpath -ldflags="-w -s" -o /out/lprobe .
 
 FROM gcr.io/distroless/static-debian13:nonroot AS runtime-prod
