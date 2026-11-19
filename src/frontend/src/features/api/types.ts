@@ -7,6 +7,23 @@ export type TransferStatus =
 
 export type DeactivationReason = "manual" | "expired" | "first_download";
 
+// Outbound: sent by the agent. Inbound: deposited for the agent by someone
+// without an account, on a deposit space or as an anonymous send.
+export type TransferDirection = "outbound" | "inbound";
+
+// Who deposited an inbound transfer, and where. Empty strings / null on
+// outbound transfers.
+export interface DepositFields {
+  direction: TransferDirection;
+  deposit_space: string | null;
+  // Anonymous send: the agent address it was sent to.
+  inbox_email: string;
+  depositor_name: string;
+  depositor_email: string;
+  // False when the space let the depositor skip the email check.
+  depositor_verified: boolean;
+}
+
 // What we can honestly observe about a recipient. There is no "received":
 // the relay accepting the message says nothing about the mailbox, and we
 // don't do read tracking. "opened" / "downloaded" ride on the personal
@@ -30,7 +47,7 @@ export interface TransferRecipient {
   downloaded_file_count: number;
 }
 
-export interface TransferListItem {
+export interface TransferListItem extends DepositFields {
   id: string;
   title: string;
   status: TransferStatus;
@@ -67,8 +84,10 @@ export interface TransferFile {
   scan_error_kind: ScanErrorKind;
 }
 
-export interface TransferDetail {
+export interface TransferDetail extends DepositFields {
   id: string;
+  // The account that owns it: a space's members see its deposits too.
+  owner: string;
   title: string;
   status: TransferStatus;
   sharing_mode: SharingMode;
@@ -108,6 +127,66 @@ export interface TransferEvent {
   ip: string | null;
   user_agent: string;
   payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DepositSpace {
+  id: string;
+  name: string;
+  // Goes in the deposit link, ``/d/<link_token>``.
+  link_token: string;
+  retention_days: number;
+  // Bytes one deposit may hold (set by an admin, or the instance default).
+  max_deposit_size: number;
+  // The link stops taking deposits then; null: never.
+  expires_at: string | null;
+  // Closes after one deposit, stamped in ``used_at``.
+  single_use: boolean;
+  used_at: string | null;
+  // Off: depositors give their email without proving it.
+  verify_email: boolean;
+  // End-to-end: the key lives in the link's fragment, which only the
+  // agent's browser knows.
+  confidential: boolean;
+  key_check: string;
+  // Who else sees the deposits. Only the owner changes the space.
+  member_emails: string[];
+  is_owner: boolean;
+  owner_email: string;
+  created_at: string;
+  deposit_count: number;
+}
+
+export type DepositSpaceSettings = Partial<
+  Pick<
+    DepositSpace,
+    | "name"
+    | "retention_days"
+    | "expires_at"
+    | "single_use"
+    | "verify_email"
+    | "confidential"
+    | "key_check"
+    | "member_emails"
+  >
+>;
+
+// What a depositor sees of a space.
+export interface PublicDepositSpace {
+  name: string;
+  owner_name: string;
+  max_deposit_size: number;
+  max_files: number;
+  verify_email: boolean;
+  confidential: boolean;
+  // SHA-256 of the key in the link's fragment, for an end-to-end space.
+  key_check: string;
+}
+
+export interface DepositReceipt {
+  title: string;
+  file_count: number;
+  total_size: number;
   created_at: string;
 }
 
@@ -160,4 +239,11 @@ export interface DownloadTransferFull {
   // the SW decrypts transparently. Empty for confidential transfers (the key
   // never reached us) and legacy plaintext transfers.
   encryption_key: string;
+  // Only the owner can open an inbound transfer.
+  direction: TransferDirection;
+  // Set on a deposit to a space; null on an inbox send.
+  deposit_space: string | null;
+  depositor_name: string;
+  depositor_email: string;
+  depositor_verified: boolean;
 }

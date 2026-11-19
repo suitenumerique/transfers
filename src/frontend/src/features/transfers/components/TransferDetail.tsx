@@ -2,19 +2,27 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, Modal, ModalSize, Tooltip, useModal, VariantType } from "@gouvfr-lasuite/cunningham-react";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
-import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { ArrowUpRight, Checkmark, CheckmarkShield, ChevronDown, Clock, Copy, Doc, Download, Edit, Folder, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { ScanStatus, TransferDetail as TransferDetailType, TransferEvent } from "@/features/api/types";
 import { ApiError } from "@/features/api/client";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
 import { useNavigate } from "@tanstack/react-router";
-import { downloadFile, transferBaseUrl } from "../api/useDownload";
+import { useAuth } from "@/features/auth";
+import {
+  downloadFile,
+  transferBaseUrl,
+  useDownloadTransfer,
+} from "../api/useDownload";
+import { useRenameTransfer } from "../api/useRenameTransfer";
 import { useResendTransfer } from "../api/useResendTransfer";
 import { useDeactivateTransfer } from "../api/useDeactivateTransfer";
 import { useHardDeleteTransfer } from "../api/useHardDeleteTransfer";
 import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { hasUnscannedFiles } from "../utils/scanStatus";
+import { recallSpaceKey } from "@/features/deposits/spaces";
+import { DownloadView, depositorLine } from "./DownloadView";
 import { FileItem } from "./FileItem";
 import { RecipientStatusList } from "./RecipientStatusList";
 import { TransferStatusBadge } from "./TransferStatusBadge";
@@ -32,6 +40,9 @@ const EVENT_LABELS: Record<string, string> = {
   // so the row reads "Fichier screenshot.png supprimé" rather than a
   // generic label that forces the user to cross-reference the file list.
   file_deleted: "File {{filename}} deleted",
+  deposit_received: "Files deposited",
+  inbound_claimed: "Collected",
+  transfer_renamed: "Renamed to {{new_title}}",
 };
 
 // What the row's tooltip shows on hover, from the event payload: the file
@@ -58,7 +69,26 @@ export function TransferDetail({
   transfer: TransferDetailType;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const deactivateTransfer = useDeactivateTransfer();
+  const renameTransfer = useRenameTransfer(transfer.id);
+  // The title being edited; null when not editing.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  // Set once Enter, Escape or blur ended the edit: closing the input blurs
+  // it, and that blur must not save again (or save after Escape).
+  const titleDoneRef = useRef(false);
+  const startRename = () => {
+    titleDoneRef.current = false;
+    renameTransfer.reset();
+    setTitleDraft(transfer.title);
+  };
+  const saveTitle = () => {
+    if (titleDoneRef.current) return;
+    titleDoneRef.current = true;
+    const title = titleDraft?.trim();
+    setTitleDraft(null);
+    if (title && title !== transfer.title) renameTransfer.mutate(title);
+  };
   const hardDeleteTransfer = useHardDeleteTransfer();
   const navigate = useNavigate();
   const resendTransfer = useResendTransfer();
@@ -110,7 +140,17 @@ export function TransferDetail({
   // doesn't run — so per-file download is disabled and the sender uses the
   // link instead.
   const isEncrypted = transfer.encryption_chunk_size != null;
-  const isPublicLink = transfer.sharing_mode === "link";
+  // A deposit: files sent to this agent by someone without an account. Its
+  // link opens for the owner alone, so there is nothing to share.
+  const isInbound = transfer.direction === "inbound";
+  const isPublicLink = transfer.sharing_mode === "link" && !isInbound;
+  // A deposit is downloaded right here: the download endpoint hands its
+  // owner the key, and the owner's own downloads are not journaled.
+  const depositDownload = useDownloadTransfer(
+    isInbound && transfer.status === "active"
+      ? (transfer.public_token ?? undefined)
+      : undefined,
+  );
   // Events recorded through a recipient's personal link carry their id;
   // name them in the history instead of a generic "Recipient".
   const recipientEmailById = new Map(
@@ -270,24 +310,75 @@ export function TransferDetail({
   return (
     <div className="transfer-detail">
       <header className="transfer-detail__header">
-        <h1 className="transfer-detail__title">
-          {transfer.title || t("Untitled")}
-        </h1>
+        {titleDraft === null ? (
+          <>
+            <h1 className="transfer-detail__title">
+              {transfer.title || t("Untitled")}
+            </h1>
+            <Button
+              color="neutral"
+              variant="tertiary"
+              size="small"
+              icon={<Edit />}
+              onClick={startRename}
+              // Reopened mid-save, the editor would show the old title.
+              disabled={renameTransfer.isPending}
+              aria-label={t("Rename")}
+              title={t("Rename")}
+            />
+          </>
+        ) : (
+          <form
+            className="transfer-detail__title-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveTitle();
+            }}
+          >
+            <input
+              className="transfer-detail__title-input"
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.currentTarget.value)}
+              onBlur={saveTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  titleDoneRef.current = true;
+                  setTitleDraft(null);
+                }
+              }}
+              maxLength={80}
+              aria-label={t("Title")}
+              autoFocus
+            />
+          </form>
+        )}
         {transfer.status !== "active" ? (
           <TransferStatusBadge status={transfer.status} />
         ) : (
           expirationPending && <TransferStatusBadge status="expiring" />
         )}
       </header>
+      {renameTransfer.isError && (
+        <Alert type={VariantType.ERROR} className="transfer-detail__scan-alert">
+          {t("The title could not be saved. Please try again.")}
+        </Alert>
+      )}
 
       <div className="transfer-detail__meta">
         {/* Both sharing modes expose a public token — the email flow is
             just a notified variant. Label stays "Public link" either way
             to match the recap mocks. */}
-        <span className="transfer-detail__meta-item">
-          <Globe />
-          {t("Public link")}
-        </span>
+        {isInbound ? (
+          <span className="transfer-detail__meta-item">
+            <Perso />
+            {transfer.deposit_space ? t("Deposit") : t("Sent to your address")}
+          </span>
+        ) : (
+          <span className="transfer-detail__meta-item">
+            <Globe />
+            {t("Public link")}
+          </span>
+        )}
         <span className="transfer-detail__meta-sep">·</span>
         <span>{metaReason}</span>
         <span className="transfer-detail__meta-sep">·</span>
@@ -337,8 +428,24 @@ export function TransferDetail({
         </Alert>
       )}
 
+      {isInbound && (
+        <Alert type={VariantType.INFO} className="transfer-detail__scan-alert">
+          {depositorLine(t, transfer)}
+        </Alert>
+      )}
+
       {!transfer.confidential &&
-        hasUnscannedFiles(transfer.files, (f) => f.scan_status) && (
+        hasUnscannedFiles(transfer.files, (f) => f.scan_status) &&
+        (isInbound ? (
+          <Alert
+            type={VariantType.ERROR}
+            className="transfer-detail__scan-alert"
+          >
+            {t(
+              "This person has no account and the antivirus could not check some of the files. Only open them if you know the sender.",
+            )}
+          </Alert>
+        ) : (
           <Alert
             type={VariantType.WARNING}
             className="transfer-detail__scan-alert"
@@ -347,9 +454,9 @@ export function TransferDetail({
               "Some files couldn't be scanned for viruses. The recipient will see the same notice.",
             )}
           </Alert>
-        )}
+        ))}
 
-      {downloadUrl && (
+      {downloadUrl && !isInbound && (
         <div className="transfer-detail__link-box">
           <Input
             readOnly
@@ -400,71 +507,101 @@ export function TransferDetail({
         </section>
       )}
 
-      <ul
-        className="transfer-detail__file-list"
-        aria-label={t("Files ({{count}})", { count: transfer.files.length })}
-      >
-        {transfer.files.map((file) => {
-          const downloadable =
-            file.scan_status === "clean" ||
-            file.scan_status === "skipped" ||
-            file.scan_status === "too_large" ||
-            file.scan_status === "unscannable";
-          return (
-            <FileItem
-              key={file.id}
-              icon={<Doc />}
-              name={file.filename}
-              size={formatFileSize(file.plaintext_size ?? file.size)}
-              state={
-                file.scan_status === "infected" ||
-                file.scan_status === "error"
-                  ? "error"
-                  : "done"
-              }
-              extras={
-                <>
-                  {transfer.confidential && (
-                    <Tooltip
-                      content={t("Confidential file")}
-                      placement="top"
-                    >
-                      <span className="file-item__scan file-item__scan--encrypted">
-                        <Lock />
-                      </span>
-                    </Tooltip>
-                  )}
-                  {scanBadge(file.scan_status)}
-                </>
-              }
-              action={
-                <Button
-                  color="neutral"
-                  variant="tertiary"
-                  icon={<Download />}
-                  onClick={() => handleDownload(file.id)}
-                  disabled={
-                    !isActive ||
-                    !transfer.public_token ||
-                    !downloadable ||
-                    isEncrypted
-                  }
-                  aria-label={t("Download {{name}}", { name: file.filename })}
-                  title={
-                    isEncrypted
-                      ? t(
-                          "Open the download link to get this file — it decrypts in your browser.",
-                        )
-                      : t("Download")
-                  }
-                />
-              }
-            />
-          );
-        })}
-      </ul>
+      {depositDownload.isLoading ? (
+        <Spinner />
+      ) : depositDownload.isError ? (
+        <Alert type={VariantType.ERROR} className="transfer-detail__scan-alert">
+          {t("The files could not be loaded.")}{" "}
+          <Button
+            size="small"
+            color="neutral"
+            variant="tertiary"
+            onClick={() => void depositDownload.refetch()}
+          >
+            {t("Retry")}
+          </Button>
+        </Alert>
+      ) : depositDownload.data && transfer.public_token ? (
+        <DownloadView
+          // Remounted per deposit: its key and confirmation are its own.
+          key={transfer.public_token}
+          transfer={depositDownload.data}
+          token={transfer.public_token}
+          isOwner
+          embedded
+          knownKey={
+            transfer.confidential && transfer.deposit_space
+              ? recallSpaceKey(transfer.deposit_space)
+              : null
+          }
+        />
+      ) : (
+        <ul
+          className="transfer-detail__file-list"
+          aria-label={t("Files ({{count}})", { count: transfer.files.length })}
+        >
+          {transfer.files.map((file) => {
+            const downloadable =
+              file.scan_status === "clean" ||
+              file.scan_status === "skipped" ||
+              file.scan_status === "too_large" ||
+              file.scan_status === "unscannable";
+            return (
+              <FileItem
+                key={file.id}
+                icon={<Doc />}
+                name={file.filename}
+                size={formatFileSize(file.plaintext_size ?? file.size)}
+                state={
+                  file.scan_status === "infected" ||
+                  file.scan_status === "error"
+                    ? "error"
+                    : "done"
+                }
+                extras={
+                  <>
+                    {transfer.confidential && (
+                      <Tooltip
+                        content={t("Confidential file")}
+                        placement="top"
+                      >
+                        <span className="file-item__scan file-item__scan--encrypted">
+                          <Lock />
+                        </span>
+                      </Tooltip>
+                    )}
+                    {scanBadge(file.scan_status)}
+                  </>
+                }
+                action={
+                  <Button
+                    color="neutral"
+                    variant="tertiary"
+                    icon={<Download />}
+                    onClick={() => handleDownload(file.id)}
+                    disabled={
+                      !isActive ||
+                      !transfer.public_token ||
+                      !downloadable ||
+                      isEncrypted
+                    }
+                    aria-label={t("Download {{name}}", { name: file.filename })}
+                    title={
+                      isEncrypted
+                        ? t(
+                            "Open the download link to get this file — it decrypts in your browser.",
+                          )
+                        : t("Download")
+                    }
+                  />
+                }
+              />
+            );
+          })}
+        </ul>
+      )}
 
-      {isActive && (
+      {isActive && !isInbound && (
         <div className="transfer-detail__actions">
           {isPublicLink && downloadUrl ? (
             // encryption link-mode transfers have no downloadUrl on this page (the
@@ -513,7 +650,11 @@ export function TransferDetail({
           ``DEACTIVATED`` (S3 already purged) the button is safe:
           the backend wipes any remaining S3 bytes before dropping the
           row so the periodic sweep never sees orphaned keys. */}
-      {transfer.status !== "active" && (
+      {/* A deposit has no link to close first: only its owners download
+          it, so it is deleted at once, files included. A space's members
+          read its deposits but cannot delete them. */}
+      {(transfer.status !== "active" || isInbound) &&
+        transfer.owner === user?.id && (
         <div className="transfer-detail__actions">
           <Button
             color="error"
@@ -558,10 +699,19 @@ export function TransferDetail({
               );
               const by =
                 ev.actor_type === "agent"
-                  ? t("You")
-                  : (recipientEmailById.get(ev.recipient_id ?? "") ??
-                    t("Recipient"));
-              const detail = eventDetail(ev);
+                  ? // A space's member acting on a shared deposit is not you.
+                    ev.actor_id && user && ev.actor_id !== user.id
+                    ? t("Another member")
+                    : t("You")
+                  : isInbound
+                    ? transfer.depositor_email
+                    : (recipientEmailById.get(ev.recipient_id ?? "") ??
+                      t("Recipient"));
+              const detail =
+                ev.event_type === "transfer_renamed" &&
+                typeof payload.old_title === "string"
+                  ? t("Previous title: {{old_title}}", payload)
+                  : eventDetail(ev);
               const activity = (
                 <div className="transfer-detail__history-activity">
                   <span
@@ -585,7 +735,12 @@ export function TransferDetail({
                   <div className="transfer-detail__history-date">
                     <RelativeDate iso={ev.created_at} />
                   </div>
-                  <div className="transfer-detail__history-actor">{by}</div>
+                  <div
+                    className="transfer-detail__history-actor"
+                    title={by ?? undefined}
+                  >
+                    {by}
+                  </div>
                 </div>
               );
             })}
@@ -652,9 +807,13 @@ export function TransferDetail({
             {hardDeleteErrorMessage()}
           </Alert>
         )}
-        {t(
-          "This is irreversible. Permanently deletes this transfer and its recipients. The activity log is kept for audit.",
-        )}
+        {isInbound
+          ? t(
+              "This is irreversible. Permanently deletes these files. The activity log is kept for audit.",
+            )
+          : t(
+              "This is irreversible. Permanently deletes this transfer and its recipients. The activity log is kept for audit.",
+            )}
       </Modal>
     </div>
   );

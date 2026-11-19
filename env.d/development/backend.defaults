@@ -89,6 +89,11 @@ OIDC_REDIRECT_ALLOWED_HOSTS=http://localhost:8980,http://localhost:8981
 # ``"claim_defaults": {"siret": "..."}`` inside ENTITLEMENTS_BACKEND_PARAMETERS.
 OIDC_STORE_CLAIMS=
 
+# Anonymous sends: the agents' addresses a visitor may send files to,
+# matched whole and case-insensitively. Empty hides the page. Covers the dev
+# Keycloak users.
+INBOX_RECIPIENT_EMAIL_REGEX=[^@\s]+@example\.local
+
 # Drive integration — leave blank to hide the "Attach from Drive" button.
 # Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)
 # to enable it. The target Drive must allow our origin in BOTH
