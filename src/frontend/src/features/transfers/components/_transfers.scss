@@ -230,6 +230,28 @@
     gap: var(--c--globals--spacings--xs);
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    // One line on a wide screen, past the column's edge if need be: the
+    // page has room beside it. A phone wraps it instead of scrolling.
+    @media (min-width: 1024px) {
+      flex-wrap: nowrap;
+      white-space: nowrap;
+
+      // Overflowing rather than squeezed: shrunk, the icons would vanish.
+      // A tooltip rendered inside the line keeps its own wrapping.
+      * {
+        flex-shrink: 0;
+      }
+
+      .c__tooltip {
+        width: max-content;
+        max-width: 320px;
+      }
+
+      .c__tooltip * {
+        flex-shrink: 1;
+      }
+    }
   }
 
   &__meta-item {
@@ -240,6 +262,11 @@
     > svg {
       width: 16px;
       height: 16px;
+    }
+
+    // A font icon (e.g. inbox, which the SVG set lacks), at the same size.
+    > .material-icons {
+      font-size: 16px;
     }
   }
 
@@ -1476,6 +1503,11 @@
       width: 16px;
       height: 16px;
     }
+
+    // A font icon (e.g. inbox, which the SVG set lacks), at the same size.
+    > .material-icons {
+      font-size: 16px;
+    }
   }
 
   &__meta-sep {
@@ -1575,7 +1607,6 @@
   }
 
   &__download-all.c__button {
-    margin-top: var(--c--globals--spacings--md);
     justify-content: center;
   }
 
@@ -1754,5 +1785,47 @@
 @keyframes file-item__ring-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+// "Download all" and the page's own buttons, side by side.
+.download-view__actions {
+  margin-top: var(--c--globals--spacings--md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xs);
+
+  // Halves of the row; alone, "Download all" takes it whole.
+  > .c__button {
+    flex: 1 1 200px;
+    width: auto;
+    justify-content: center;
+  }
+}
+
+// The depositor's name in the meta line: cut short, whole on hover.
+.depositor-meta__name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Its verified / not verified badge.
+.depositor-meta__badge {
+  display: inline-flex;
+  margin-left: var(--c--globals--spacings--3xs, 4px);
+  border-radius: 999px;
+
+  .c__badge,
+  [class*="badge"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  svg {
+    width: 14px;
+    height: 14px;
   }
 }

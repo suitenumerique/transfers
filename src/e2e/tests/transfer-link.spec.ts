@@ -66,9 +66,7 @@ test("a deactivate-after-download link closes once every file is fetched", async
 
   const visitor = await anonymousPage(browser);
   await visitor.goto(link!);
-  await expect(
-    visitor.getByText("Single-use link. Deactivates after full download."),
-  ).toBeVisible();
+  await expect(visitor.getByText("Single use", { exact: true })).toBeVisible();
   const [download] = await Promise.all([
     visitor.waitForEvent("download"),
     visitor.getByRole("button", { name: `Download ${file.name}` }).click(),

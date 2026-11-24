@@ -12,6 +12,8 @@ interface UseTransfersParams {
   search?: string;
   // Extra list filters, e.g. ``{ direction: "inbound", inbox: "true" }``.
   filters?: Record<string, string>;
+  // False: no request, as for a search not typed yet.
+  enabled?: boolean;
 }
 
 // Fetch in chunks large enough that a fast wheel/trackpad flick doesn't
@@ -41,8 +43,14 @@ function extractNextPage(next: string | null): number | undefined {
   return page ? Number(page) : undefined;
 }
 
-export function useTransfers({ deactivated, search, filters }: UseTransfersParams) {
+export function useTransfers({
+  deactivated,
+  search,
+  filters,
+  enabled = true,
+}: UseTransfersParams) {
   return useInfiniteQuery({
+    enabled,
     queryKey: ["transfers", { deactivated, search: search || "", filters }],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>

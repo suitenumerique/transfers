@@ -10,6 +10,7 @@ import type { DepositSpace } from "@/features/api/types";
 import { useDepositSpaces } from "@/features/deposits/api/useDepositSpaces";
 import { spaceIsOpen } from "@/features/deposits/spaces";
 import { useTransfers } from "@/features/transfers/api/useTransfers";
+import { isExpired } from "@/features/utils/date";
 import { useDebouncedValue } from "@/features/utils/use-debounced-value";
 import { useConfig } from "@/features/providers/config";
 
@@ -217,6 +218,7 @@ function TransferSection({
     <Section label={label} isEmpty={items.length === 0} isLoading={query.isLoading}>
       <TransferList
         query={query}
+        search={search}
         activeId={activeId}
         muted={muted}
         emptyLabel={
@@ -236,12 +238,14 @@ function TransferSection({
 // Rows of a transfer that is no longer active are muted.
 function TransferList({
   query,
+  search,
   activeId,
   emptyLabel,
   muted = false,
   nested = false,
 }: {
   query: TransferQuery;
+  search: string;
   activeId: string | undefined;
   emptyLabel: string;
   muted?: boolean;
@@ -319,13 +323,17 @@ function TransferList({
             >
               <Folder
                 className={`shell-sidebar__tree-row-icon${
-                  muted || item.status !== "active"
+                  muted || item.status !== "active" || isExpired(item.expires_at)
                     ? " shell-sidebar__tree-row-icon--muted"
                     : ""
                 }`}
               />
               <span className="shell-sidebar__tree-row-label">
-                {item.title || t("Untitled")}
+                {item.title ? (
+                  <Highlight text={item.title} query={search} />
+                ) : (
+                  t("Untitled")
+                )}
               </span>
             </Link>
           </li>
@@ -351,6 +359,19 @@ function SpacesSection({
   const spaces = (data?.results ?? []).filter(
     (s) => spaceIsOpen(s) || s.deposit_count > 0,
   );
+  // While searching, the spaces holding a matching deposit unfold.
+  const hits = useTransfers({
+    filters: { direction: "inbound" },
+    search,
+    enabled: Boolean(search),
+  });
+  const spacesWithHits = new Set(
+    search
+      ? (hits.data?.pages ?? []).flatMap((page) =>
+          page.results.map((deposit) => deposit.deposit_space),
+        )
+      : [],
+  );
   return (
     <Section
       label={t("Deposit spaces")}
@@ -374,6 +395,7 @@ function SpacesSection({
             key={space.id}
             space={space}
             search={search}
+            hasHits={spacesWithHits.has(space.id)}
             activeId={activeId}
           />
         ))}
@@ -398,14 +420,28 @@ function SpacesSection({
 function SpaceNode({
   space,
   search,
+  hasHits,
   activeId,
 }: {
   space: DepositSpace;
   search: string;
+  hasHits: boolean;
   activeId: string | undefined;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+  // A search unfolds the spaces that match, by name or by a deposit, and
+  // folds the others; a click still wins until the search changes.
+  const nameMatches = matchIndex(space.name, search) >= 0;
+  // Tied to the search it was made in, so a new search forgets it.
+  const [searchChoice, setSearchChoice] = useState<{
+    search: string;
+    open: boolean;
+  } | null>(null);
+  const choice = searchChoice?.search === search ? searchChoice.open : null;
+  const open = search ? (choice ?? (nameMatches || hasHits)) : userOpen;
+  const setOpen = (value: boolean) =>
+    search ? setSearchChoice({ search, open: value }) : setUserOpen(value);
   const listId = `shell-space-${space.id}`;
   return (
     <li>
@@ -431,9 +467,8 @@ function SpaceNode({
               spaceIsOpen(space) ? "" : " shell-sidebar__tree-row-label--muted"
             }`}
           >
-            {spaceIsOpen(space)
-              ? space.name
-              : t("{{name}} (closed)", { name: space.name })}
+            <Highlight text={space.name} query={search} />
+            {!spaceIsOpen(space) && ` ${t("(closed)")}`}
           </span>
         </button>
         <Link
@@ -448,7 +483,12 @@ function SpaceNode({
       </div>
       {open && (
         <div id={listId}>
-          <SpaceDeposits spaceId={space.id} search={search} activeId={activeId} />
+          <SpaceDeposits
+            spaceId={space.id}
+            // A space found by its name shows all its deposits.
+            search={nameMatches ? "" : search}
+            activeId={activeId}
+          />
         </div>
       )}
     </li>
@@ -473,9 +513,30 @@ function SpaceDeposits({
   return (
     <TransferList
       query={query}
+      search={search}
       activeId={activeId}
       nested
       emptyLabel={search ? t("No matching transfers") : t("No deposit yet")}
     />
+  );
+}
+
+// Where ``query`` first appears in ``text``, ignoring case; -1 if absent.
+function matchIndex(text: string, query: string): number {
+  const needle = query.trim().toLowerCase();
+  return needle ? text.toLowerCase().indexOf(needle) : -1;
+}
+
+// ``text`` with its first match of the search marked.
+function Highlight({ text, query }: { text: string; query: string }) {
+  const start = matchIndex(text, query);
+  if (start < 0) return <>{text}</>;
+  const end = start + query.trim().length;
+  return (
+    <>
+      {text.slice(0, start)}
+      <mark className="shell-sidebar__match">{text.slice(start, end)}</mark>
+      {text.slice(end)}
+    </>
   );
 }

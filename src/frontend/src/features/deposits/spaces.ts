@@ -1,10 +1,8 @@
 import type { DepositSpace } from "@/features/api/types";
 
-// Whether a space's link still takes deposits. The backend decides; this
-// mirrors it for display.
+// Whether a space's link still takes deposits, as the backend decides.
 export function spaceIsOpen(space: DepositSpace): boolean {
-  if (space.used_at) return false;
-  return !space.expires_at || new Date(space.expires_at) > new Date();
+  return space.is_open;
 }
 
 // The key of an end-to-end space never reaches the server: the browser that

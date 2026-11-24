@@ -112,6 +112,10 @@ class TransferAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     inlines = [TransferFileInline]
 
+    # A transfer comes from a finalize, which this form would bypass.
+    def has_add_permission(self, request):
+        return False
+
     def save_model(self, request, obj, form, change):
         # Only what the form changed: a full save would write back a status
         # that a task or the owner changed since the form was loaded.

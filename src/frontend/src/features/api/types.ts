@@ -153,6 +153,8 @@ export interface DepositSpace {
   member_emails: string[];
   is_owner: boolean;
   owner_email: string;
+  // Whether the link takes deposits, as the backend decides.
+  is_open: boolean;
   created_at: string;
   deposit_count: number;
 }
@@ -222,6 +224,8 @@ export interface DownloadTransferFile {
 }
 
 export interface DownloadTransferFull {
+  // A deposit's only: its readers open it on its own page.
+  id?: string;
   title: string;
   expires_at: string;
   created_at: string;

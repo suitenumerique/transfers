@@ -13,7 +13,7 @@ import logging
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Count, Exists, OuterRef, Sum
+from django.db.models import Count, Exists, OuterRef, Q, Sum
 from django.utils import timezone
 
 import rest_framework as drf
@@ -100,11 +100,14 @@ class TransferViewSet(
             # "deactivated" section = every other status (EXPIRED, DEACTIVATED).
             # Omitted → no status filter, for any caller that still wants
             # the full list.
+            # Past its deadline a transfer is closed, even before the expiry
+            # task moves it out of ACTIVE.
             deactivated = self.request.query_params.get("deactivated")
+            live = Q(status=TransferStatus.ACTIVE, expires_at__gt=timezone.now())
             if deactivated == "true":
-                qs = qs.exclude(status=TransferStatus.ACTIVE)
+                qs = qs.exclude(live)
             elif deactivated == "false":
-                qs = qs.filter(status=TransferStatus.ACTIVE)
+                qs = qs.filter(live)
 
             search = (self.request.query_params.get("search") or "").strip()
             if search:
@@ -174,7 +177,11 @@ class TransferViewSet(
             raise drf.exceptions.PermissionDenied(
                 "Only the owner of this space can delete its deposits."
             )
-        if instance.status == TransferStatus.ACTIVE and not instance.is_inbound:
+        if (
+            instance.status == TransferStatus.ACTIVE
+            and not instance.is_inbound
+            and not instance.is_expired
+        ):
             # Expected defensive rejection: the frontend hides the button on
             # ACTIVE, so reaching here means a raw DELETE (curl / script /
             # ops probe). Log at INFO — the guard fired as designed, this
@@ -191,14 +198,17 @@ class TransferViewSet(
                 }
             )
         if instance.status == TransferStatus.ACTIVE:
-            # A deposit, deleted at once: no recipient waits on it. Closed
+            # A deposit, or a transfer past its deadline whose expiry task
+            # has not run: its link is closed, so it goes at once. Closed
             # first, so a storage failure leaves it to the hourly purge.
             now = timezone.now()
             models.Transfer.objects.filter(
                 pk=instance.pk, status=TransferStatus.ACTIVE
             ).update(
                 status=TransferStatus.PENDING_FILE_DELETION,
-                deactivation_reason=DeactivationReason.MANUAL,
+                deactivation_reason=DeactivationReason.EXPIRED
+                if instance.is_expired
+                else DeactivationReason.MANUAL,
                 pending_deletion_at=now,
                 updated_at=now,
             )

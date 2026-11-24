@@ -22,7 +22,8 @@ import { useTransferEvents } from "../api/useTransferEvents";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { hasUnscannedFiles } from "../utils/scanStatus";
 import { recallSpaceKey } from "@/features/deposits/spaces";
-import { DownloadView, depositorLine } from "./DownloadView";
+import { DepositorMeta } from "./DepositorMeta";
+import { DownloadView } from "./DownloadView";
 import { FileItem } from "./FileItem";
 import { RecipientStatusList } from "./RecipientStatusList";
 import { TransferStatusBadge } from "./TransferStatusBadge";
@@ -143,6 +144,17 @@ export function TransferDetail({
   // A deposit: files sent to this agent by someone without an account. Its
   // link opens for the owner alone, so there is nothing to share.
   const isInbound = transfer.direction === "inbound";
+  const canDelete = transfer.owner === user?.id;
+  const deleteButton = (
+    <Button
+      color="error"
+      variant="secondary"
+      onClick={hardDeleteModal.open}
+      disabled={hardDeleteTransfer.isPending}
+    >
+      {t("Delete permanently")}
+    </Button>
+  );
   const isPublicLink = transfer.sharing_mode === "link" && !isInbound;
   // A deposit is downloaded right here: the download endpoint hands its
   // owner the key, and the owner's own downloads are not journaled.
@@ -150,6 +162,11 @@ export function TransferDetail({
     isInbound && transfer.status === "active"
       ? (transfer.public_token ?? undefined)
       : undefined,
+  );
+  // The deposit's files show with their "Download all", which takes the
+  // delete button on its row.
+  const deleteInDownloadView = Boolean(
+    depositDownload.data && transfer.public_token,
   );
   // Events recorded through a recipient's personal link carry their id;
   // name them in the history instead of a generic "Recipient".
@@ -162,15 +179,13 @@ export function TransferDetail({
     (sum, f) => sum + (f.plaintext_size ?? f.size),
     0,
   );
-  const isActive = transfer.status === "active";
-  // ``expires_at`` has passed but the hourly
-  // ``deactivate_expired_transfers_task`` beat hasn't caught up yet — the
-  // row is honestly still ACTIVE in the DB (the agent can still deactivate
-  // it, copy the link, etc.), we just want to surface a subtle "expiration
-  // pending" cue instead of letting the header read "Expires 2 minutes
-  // ago" as if nothing were happening. Gated on ``isActive`` so a
-  // deactivated transfer never re-arms its timer.
-  const expirationPending = useDeadlineFlag(transfer.expires_at, isActive);
+  // Past ``expires_at`` the link is closed, even while the row stays ACTIVE
+  // until the expiry task runs: show it expired, as the backend treats it.
+  const deadlinePassed = useDeadlineFlag(
+    transfer.expires_at,
+    transfer.status === "active",
+  );
+  const isActive = transfer.status === "active" && !deadlinePassed;
   // Only recipients whose first send failed (or never happened) can be
   // retried — backend resend task filters on email_sent_at IS NULL.
   const hasPendingRecipients = transfer.recipients.some(
@@ -189,7 +204,7 @@ export function TransferDetail({
         {t("Expires")} <RelativeDate iso={transfer.expires_at} />
       </>
     );
-  } else if (transfer.deactivation_reason === "expired") {
+  } else if (deadlinePassed || transfer.deactivation_reason === "expired") {
     metaReason = (
       <>
         {t("Expired")} <RelativeDate iso={transfer.expires_at} />
@@ -355,7 +370,7 @@ export function TransferDetail({
         {transfer.status !== "active" ? (
           <TransferStatusBadge status={transfer.status} />
         ) : (
-          expirationPending && <TransferStatusBadge status="expiring" />
+          deadlinePassed && <TransferStatusBadge status="expired" />
         )}
       </header>
       {renameTransfer.isError && (
@@ -369,10 +384,10 @@ export function TransferDetail({
             just a notified variant. Label stays "Public link" either way
             to match the recap mocks. */}
         {isInbound ? (
-          <span className="transfer-detail__meta-item">
-            <Perso />
-            {transfer.deposit_space ? t("Deposit") : t("Sent to your address")}
-          </span>
+          <DepositorMeta
+            transfer={transfer}
+            className="transfer-detail__meta-item"
+          />
         ) : (
           <span className="transfer-detail__meta-item">
             <Globe />
@@ -388,9 +403,16 @@ export function TransferDetail({
         {transfer.auto_archive_on_download && isActive && (
           <>
             <span className="transfer-detail__meta-sep">·</span>
-            <span className="transfer-detail__meta-auto-archive">
-              {t("Deactivates after download")}
-            </span>
+            <Tooltip
+              content={t(
+                "Single-use link. Deactivates after full download by another user.",
+              )}
+              placement="top"
+            >
+              <span className="transfer-detail__meta-auto-archive">
+                {t("Single use")}
+              </span>
+            </Tooltip>
           </>
         )}
         {transfer.confidential && (
@@ -417,7 +439,9 @@ export function TransferDetail({
           exclusive: a confidential transfer bypasses the scan by design,
           and its banner already covers the "no scan" outcome. Strings
           reused from TransferForm to avoid a second translation surface. */}
-      {transfer.confidential && transfer.files.length > 0 && (
+      {/* A deposit was encrypted by its depositor, not by this agent: the
+          download view below gives the recipient's notice instead. */}
+      {transfer.confidential && !isInbound && transfer.files.length > 0 && (
         <Alert
           type={VariantType.INFO}
           className="transfer-detail__scan-alert"
@@ -425,12 +449,6 @@ export function TransferDetail({
           {t(
             "These files are encrypted before they leave your browser and our servers can't open them, so the antivirus check is skipped. Anyone with the link and its decryption key can read them.",
           )}
-        </Alert>
-      )}
-
-      {isInbound && (
-        <Alert type={VariantType.INFO} className="transfer-detail__scan-alert">
-          {depositorLine(t, transfer)}
         </Alert>
       )}
 
@@ -529,6 +547,8 @@ export function TransferDetail({
           token={transfer.public_token}
           isOwner
           embedded
+          // Beside "Download all" rather than on a row of its own.
+          actions={canDelete ? deleteButton : undefined}
           knownKey={
             transfer.confidential && transfer.deposit_space
               ? recallSpaceKey(transfer.deposit_space)
@@ -653,17 +673,10 @@ export function TransferDetail({
       {/* A deposit has no link to close first: only its owners download
           it, so it is deleted at once, files included. A space's members
           read its deposits but cannot delete them. */}
-      {(transfer.status !== "active" || isInbound) &&
-        transfer.owner === user?.id && (
-        <div className="transfer-detail__actions">
-          <Button
-            color="error"
-            onClick={hardDeleteModal.open}
-            disabled={hardDeleteTransfer.isPending}
-          >
-            {t("Delete permanently")}
-          </Button>
-        </div>
+      {(!isActive || isInbound) &&
+        canDelete &&
+        !deleteInDownloadView && (
+        <div className="transfer-detail__actions">{deleteButton}</div>
       )}
 
       <section className="transfer-detail__history">

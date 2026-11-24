@@ -54,9 +54,8 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
   );
   const [pastedLink, setPastedLink] = useState("");
   const [pasteError, setPasteError] = useState(false);
-  // The backend also closes end-to-end spaces while that mode is off.
   const e2eOff = space.confidential && !config.TRANSFER_CONFIDENTIAL_ENABLED;
-  const open = spaceIsOpen(space) && !e2eOff;
+  const open = spaceIsOpen(space);
   // Nothing reopens these: a used single-use space, or an end-to-end one
   // while that mode is off. An expired one reopens with a later end date.
   const locked = Boolean(space.used_at) || e2eOff;
@@ -72,10 +71,14 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
         "This space is closed: end-to-end encryption is turned off on this service.",
       );
     }
-    return t(
-      "This space has been closed since {{date}}. Push back the end date below to reopen it.",
-      { date: formatFullDateTime(space.expires_at!, i18n.language) },
-    );
+    if (space.expires_at && new Date(space.expires_at) <= new Date()) {
+      return t(
+        "This space has been closed since {{date}}. Push back the end date below to reopen it.",
+        { date: formatFullDateTime(space.expires_at, i18n.language) },
+      );
+    }
+    // Its owner's account was closed.
+    return t("This space is closed: its link no longer accepts deposits.");
   };
   // An end-to-end link is only whole with its key.
   const link = space.confidential && !key ? null : depositLink(space, key);

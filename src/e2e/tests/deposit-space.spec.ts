@@ -28,20 +28,19 @@ async function createSpace(
   options: SpaceOptions = {},
 ): Promise<string> {
   await page.goto("/spaces");
-  await expect(page.getByRole("heading", { name: "Deposit spaces" })).toBeVisible();
-  await page.getByLabel("New space name").fill(name);
+  await expect(
+    page.getByRole("heading", { name: "New deposit space" }),
+  ).toBeVisible();
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  await page.getByRole("button", { name: "Advanced options" }).click();
   if (options.singleUse) {
     await page.getByLabel("Close the link after the first deposit").check();
   }
   if (options.noEmailCheck) {
-    // Checked, the box's checkmark takes the clicks: click its label.
-    await page.getByText("Check the depositor's email with a code").click();
-    await expect(
-      page.getByLabel("Check the depositor's email with a code"),
-    ).not.toBeChecked();
+    await page.getByLabel("Disable email address verification").check();
   }
   if (options.endToEnd) {
-    await page.getByLabel("End-to-end encryption").check();
+    await page.getByLabel("Confidential deposit space").check();
   }
   await page.getByRole("button", { name: "Create" }).click();
   await expect(page.getByRole("heading", { name })).toBeVisible();
@@ -114,11 +113,8 @@ test("someone without an account deposits files on a space", async ({
     .getByRole("link", { name: new RegExp(title) })
     .click();
   await expect(page).toHaveURL(detailUrl);
-  await expect(
-    page.getByText(
-      `Deposited by ${depositor.name} (${depositor.email}, verified address).`,
-    ),
-  ).toBeVisible();
+  await expect(page.getByText(depositor.name, { exact: true })).toBeVisible();
+  await expect(page.getByText("Verified address", { exact: true })).toBeVisible();
   await expect(page.getByText("Files deposited").first()).toBeVisible();
 
   // Files the antivirus did not check ask for a confirmation first.
@@ -287,11 +283,8 @@ test("a space can take deposits without checking the email", async ({
   await visitor.context().close();
 
   await openDeposit(page, USER1.email, depositor.email);
-  await expect(
-    page.getByText(
-      `Deposited by ${depositor.name} (${depositor.email}, address not verified).`,
-    ),
-  ).toBeVisible();
+  await expect(page.getByText(depositor.name, { exact: true })).toBeVisible();
+  await expect(page.getByText("Address not verified", { exact: true })).toBeVisible();
 });
 
 test("someone signed in with ProConnect deposits without a code", async ({
@@ -316,9 +309,7 @@ test("someone signed in with ProConnect deposits without a code", async ({
 
   await openDeposit(page, USER1.email, USER2.email, title);
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
-  await expect(
-    page.getByText(/Deposited by .* \(user2@example\.local, verified address\)\./),
-  ).toBeVisible();
+  await expect(page.getByText("Verified address", { exact: true })).toBeVisible();
 });
 
 test("an end-to-end space keeps its key in the link", async ({

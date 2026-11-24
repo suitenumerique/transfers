@@ -44,12 +44,27 @@
     }
   }
 
-  // A space's settings: the name row, then its options, then actions.
+  // A space's settings. As on the transfer form: field groups sit md
+  // apart, a label xs above its field.
   &__create-form,
   &__options {
     display: flex;
     flex-direction: column;
+    gap: var(--c--globals--spacings--md);
+  }
+
+  // The expiry checkbox and its date picker read as one group.
+  &__field-group {
+    display: flex;
+    flex-direction: column;
     gap: var(--c--globals--spacings--xs);
+  }
+
+  &__create-form .c__input__label,
+  &__create-form .labelled-box__label {
+    display: block;
+    margin-bottom: var(--c--globals--spacings--xs);
+    font-weight: 600;
   }
 
   // Kept apart from the settings: it deletes the deposits too.
@@ -57,6 +72,44 @@
     margin-top: var(--c--globals--spacings--lg);
     padding-top: var(--c--globals--spacings--md);
     border-top: 1px solid var(--c--contextuals--border--surface--primary);
+  }
+
+  // Advanced options, folded as on the transfer form.
+  &__advanced {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--xs);
+  }
+
+  &__advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--c--globals--spacings--2xs);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: var(--c--globals--font--sizes--sm);
+    font-weight: 700;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+
+    &:focus-visible {
+      outline: 2px solid var(--c--theme--colors--primary-600, #4844ad);
+      outline-offset: 2px;
+    }
+  }
+
+  &__advanced-active {
+    font-weight: 400;
+    font-size: var(--c--globals--font--sizes--xs);
+    color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__advanced-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--c--globals--spacings--xs);
+    padding-left: var(--c--globals--spacings--base);
   }
 
   &__actions {

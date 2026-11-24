@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import type { TFunction } from "i18next";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Input, Modal, ModalSize, Tooltip, VariantType } from "@gouvfr-lasuite/cunningham-react";
-import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Perso, Warning } from "@gouvfr-lasuite/ui-kit/icons";
+import { Checkmark, CheckmarkShield, Copy, Doc, Download, Globe, Lock, Warning } from "@gouvfr-lasuite/ui-kit/icons";
 import type { DownloadTransferFull, ScanStatus } from "@/features/api/types";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { RelativeDate } from "@/features/ui/components/relative-date";
@@ -22,12 +21,8 @@ import {
 } from "../utils/scanStatus";
 import { useDeadlineFlag } from "../utils/useDeadlineFlag";
 import { ButtonSpinner } from "./ButtonSpinner";
+import { DepositorMeta } from "./DepositorMeta";
 import { FileItem } from "./FileItem";
-
-// Firefox's download manager re-requests a paused or retried download
-// outside any page (never through the Service Worker); see interruptedIds.
-const IS_FIREFOX =
-  typeof navigator !== "undefined" && /\bFirefox\//.test(navigator.userAgent);
 
 // The "copy link" pill hands the recipient a link to forward. Drop the
 // personal ``?r=`` first: a forwarded link would otherwise attribute the
@@ -56,22 +51,10 @@ interface DownloadViewProps {
   // The key of a confidential transfer when the page already knows it: a
   // deposit to an end-to-end space, whose key this browser kept.
   knownKey?: string | null;
+  // Buttons of the page around it, on the same row as "Download all".
+  actions?: ReactNode;
 }
 
-
-// Who deposited a transfer, and whether their address was checked.
-export function depositorLine(
-  t: TFunction,
-  transfer: { depositor_name: string; depositor_email: string; depositor_verified: boolean },
-): string {
-  const values = {
-    name: transfer.depositor_name,
-    email: transfer.depositor_email,
-  };
-  return transfer.depositor_verified
-    ? t("Deposited by {{name}} ({{email}}, verified address).", values)
-    : t("Deposited by {{name}} ({{email}}, address not verified).", values);
-}
 
 export function DownloadView({
   transfer,
@@ -80,6 +63,7 @@ export function DownloadView({
   isOwner = false,
   embedded = false,
   knownKey,
+  actions,
 }: DownloadViewProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -202,14 +186,9 @@ export function DownloadView({
   // Files whose download the browser interrupted (paused or cancelled
   // from its download manager). The next click on such a file is sent as
   // a resume, which a one-shot transfer needs to hand the file out again.
-  // Only surfaced on Firefox: its Resume/Retry re-request the URL outside
-  // any page, which no Service Worker sees, so the recipient has to
-  // restart from here (docs/ENCRYPTION.md, "Interrupted downloads").
-  // Chrome resumes through the worker on its own.
+  // Not surfaced: a recipient who sees the download stop clicks the file
+  // again (docs/ENCRYPTION.md, "Interrupted downloads").
   const interruptedRef = useRef<Set<string>>(new Set());
-  const [interruptedIds, setInterruptedIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const preparingIds = new Set(pending.values());
   const settle = (requestId: string) =>
     setPending((prev) => {
@@ -236,9 +215,6 @@ export function DownloadView({
           settle(notice.requestId);
           dropIframe(notice.requestId);
           interruptedRef.current.add(fileId);
-          if (IS_FIREFOX) {
-            setInterruptedIds((prev) => new Set(prev).add(fileId));
-          }
           return;
         }
         settle(notice.requestId);
@@ -262,7 +238,6 @@ export function DownloadView({
       requests.clear();
       interrupted.clear();
       setPending(new Map());
-      setInterruptedIds(new Set());
     };
   }, [token]);
   // Tracks whether the SW currently holds this transfer's key, so the unmount
@@ -541,12 +516,6 @@ export function DownloadView({
       requestsRef.current.set(requestId, file.id);
       setPending((prev) => new Map(prev).set(requestId, file.id));
       const resume = interruptedRef.current.delete(file.id);
-      setInterruptedIds((prev) => {
-        if (!prev.has(file.id)) return prev;
-        const next = new Set(prev);
-        next.delete(file.id);
-        return next;
-      });
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = streamingDownloadUrl(
@@ -630,10 +599,10 @@ export function DownloadView({
 
           <div className="download-view__meta">
             {isInbound ? (
-              <span className="download-view__meta-item">
-                <Perso />
-                {transfer.deposit_space ? t("Deposit") : t("Sent to your address")}
-              </span>
+              <DepositorMeta
+                transfer={transfer}
+                className="download-view__meta-item"
+              />
             ) : (
               <span className="download-view__meta-item">
                 <Globe />
@@ -649,6 +618,23 @@ export function DownloadView({
             <span>{t("{{count}} file", { count: transfer.files.length })}</span>
             <span className="download-view__meta-sep">·</span>
             <span>{formatFileSize(totalSize)}</span>
+            {transfer.auto_archive_on_download && (
+              <>
+                <span className="download-view__meta-sep">·</span>
+                <Tooltip
+                  content={
+                    isOwner
+                      ? t("Single-use link. Deactivates after full download by another user.")
+                      : t("Single-use link. Deactivates after full download.")
+                  }
+                  placement="top"
+                >
+                  <span className="download-view__meta-item">
+                    {t("Single use")}
+                  </span>
+                </Tooltip>
+              </>
+            )}
             {transfer.confidential && (
               <>
                 <span className="download-view__meta-sep">·</span>
@@ -671,14 +657,10 @@ export function DownloadView({
         </>
       )}
 
-      {/* All page-level callouts share this block so the reader takes them
-          in as a single glance. Order: ERROR → WARNING; within warnings,
-          most-actionable first (auto-archive can be fixed by not clicking
-          "Download all" carelessly; the confidential / scan-not-verified
-          notices are informational). Confidential and the generic
-          "some files not scanned" alerts are mutually exclusive —
-          confidential means no scan by design, so its dedicated banner
-          already covers the "no scan" outcome for every file. */}
+      {/* Page-level callouts, kept few: at most one blocking error, then the
+          sender's notice, then one security notice (confidential, no
+          account, or files not scanned: mutually exclusive). Anything else
+          goes in the meta line, a field's help text or the file's row. */}
       {isEncrypted && encryptionState === "error" && (
         <Alert
           type={VariantType.ERROR}
@@ -698,34 +680,6 @@ export function DownloadView({
         </Alert>
       )}
 
-      {interruptedIds.size > 0 && (
-        <Alert
-          type={VariantType.WARNING}
-          className="download-view__interrupted-alert"
-        >
-          {t(
-            "The download of {{names}} was interrupted. On Firefox, Resume and Retry from the downloads panel don't work: click the file again here to start it over.",
-            {
-              names: transfer.files
-                .filter((f) => interruptedIds.has(f.id))
-                .map((f) => f.filename)
-                .join(", "),
-            },
-          )}
-        </Alert>
-      )}
-
-      {transfer.auto_archive_on_download && (
-        <Alert
-          type={VariantType.WARNING}
-          className="download-view__auto-archive-alert"
-        >
-          {isOwner
-            ? t("Single-use link. Deactivates after full download by another user.")
-            : t("Single-use link. Deactivates after full download.")}
-        </Alert>
-      )}
-
       {transfer.confidential && transfer.files.length > 0 && (
         <Alert
           type={VariantType.WARNING}
@@ -734,12 +688,6 @@ export function DownloadView({
           {t(
             "Confidential transfer: the sender encrypted these files and only your browser can open them. Our antivirus couldn't check them, so make sure you know the sender before opening them.",
           )}
-        </Alert>
-      )}
-
-      {isInbound && !embedded && (
-        <Alert type={VariantType.INFO} className="download-view__depositor">
-          {depositorLine(t, transfer)}
         </Alert>
       )}
 
@@ -911,11 +859,6 @@ export function DownloadView({
 
       {isEncrypted && encryptionState === "need-key" && (
         <div className="download-view__key-box">
-          <Alert type={VariantType.INFO}>
-            {t(
-              "This transfer is confidential. Enter the decryption key the sender shared with you separately to unlock the files.",
-            )}
-          </Alert>
           <div className="download-view__key-input">
             <Input
               label={t("Decryption key")}
@@ -933,7 +876,7 @@ export function DownloadView({
               text={
                 pasteError
                   ? t("That key didn't work. Check it and try again.")
-                  : undefined
+                  : t("Shared with you separately by the sender.")
               }
             />
             <Button
@@ -946,29 +889,34 @@ export function DownloadView({
           </div>
         </div>
       )}
-      {downloadableFiles.length > 0 && (
-        <Button
-          color="brand"
-          icon={
-            (isEncrypted && encryptionState === "loading") || anyPreparing ? (
-              <ButtonSpinner />
-            ) : (
-              <Download />
-            )
-          }
-          fullWidth
-          onClick={downloadAll}
-          disabled={
-            expired || encryptionState !== "ready" || anyPreparing
-          }
-          className="download-view__download-all"
-        >
-          {expired
-            ? t("Transfer expired")
-            : (isEncrypted && encryptionState === "loading") || anyPreparing
-              ? t("Preparing your download…")
-              : t("Download all")}
-        </Button>
+      {(downloadableFiles.length > 0 || actions) && (
+        <div className="download-view__actions">
+          {downloadableFiles.length > 0 && (
+            <Button
+              color="brand"
+              icon={
+                (isEncrypted && encryptionState === "loading") || anyPreparing ? (
+                  <ButtonSpinner />
+                ) : (
+                  <Download />
+                )
+              }
+              fullWidth
+              onClick={downloadAll}
+              disabled={
+                expired || encryptionState !== "ready" || anyPreparing
+              }
+              className="download-view__download-all"
+            >
+              {expired
+                ? t("Transfer expired")
+                : (isEncrypted && encryptionState === "loading") || anyPreparing
+                  ? t("Preparing your download…")
+                  : t("Download all")}
+            </Button>
+          )}
+          {actions}
+        </div>
       )}
     </div>
   );

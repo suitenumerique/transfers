@@ -145,6 +145,9 @@ export function DepositWizard({
             })}
           </p>
         )}
+        <p className="deposit-wizard__text">
+          {t("You can close this page.")}
+        </p>
       </section>
     );
   }

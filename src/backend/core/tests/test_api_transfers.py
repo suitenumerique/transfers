@@ -214,6 +214,20 @@ class TestTransferList:
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
 
+    def test_list_counts_a_past_deadline_transfer_as_closed(
+        self, authenticated_client, user
+    ):
+        """Its link is closed before the expiry task moves it out of ACTIVE."""
+        expired = TransferFactory(
+            owner=user,
+            status=TransferStatus.ACTIVE,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        live = authenticated_client.get(f"{API_URL}?deactivated=false")
+        closed = authenticated_client.get(f"{API_URL}?deactivated=true")
+        assert str(expired.id) not in {row["id"] for row in live.data["results"]}
+        assert str(expired.id) in {row["id"] for row in closed.data["results"]}
+
     def test_list_deactivated_true_returns_non_active(self, authenticated_client, user):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
         pending = TransferFactory(
@@ -415,6 +429,19 @@ class TestTransferHardDelete:
 
         assert response.status_code == 204
         patched_s3.delete.assert_any_call(f.s3_key)
+        assert not Transfer.objects.filter(id=transfer.id).exists()
+
+    def test_deletes_an_active_transfer_past_its_deadline(
+        self, patched_s3, authenticated_client, user
+    ):
+        """Its link is already closed: no need to wait for the expiry task."""
+        transfer = TransferFactory(
+            owner=user,
+            status=TransferStatus.ACTIVE,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 204
         assert not Transfer.objects.filter(id=transfer.id).exists()
 
     def test_refuses_when_s3_delete_fails(self, patched_s3, authenticated_client, user):

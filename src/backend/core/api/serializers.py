@@ -4,6 +4,7 @@ import re
 
 from django.conf import settings
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from drf_spectacular.utils import extend_schema_field
@@ -665,6 +666,13 @@ class DownloadTransferSerializer(serializers.ModelSerializer):
             and request.user.id == obj.owner_id
         )
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Only a deposit's readers get here: they read it on its own page.
+        if instance.is_inbound:
+            data["id"] = str(instance.id)
+        return data
+
     def get_files(self, obj):
         # Every TransferFile attached to a Transfer is complete by
         # construction (finalize refuses to run otherwise), but we keep the
@@ -700,6 +708,8 @@ class DepositSpaceSerializer(serializers.ModelSerializer):
     )
     is_owner = serializers.SerializerMethodField()
     owner_email = serializers.SerializerMethodField()
+    # The backend's rule, so clients need not mirror it.
+    is_open = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = models.DepositSpace
@@ -718,6 +728,7 @@ class DepositSpaceSerializer(serializers.ModelSerializer):
             "member_emails",
             "is_owner",
             "owner_email",
+            "is_open",
             "created_at",
             "deposit_count",
         ]
@@ -807,7 +818,10 @@ class DepositSpaceSerializer(serializers.ModelSerializer):
         emails = validated_data.pop("member_emails", None)
         # Locked and reloaded: the save writes every field, and must not
         # write back a used_at that a deposit set since the read.
-        models.DepositSpace.objects.select_for_update().get(pk=instance.pk)
+        # Deleted since the view read it: 404, not 500.
+        get_object_or_404(
+            models.DepositSpace.objects.select_for_update(), pk=instance.pk
+        )
         instance.refresh_from_db()
         space = super().update(instance, validated_data)
         self.added_members = []

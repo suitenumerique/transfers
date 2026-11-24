@@ -1133,6 +1133,18 @@ class TestSharedSpaces:
         assert self._share(client, space, []).status_code == 403
         assert client.delete(url).status_code == 403
 
+    def test_download_payload_names_the_deposit(self, user):
+        """Its readers are sent from the download page to the deposit's own."""
+        space = DepositSpaceFactory(owner=user)
+        deposit = InboundTransferFactory(owner=user, deposit_space=space)
+        client = APIClient()
+        client.force_login(user)
+        url = f"/api/v1.0/downloads/{deposit.public_token}/"
+        assert client.get(url).data["id"] == str(deposit.id)
+        # A sent transfer's recipients never learn its id.
+        sent = TransferFactory(owner=user)
+        assert "id" not in client.get(f"/api/v1.0/downloads/{sent.public_token}/").data
+
     def test_only_the_owner_deletes_a_deposit(self, authenticated_client, user):
         space = DepositSpaceFactory(owner=user)
         deposit = InboundTransferFactory(owner=user, deposit_space=space)
@@ -1143,6 +1155,16 @@ class TestSharedSpaces:
         assert str(client.get(url).data["owner"]) == str(user.id)
         assert client.delete(url).status_code == 403
         assert Transfer.objects.filter(pk=deposit.pk).exists()
+
+    def test_member_sees_the_space_closed_with_its_owner(self, user):
+        space = DepositSpaceFactory(owner=user)
+        space.members.create(email=self.COLLEAGUE)
+        client = APIClient()
+        client.force_login(UserFactory(email=self.COLLEAGUE))
+        assert client.get(SPACES_URL).data["results"][0]["is_open"] is True
+        user.is_active = False
+        user.save()
+        assert client.get(SPACES_URL).data["results"][0]["is_open"] is False
 
     def test_removed_member_loses_access(self, authenticated_client, user):
         space = DepositSpaceFactory(owner=user)

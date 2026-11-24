@@ -39,6 +39,13 @@ export function depositErrorMessage(err: unknown): string {
     case "scan_error":
       return t("The antivirus scan could not complete. Try sending again.");
   }
+  // A field the backend refused: only the email fields can be, past the
+  // browser's own checks.
+  if (err instanceof ApiError && err.status === 400) {
+    const body = err.body as Record<string, unknown> | undefined;
+    if (body?.depositor_email) return t("Your email address is not valid.");
+    if (body?.recipient_email) return t("The recipient's email address is not valid.");
+  }
   if (err instanceof Error && err.message === "finalize_timeout") {
     return t("Sending is taking too long. Please try again.");
   }

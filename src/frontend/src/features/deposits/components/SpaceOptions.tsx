@@ -1,9 +1,11 @@
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Checkbox,
   DatePicker,
   Select,
 } from "@gouvfr-lasuite/cunningham-react";
+import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useRetentionOptions } from "../api/useRetentionOptions";
 import { dateInputValue, endOfDayIso } from "../spaces";
 
@@ -14,28 +16,38 @@ export interface SpaceOptionValues {
   verify_email: boolean;
 }
 
-// The settings a space's owner can change at any time.
+// The settings a space's owner can change at any time. ``advanced`` adds
+// options of the caller's to the fold, ``advancedCount`` of them active.
 export function SpaceOptions({
   values,
   onChange,
   disabled,
+  advanced,
+  advancedCount = 0,
 }: {
   values: SpaceOptionValues;
   onChange: (values: SpaceOptionValues) => void;
   disabled?: boolean;
+  advanced?: ReactNode;
+  advancedCount?: number;
 }) {
   const { t } = useTranslation();
   const retentionOptions = useRetentionOptions();
   const set = (patch: Partial<SpaceOptionValues>) =>
     onChange({ ...values, ...patch });
+  const [hasExpiry, setHasExpiry] = useState(values.expires_at !== null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   // The earliest end date is today: the link then closes tonight.
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  // A closed fold still says what it holds, as on the transfer form.
+  const activeCount =
+    Number(values.single_use) + Number(!values.verify_email) + advancedCount;
 
   return (
     <div className="deposits__options">
       <Select
-        label={t("Deposits kept")}
+        label={t("Deposit validity duration")}
         variant="classic"
         fullWidth
         options={retentionOptions}
@@ -44,34 +56,74 @@ export function SpaceOptions({
         disabled={disabled}
         onChange={(e) => set({ retention_days: Number(e.target.value) })}
       />
-      <DatePicker
-        label={t("Link open until")}
-        variant="classic"
-        fullWidth
-        minValue={today.toISOString()}
-        value={values.expires_at}
-        disabled={disabled}
-        text={t("Leave empty to keep the link open.")}
-        // The picker gives the day's start; the link closes at its end.
-        onChange={(value) =>
-          set({ expires_at: value ? endOfDayIso(dateInputValue(value)) : null })
-        }
-      />
-      <Checkbox
-        label={t("Close the link after the first deposit")}
-        checked={values.single_use}
-        disabled={disabled}
-        onChange={(e) => set({ single_use: e.currentTarget.checked })}
-      />
-      <Checkbox
-        label={t("Check the depositor's email with a code")}
-        text={t(
-          "Adds an email verification step to confirm the user's identity.",
+      <div className="deposits__field-group">
+        <Checkbox
+          label={t("Deposit space expiration date")}
+          checked={hasExpiry}
+          disabled={disabled}
+          onChange={(e) => {
+            setHasExpiry(e.currentTarget.checked);
+            if (!e.currentTarget.checked) set({ expires_at: null });
+          }}
+        />
+        {hasExpiry && (
+          <DatePicker
+            label={t("Deposit space expiration date")}
+            hideLabel
+            variant="classic"
+            fullWidth
+            minValue={today.toISOString()}
+            value={values.expires_at}
+            disabled={disabled}
+            // The picker gives the day's start; the link closes at its end.
+            onChange={(value) =>
+              set({
+                expires_at: value ? endOfDayIso(dateInputValue(value)) : null,
+              })
+            }
+          />
         )}
-        checked={values.verify_email}
-        disabled={disabled}
-        onChange={(e) => set({ verify_email: e.currentTarget.checked })}
-      />
+      </div>
+
+      <div className="deposits__advanced">
+        <button
+          type="button"
+          className="deposits__advanced-toggle"
+          aria-expanded={advancedOpen}
+          aria-controls="space-options-advanced"
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          <Icon
+            name={advancedOpen ? "keyboard_arrow_down" : "keyboard_arrow_right"}
+          />
+          <span>{t("Advanced options")}</span>
+          {!advancedOpen && activeCount > 0 && (
+            <span className="deposits__advanced-active">
+              {t("{{count}} selected", { count: activeCount })}
+            </span>
+          )}
+        </button>
+        {advancedOpen && (
+          <div id="space-options-advanced" className="deposits__advanced-list">
+            <Checkbox
+              label={t("Close the link after the first deposit")}
+              checked={values.single_use}
+              disabled={disabled}
+              onChange={(e) => set({ single_use: e.currentTarget.checked })}
+            />
+            <Checkbox
+              label={t("Disable email address verification")}
+              text={t(
+                "Removes the step that confirms the depositor's identity: their deposits are marked “address not verified”.",
+              )}
+              checked={!values.verify_email}
+              disabled={disabled}
+              onChange={(e) => set({ verify_email: !e.currentTarget.checked })}
+            />
+            {advanced}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

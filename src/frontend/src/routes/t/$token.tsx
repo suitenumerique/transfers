@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
 import { ProConnectButton, Spinner, UserMenu } from "@gouvfr-lasuite/ui-kit";
@@ -75,6 +75,10 @@ function DownloadPage() {
       return (
         <p className="download-page__status">{messages[reason]}</p>
       );
+    }
+    // A deposit is read on the agent's own page, not on the recipients' one.
+    if (data.direction === "inbound" && data.id) {
+      return <Navigate to="/transfers/$id" params={{ id: data.id }} replace />;
     }
     return (
       <DownloadView
