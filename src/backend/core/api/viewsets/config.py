@@ -55,6 +55,9 @@ class ConfigView(drf.views.APIView):
             "DEPOSIT_SPACE_RETENTION_CHOICES": settings.DEPOSIT_SPACE_RETENTION_CHOICES,
             "DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS": settings.DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS,
             "INBOX_ENABLED": deposits.inbox_enabled(),
+            # Lets /send flag an address the API would refuse before sending.
+            "INBOX_RECIPIENT_EMAIL_REGEX": settings.INBOX_RECIPIENT_EMAIL_REGEX,
+            "INBOX_RECIPIENT_EMAIL_EXAMPLE": settings.INBOX_RECIPIENT_EMAIL_EXAMPLE,
             "INBOX_RETENTION_DAYS": settings.INBOX_RETENTION_DAYS,
             "HELP_URL": getattr(settings, "HELP_URL", ""),
             # The error page's support link; hidden when empty.

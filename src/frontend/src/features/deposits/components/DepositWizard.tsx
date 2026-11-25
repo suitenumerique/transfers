@@ -10,6 +10,8 @@ import { CheckmarkShield } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
 import { useAuth } from "@/features/auth";
 import type { DepositReceipt } from "@/features/api/types";
+import { useConfig } from "@/features/providers/config";
+import { inboxRecipientAllowed, isValidEmail } from "@/features/utils/email";
 import { formatFileSize } from "@/features/utils/string-helper";
 import {
   startDepositChallenge,
@@ -56,6 +58,7 @@ export function DepositWizard({
 }: DepositWizardProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const config = useConfig();
   // Whether a receipt goes to the depositor: only to a proven address.
   const [emailVerified, setEmailVerified] = useState(true);
   const [step, setStep] = useState<Step>({ name: "identity" });
@@ -63,6 +66,12 @@ export function DepositWizard({
   const [email, setEmail] = useState("");
   const [title, setTitle] = useState("");
   const [recipient, setRecipient] = useState("");
+  // Checked once the field is left, so typing is not flagged midway.
+  const [touched, setTouched] = useState({
+    name: false,
+    email: false,
+    recipient: false,
+  });
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -92,7 +101,11 @@ export function DepositWizard({
         return;
       }
       setCode("");
-      setStep({ name: "code", challengeId: started.challenge_id, email: asked });
+      setStep({
+        name: "code",
+        challengeId: started.challenge_id,
+        email: asked,
+      });
     } catch (err) {
       setError(depositErrorMessage(err));
     } finally {
@@ -123,8 +136,31 @@ export function DepositWizard({
     }
   };
 
-  const identityReady =
-    (user || (name.trim() && email.trim())) && (spaceToken || recipient.trim());
+  // Shown once a field is left: empty (spaces only count as empty) or not
+  // an address the API takes.
+  const fieldError = (value: string, isEmail: boolean) =>
+    !value.trim()
+      ? t("This field is required.")
+      : isEmail && !isValidEmail(value)
+        ? t("Invalid email address.")
+        : null;
+  const nameError = user ? null : fieldError(name, false);
+  const emailError = user ? null : fieldError(email, true);
+  const example = config.INBOX_RECIPIENT_EMAIL_EXAMPLE;
+  const recipientError = spaceToken
+    ? null
+    : (fieldError(recipient, true) ??
+      (inboxRecipientAllowed(config.INBOX_RECIPIENT_EMAIL_REGEX, recipient)
+        ? null
+        : example
+          ? t(
+              "Files can't be sent to this address here. Example of an accepted address: {{example}}",
+              { example },
+            )
+          : t("Files can't be sent to this address here.")));
+  const identityReady = !nameError && !emailError && !recipientError;
+  const shownError = (field: keyof typeof touched, error: string | null) =>
+    touched[field] ? error : null;
   const depositorEmail = submittedEmail;
   const needsCode = !user && verifyEmail;
 
@@ -145,9 +181,7 @@ export function DepositWizard({
             })}
           </p>
         )}
-        <p className="deposit-wizard__text">
-          {t("You can close this page.")}
-        </p>
+        <p className="deposit-wizard__text">{t("You can close this page.")}</p>
       </section>
     );
   }
@@ -181,7 +215,18 @@ export function DepositWizard({
               type="email"
               value={recipient}
               onChange={(e) => setRecipient(e.currentTarget.value)}
-              text={t("The agent you are sending files to.")}
+              onBlur={() => setTouched((v) => ({ ...v, recipient: true }))}
+              state={
+                shownError("recipient", recipientError) ? "error" : "default"
+              }
+              text={
+                shownError("recipient", recipientError) ??
+                (example
+                  ? t("The agent you are sending files to, e.g. {{example}}.", {
+                      example,
+                    })
+                  : t("The agent you are sending files to."))
+              }
               fullWidth
               required
             />
@@ -191,6 +236,9 @@ export function DepositWizard({
             label={t("Your name")}
             value={user ? user.full_name || user.email : name}
             onChange={(e) => setName(e.currentTarget.value)}
+            onBlur={() => setTouched((v) => ({ ...v, name: true }))}
+            state={shownError("name", nameError) ? "error" : "default"}
+            text={shownError("name", nameError) ?? undefined}
             disabled={Boolean(user)}
             maxLength={100}
             fullWidth
@@ -201,13 +249,16 @@ export function DepositWizard({
             type="email"
             value={user ? user.email : email}
             onChange={(e) => setEmail(e.currentTarget.value)}
+            onBlur={() => setTouched((v) => ({ ...v, email: true }))}
             disabled={Boolean(user)}
+            state={shownError("email", emailError) ? "error" : "default"}
             text={
-              user
-                ? t("Signed in with ProConnect: no code needed.")
+              shownError("email", emailError) ??
+              (user
+                ? t("Address verified by your sign-in.")
                 : verifyEmail
                   ? t("We will send a code to this address to check it.")
-                  : t("The agent will see that it was not checked.")
+                  : undefined)
             }
             fullWidth
             required

@@ -918,6 +918,16 @@ def test_config_exposes_deposit_settings(settings):
         == settings.DEPOSIT_SPACE_RETENTION_CHOICES
     )
     assert data["INBOX_ENABLED"] is False
+    assert data["INBOX_RECIPIENT_EMAIL_REGEX"] == ""
+
+
+def test_config_exposes_inbox_recipient_regex(settings):
+    settings.INBOX_RECIPIENT_EMAIL_REGEX = r"[^@]+@example\.local"
+    settings.INBOX_RECIPIENT_EMAIL_EXAMPLE = "agent@example.local"
+    data = APIClient().get("/api/v1.0/config/").data
+    assert data["INBOX_ENABLED"] is True
+    assert data["INBOX_RECIPIENT_EMAIL_REGEX"] == r"[^@]+@example\.local"
+    assert data["INBOX_RECIPIENT_EMAIL_EXAMPLE"] == "agent@example.local"
 
 
 # --- Races ---

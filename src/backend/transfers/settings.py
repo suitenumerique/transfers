@@ -268,6 +268,10 @@ class Base(Configuration):
     INBOX_RECIPIENT_EMAIL_REGEX = values.Value(
         "", environ_name="INBOX_RECIPIENT_EMAIL_REGEX", environ_prefix=None
     )
+    # An address the regex accepts, shown to visitors as a hint.
+    INBOX_RECIPIENT_EMAIL_EXAMPLE = values.Value(
+        "", environ_name="INBOX_RECIPIENT_EMAIL_EXAMPLE", environ_prefix=None
+    )
     # Days an anonymous send is kept (claimed or not).
     INBOX_RETENTION_DAYS = values.PositiveIntegerValue(
         30, environ_name="INBOX_RETENTION_DAYS", environ_prefix=None

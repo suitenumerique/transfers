@@ -1,10 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Checkbox,
-  DatePicker,
-  Select,
-} from "@gouvfr-lasuite/cunningham-react";
+import { Checkbox, DatePicker, Select } from "@gouvfr-lasuite/cunningham-react";
 import { Icon } from "@gouvfr-lasuite/ui-kit";
 import { useRetentionOptions } from "../api/useRetentionOptions";
 import { dateInputValue, endOfDayIso } from "../spaces";
@@ -18,16 +14,19 @@ export interface SpaceOptionValues {
 
 // The settings a space's owner can change at any time. ``advanced`` adds
 // options of the caller's to the fold, ``advancedCount`` of them active.
+// ``hasDeposits``: single use then closes on the next deposit, not the first.
 export function SpaceOptions({
   values,
   onChange,
   disabled,
+  hasDeposits,
   advanced,
   advancedCount = 0,
 }: {
   values: SpaceOptionValues;
   onChange: (values: SpaceOptionValues) => void;
   disabled?: boolean;
+  hasDeposits?: boolean;
   advanced?: ReactNode;
   advancedCount?: number;
 }) {
@@ -113,7 +112,11 @@ export function SpaceOptions({
         {advancedOpen && (
           <div id="space-options-advanced" className="deposits__advanced-list">
             <Checkbox
-              label={t("Close the link after the first deposit")}
+              label={
+                hasDeposits
+                  ? t("Close the link after the next deposit")
+                  : t("Close the link after the first deposit")
+              }
               checked={values.single_use}
               disabled={disabled}
               onChange={(e) => set({ single_use: e.currentTarget.checked })}

@@ -49,6 +49,10 @@ export interface AppConfig {
   // Whether visitors may send files straight to an agent's address
   // (``/send``), and how long those are kept.
   INBOX_ENABLED: boolean;
+  // The addresses ``/send`` may target (Python syntax, whole address).
+  INBOX_RECIPIENT_EMAIL_REGEX: string;
+  // An address it accepts, shown as a hint; empty when not set.
+  INBOX_RECIPIENT_EMAIL_EXAMPLE: string;
   INBOX_RETENTION_DAYS: number;
   // External help URL — sidebar's "?" footer button opens it in a new tab.
   // Empty string when the operator hasn't configured one (button hidden).

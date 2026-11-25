@@ -100,6 +100,7 @@ collects its other pending sends. See `docs/authentication.md`.
 | `DEPOSIT_SPACE_RETENTION_CHOICES` | `7,30,90` | Days a space may keep its deposits for |
 | `DEPOSIT_SPACE_DEFAULT_RETENTION_DAYS` | 30 | Default retention; must be in `DEPOSIT_SPACE_RETENTION_CHOICES` |
 | `INBOX_RECIPIENT_EMAIL_REGEX` | _(empty: off)_ | Agent addresses an anonymous send may target, matched whole and case-insensitively, e.g. `[^@\s]+@([a-z0-9-]+\.)*gouv\.fr`. Empty hides `/send` |
+| `INBOX_RECIPIENT_EMAIL_EXAMPLE` | _(empty: none)_ | An address the regex accepts, shown on `/send` as a hint, e.g. `prenom.nom@anct.gouv.fr` |
 | `INBOX_RETENTION_DAYS` | 30 | Days an anonymous send is kept |
 | `DEPOSIT_OTP_TTL_SECONDS` / `DEPOSIT_OTP_MAX_ATTEMPTS` | 600 / 5 | Lifetime and wrong tries of a code |
 | `DEPOSIT_SESSION_MAX_AGE` | 43200 | Seconds the upload session a code opens lasts; must cover the slowest full upload |

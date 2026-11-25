@@ -93,6 +93,7 @@ OIDC_STORE_CLAIMS=
 # matched whole and case-insensitively. Empty hides the page. Covers the dev
 # Keycloak users.
 INBOX_RECIPIENT_EMAIL_REGEX=[^@\s]+@example\.local
+INBOX_RECIPIENT_EMAIL_EXAMPLE=prenom.nom@example.local
 
 # Drive integration — leave blank to hide the "Attach from Drive" button.
 # Set to your Drive instance base URL (e.g. https://drive.example.gouv.fr)

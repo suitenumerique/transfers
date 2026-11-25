@@ -34,7 +34,7 @@ export function DepositorMeta({
         content={
           transfer.depositor_verified
             ? t(
-                "{{email}} was checked: the depositor entered a code sent to it, or signed in with ProConnect.",
+                "{{email}} was checked: the depositor entered a code sent to it, or was signed in.",
                 values,
               )
             : t(

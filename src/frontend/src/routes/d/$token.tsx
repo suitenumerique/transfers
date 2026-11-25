@@ -15,17 +15,32 @@ function DepositPage() {
   const { token } = Route.useParams();
   const { data, isLoading, error } = usePublicDepositSpace(token);
   // An end-to-end space's key rides in the fragment, never sent to us.
-  const [fragment] = useState(() => window.location.hash.replace(/^#/, ""));
-  const [fragmentCheck, setFragmentCheck] = useState<string | null>(null);
+  const readFragment = () => window.location.hash.replace(/^#/, "");
+  const [fragment, setFragment] = useState(readFragment);
+  // The check and the fragment it was made for: a stale one is ignored.
+  const [checked, setChecked] = useState<{ of: string; hash: string } | null>(
+    null,
+  );
   useEffect(() => {
-    if (fragment) void keyCheck(fragment).then(setFragmentCheck);
+    if (fragment)
+      void keyCheck(fragment).then((hash) =>
+        setChecked({ of: fragment, hash }),
+      );
   }, [fragment]);
   // null while the check runs.
   const keyOk = !fragment
     ? false
-    : fragmentCheck === null
+    : checked?.of !== fragment
       ? null
-      : fragmentCheck === data?.key_check;
+      : checked.hash === data?.key_check;
+  // A full link pasted over an incomplete one only changes the fragment,
+  // which doesn't reload the page. Once the key is good it stays put.
+  useEffect(() => {
+    if (keyOk) return;
+    const onHashChange = () => setFragment(readFragment());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [keyOk]);
 
   return (
     <PublicShell>

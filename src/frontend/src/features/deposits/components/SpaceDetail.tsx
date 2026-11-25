@@ -16,6 +16,7 @@ import type { DepositSpace, DepositSpaceSettings } from "@/features/api/types";
 import { keyCheck } from "@/features/transfers/upload/encryption";
 import { useConfig } from "@/features/providers/config";
 import { formatFullDateTime } from "@/features/utils/date";
+import { isValidEmail } from "@/features/utils/email";
 import { formatFileSize } from "@/features/utils/string-helper";
 import { displayNameFromEmail } from "@/features/transfers/components/RecipientStatusList";
 import { userFacingError } from "@/features/utils/user-facing-error";
@@ -48,6 +49,8 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
   const [name, setName] = useState(space.name);
   const [options, setOptions] = useState(() => optionsOf(space));
   const [newMember, setNewMember] = useState("");
+  const [memberTouched, setMemberTouched] = useState(false);
+  const memberInvalid = newMember.trim() !== "" && !isValidEmail(newMember);
   const [copied, setCopied] = useState(false);
   const [key, setKey] = useState(() =>
     space.confidential ? recallSpaceKey(space.id) : null,
@@ -237,6 +240,7 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
             values={options}
             onChange={setOptions}
             disabled={locked}
+            hasDeposits={space.deposit_count > 0 && !space.used_at}
           />
           {!locked && (
             <div className="deposits__actions">
@@ -258,7 +262,7 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
       <h2 className="deposits__subtitle">{t("Shared with")}</h2>
       <p className="deposits__intro">
         {t(
-          "Members see the deposits and download them, and are emailed at each one. They sign in with ProConnect, with the address you give, even if they never used the service.",
+          "Members see the deposits and download them, and are emailed at each one. They sign in with the address you give, even if they never used the service.",
         )}
       </p>
       <ul className="deposits__members">
@@ -300,10 +304,15 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
           onSubmit={(e) => {
             e.preventDefault();
             const email = newMember.trim().toLowerCase();
-            if (!email) return;
+            if (!email || memberInvalid) return;
             update.mutate(
               { member_emails: [...space.member_emails, email] },
-              { onSuccess: () => setNewMember("") },
+              {
+                onSuccess: () => {
+                  setNewMember("");
+                  setMemberTouched(false);
+                },
+              },
             );
           }}
         >
@@ -313,11 +322,18 @@ export function SpaceDetail({ space }: { space: DepositSpace }) {
             type="email"
             value={newMember}
             onChange={(e) => setNewMember(e.currentTarget.value)}
+            onBlur={() => setMemberTouched(true)}
+            state={memberTouched && memberInvalid ? "error" : "default"}
+            text={
+              memberTouched && memberInvalid
+                ? t("Invalid email address.")
+                : undefined
+            }
           />
           <Button
             type="submit"
             color="neutral"
-            disabled={!newMember.trim() || update.isPending}
+            disabled={!newMember.trim() || memberInvalid || update.isPending}
           >
             {t("Share")}
           </Button>
