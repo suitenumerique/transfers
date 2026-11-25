@@ -35,7 +35,9 @@ export function SpaceOptions({
   const retentionOptions = useRetentionOptions();
   const set = (patch: Partial<SpaceOptionValues>) =>
     onChange({ ...values, ...patch });
-  const [hasExpiry, setHasExpiry] = useState(values.expires_at !== null);
+  // Checked iff a date is set: checking picks one, clearing it unchecks,
+  // so the box never claims an expiry the space won't get.
+  const hasExpiry = values.expires_at !== null;
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // The earliest end date is today: the link then closes tonight.
   const today = new Date();
@@ -62,8 +64,13 @@ export function SpaceOptions({
           checked={hasExpiry}
           disabled={disabled}
           onChange={(e) => {
-            setHasExpiry(e.currentTarget.checked);
-            if (!e.currentTarget.checked) set({ expires_at: null });
+            const inAMonth = new Date();
+            inAMonth.setDate(inAMonth.getDate() + 30);
+            set({
+              expires_at: e.currentTarget.checked
+                ? endOfDayIso(dateInputValue(inAMonth.toISOString()))
+                : null,
+            });
           }}
         />
         {hasExpiry && (

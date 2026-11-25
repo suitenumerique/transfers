@@ -20,7 +20,8 @@ const TransferDetailPage = () => {
 
   return (
     <div className="app-content">
-      <TransferDetail transfer={transfer} />
+      {/* Remounted per transfer: its deadline and edit state are its own. */}
+      <TransferDetail key={transfer.id} transfer={transfer} />
     </div>
   );
 };
