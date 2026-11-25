@@ -50,7 +50,8 @@ class DepositChallengeThrottle(_PerIPThrottle):
 
 class DepositChallengeEmailThrottle(SimpleRateThrottle):
     """Asking for a code for one depositor email, from any IP: bounds the
-    mail one address can be sent."""
+    mail one address can be sent. Applied by the view, only when a code is
+    sent."""
 
     scope = "deposit_challenge_email"
 

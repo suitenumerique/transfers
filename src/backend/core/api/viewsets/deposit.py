@@ -233,7 +233,7 @@ class DepositChallengeView(APIView):
     # Plain session auth: an anonymous call goes on, never a 401.
     authentication_classes = [SessionAuthentication]
     permission_classes = []
-    throttle_classes = [DepositChallengeThrottle, DepositChallengeEmailThrottle]
+    throttle_classes = [DepositChallengeThrottle]
 
     @extend_schema(request=DepositChallengeCreateSerializer)
     def post(self, request):
@@ -275,28 +275,39 @@ class DepositChallengeView(APIView):
         # A signed-in depositor is who their account says; a space may skip
         # the check.
         code_needed = not signed_in and (space is None or space.verify_email)
+        # Only once we know a code is mailed: otherwise anyone could use up
+        # an address's quota through a space that does not check emails.
+        email_throttle = DepositChallengeEmailThrottle()
+        if code_needed and not email_throttle.allow_request(request, self):
+            self.throttled(request, email_throttle.wait())
         # Proven by the code or by the account, never on a space that skips
         # the check.
         trusted_email = signed_in or code_needed
-        try:
-            if code_needed:
-                # Codes are only sent here, so this limit is only enforced here.
-                deposits.check_code_requests(data["depositor_email"])
-            # Early, unlocked check: finalize checks the caps again under lock.
-            # Refusing now spares the depositor an upload that would fail.
-            deposits.check_caps(target=target, depositor_email=data["depositor_email"])
-        except deposits.CapReached as exc:
-            raise drf.exceptions.Throttled(detail=exc.detail) from exc
+        # The code count and the new challenge in one transaction, under a
+        # lock on the address; the mail goes out after it.
+        with transaction.atomic():
+            try:
+                if code_needed:
+                    # Codes are only sent here, so this limit is only enforced here.
+                    deposits.lock_code_requests(data["depositor_email"])
+                    deposits.check_code_requests(data["depositor_email"])
+                # Early, unlocked check: finalize checks the caps again under
+                # lock. Refusing now spares the depositor an upload that would fail.
+                deposits.check_caps(
+                    target=target, depositor_email=data["depositor_email"]
+                )
+            except deposits.CapReached as exc:
+                raise drf.exceptions.Throttled(detail=exc.detail) from exc
 
-        challenge, code = deposits.create_challenge(
-            space=space,
-            inbox_email=data.get("recipient_email", ""),
-            depositor_email=data["depositor_email"],
-            depositor_name=data["depositor_name"],
-            ip=request.META.get("REMOTE_ADDR"),
-            code_needed=code_needed,
-            email_verified=trusted_email,
-        )
+            challenge, code = deposits.create_challenge(
+                space=space,
+                inbox_email=data.get("recipient_email", ""),
+                depositor_email=data["depositor_email"],
+                depositor_name=data["depositor_name"],
+                ip=request.META.get("REMOTE_ADDR"),
+                code_needed=code_needed,
+                email_verified=trusted_email,
+            )
         if not code_needed:
             return Response(
                 {
@@ -540,6 +551,8 @@ class DepositDraftViewSet(TransferDraftViewSet):
                     challenge.deposit_space_id, challenge.inbox_email
                 ),
                 "depositor_email": challenge.depositor_email,
+                # Only verified deposits count toward the depositor's cap.
+                "depositor_verified": challenge.email_verified,
                 # The depositor's title, kept once the agent renames it.
                 "title": transfer.title,
                 "file_count": len(files),

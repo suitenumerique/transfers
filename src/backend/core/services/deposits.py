@@ -265,6 +265,12 @@ def challenge_retention() -> timedelta:
     return timedelta(seconds=seconds + 3600)
 
 
+def lock_code_requests(depositor_email: str):
+    """Serialize code requests for one address until the transaction ends,
+    so parallel ones cannot all pass check_code_requests."""
+    _advisory_lock(f"codes:{normalize_email(depositor_email)}")
+
+
 def check_code_requests(depositor_email: str):
     """Raise ``CapReached`` past THROTTLE_DEPOSIT_CODES_PER_EMAIL codes sent
     to one address: each code allows a few guesses, so this bounds how
@@ -291,7 +297,8 @@ def check_code_requests(depositor_email: str):
 def check_caps(*, target: str, depositor_email: str):
     """Raise ``CapReached`` when the target or the depositor has had its
     share of deposits over the window. Counted from DEPOSIT_RECEIVED events,
-    which outlive the transfers."""
+    which outlive the transfers: all of them for the target, the verified
+    ones for the depositor."""
     rate = settings.THROTTLE_DEPOSITS_PER_TARGET
     if rate:
         limit, period_name, period_seconds = rate
@@ -303,7 +310,12 @@ def check_caps(*, target: str, depositor_email: str):
     rate = settings.THROTTLE_DEPOSITS_PER_DEPOSITOR
     if rate:
         limit, period_name, period_seconds = rate
-        filters = Q(payload__depositor_email=normalize_email(depositor_email))
+        # Verified deposits only: an unchecked address could be anyone's,
+        # and would use up its owner's quota.
+        filters = Q(
+            payload__depositor_email=normalize_email(depositor_email),
+            payload__depositor_verified=True,
+        )
         if _deposits_since(filters, period_seconds) >= limit:
             raise CapReached(
                 f"You cannot make more than {limit} deposits per {period_name}."

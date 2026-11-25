@@ -120,9 +120,12 @@ test("an address outside the instance pattern is refused", async ({ browser }) =
   await visitor.getByLabel("Recipient's email address").fill("someone@example.org");
   await visitor.getByLabel("Your name").fill(depositor.name);
   await visitor.getByLabel("Your email address").fill(depositor.email);
-  await visitor.getByRole("button", { name: "Receive a code" }).click();
+  // Flagged once the field is left, before anything is sent.
   await expect(
     visitor.getByText("Files can't be sent to this address here."),
   ).toBeVisible();
+  await expect(
+    visitor.getByRole("button", { name: "Receive a code" }),
+  ).toBeDisabled();
   await visitor.context().close();
 });

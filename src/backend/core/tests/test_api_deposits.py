@@ -479,9 +479,36 @@ class TestChallenge:
             transfer_id=InboundTransferFactory().id,
             event_type=TransferEventType.DEPOSIT_RECEIVED,
             actor_type="external",
-            payload={"target": "space:other", "depositor_email": DEPOSITOR},
+            payload={
+                "target": "space:other",
+                "depositor_email": DEPOSITOR,
+                "depositor_verified": True,
+            },
         )
         assert _start(space_token=space.link_token).status_code == 429
+
+    def test_unverified_deposits_spare_the_depositor_cap(self, space, settings):
+        # Anyone can type an address on a space that does not check it.
+        settings.THROTTLE_DEPOSITS_PER_DEPOSITOR = (1, "day", 86400)
+        TransferEvent.objects.create(
+            transfer_id=InboundTransferFactory().id,
+            event_type=TransferEventType.DEPOSIT_RECEIVED,
+            actor_type="external",
+            payload={
+                "target": "space:other",
+                "depositor_email": DEPOSITOR,
+                "depositor_verified": False,
+            },
+        )
+        assert _start(space_token=space.link_token).status_code == 201
+
+    def test_no_code_no_email_throttle(self, space):
+        # Mailing nothing, a space without email check spares the address's
+        # code quota.
+        open_space = DepositSpaceFactory(verify_email=False)
+        for _ in range(6):
+            assert _start(space_token=open_space.link_token).status_code == 201
+        assert _start(space_token=space.link_token).status_code == 201
 
 
 class TestVerify:
@@ -666,6 +693,7 @@ class TestDeposit:
         event = TransferEvent.objects.get(event_type=TransferEventType.DEPOSIT_RECEIVED)
         assert event.payload["target"] == f"space:{space.id}"
         assert event.payload["file_count"] == 2
+        assert event.payload["depositor_verified"] is True
 
         recipients = sorted(m.to[0] for m in mail.outbox)
         assert recipients == sorted([space.owner.email, DEPOSITOR])
