@@ -9,7 +9,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { ScanStatus } from "@/features/api/types";
-import { isScanBlocking } from "./scanStatus";
+import {
+  isScanBlocking,
+  requiresUnscannedAck,
+  unscannedDepositFiles,
+} from "./scanStatus";
 
 const file = (scanStatus: ScanStatus | undefined) => ({ scanStatus });
 
@@ -70,5 +74,41 @@ describe("isScanBlocking", () => {
     // above the predicate also depends on file-count so this branch
     // would rearm anyway, but the predicate itself must still say true.
     expect(isScanBlocking([], statusOf, true)).toBe(true);
+  });
+});
+
+describe("requiresUnscannedAck", () => {
+  // Deposits come from people without an account: an unchecked file there
+  // needs the agent's explicit go-ahead, a sent transfer's does not.
+  it("asks on a deposit with an unchecked file", () => {
+    expect(
+      requiresUnscannedAck("inbound", [file("clean"), file("unscannable")], statusOf),
+    ).toBe(true);
+  });
+
+  it("does not ask when every deposited file is clean", () => {
+    expect(requiresUnscannedAck("inbound", [file("clean")], statusOf)).toBe(false);
+  });
+
+  it("never asks on a sent transfer", () => {
+    expect(requiresUnscannedAck("outbound", [file("skipped")], statusOf)).toBe(
+      false,
+    );
+  });
+});
+
+describe("unscannedDepositFiles", () => {
+  it("picks only the deposited files without a clean verdict", () => {
+    const checked = file("clean");
+    const unchecked = file("unscannable");
+    expect(
+      unscannedDepositFiles("inbound", [checked, unchecked], statusOf),
+    ).toEqual([unchecked]);
+  });
+
+  it("picks nothing on a sent transfer", () => {
+    expect(unscannedDepositFiles("outbound", [file("skipped")], statusOf)).toEqual(
+      [],
+    );
   });
 });

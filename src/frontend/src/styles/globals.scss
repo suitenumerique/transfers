@@ -302,4 +302,7 @@ body {
 // item, and the tooltip lingers because the cursor is "still over it".
 .c__tooltip {
   pointer-events: none;
+  // A tooltip may sit inside a no-wrap line or badge: it still wraps, up to
+  // Cunningham's max width.
+  white-space: normal;
 }

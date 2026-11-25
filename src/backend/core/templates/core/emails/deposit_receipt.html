@@ -1,0 +1,15 @@
+{% extends "core/emails/_base.html" %}
+
+{% block content %}
+  <tr>
+    <td style="padding:0 32px 24px;font-size:15px;line-height:1.5;color:#25252f;">
+      Vos fichiers ont été transmis à <strong>{{ target_label }}</strong>{% if transfer.title %} : <strong><em>{{ transfer.title }}</em></strong>{% endif %}.
+    </td>
+  </tr>
+  {% include "core/emails/_deposit_files.html" %}
+  <tr>
+    <td style="padding:16px 32px 32px;font-size:13px;line-height:1.5;color:#5d5d70;">
+      Vous recevez ce message parce que vous avez déposé ces fichiers. Si ce n'est pas le cas, ignorez-le.
+    </td>
+  </tr>
+{% endblock %}

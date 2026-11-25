@@ -11,8 +11,10 @@ orphaned by the operation).
 
 import logging
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Count, Exists, OuterRef, Sum
+from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.utils import timezone
 
 import rest_framework as drf
 from drf_spectacular.utils import extend_schema
@@ -27,6 +29,7 @@ from core.api.serializers import (
     TransferDetailSerializer,
     TransferEventSerializer,
     TransferListSerializer,
+    TransferRenameSerializer,
 )
 from core.api.throttling import TransferResendThrottle
 from core.api.utils import log_agent_event
@@ -34,9 +37,11 @@ from core.api.viewsets import Pagination
 from core.enums import (
     DeactivationReason,
     SharingMode,
+    TransferDirection,
     TransferEventType,
     TransferStatus,
 )
+from core.services import deposits
 
 
 class TransferViewSet(
@@ -45,7 +50,7 @@ class TransferViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    """Read-only view over finalized transfers plus the ``deactivate`` transition.
+    """Finalized transfers: list, read, rename, deactivate, delete.
 
     All the pre-finalize lifecycle (draft creation, file add/remove, upload
     signing, multipart completion, finalize) lives on ``TransferDraftViewSet``
@@ -72,15 +77,37 @@ class TransferViewSet(
         if self.action == "list":
             qs = models.Transfer.objects.filter(owner=self.request.user)
 
+            # Sent transfers by default; ``direction=inbound`` lists deposits,
+            # shared spaces' included, narrowed to one space
+            # (``deposit_space=<id>``) or to anonymous sends (``inbox=true``).
+            params = self.request.query_params
+            if params.get("direction") == TransferDirection.INBOUND:
+                qs = models.Transfer.objects.filter(
+                    deposits.readable_deposits(self.request.user),
+                    direction=TransferDirection.INBOUND,
+                )
+                if params.get("deposit_space"):
+                    try:
+                        qs = qs.filter(deposit_space_id=params["deposit_space"])
+                    except DjangoValidationError:
+                        qs = qs.none()
+                elif params.get("inbox") == "true":
+                    qs = qs.filter(deposit_space__isnull=True).exclude(inbox_email="")
+            else:
+                qs = qs.filter(direction=TransferDirection.OUTBOUND)
+
             # ``deactivated`` bucket — "active" section = status ACTIVE only;
             # "deactivated" section = every other status (EXPIRED, DEACTIVATED).
             # Omitted → no status filter, for any caller that still wants
             # the full list.
+            # Past its deadline a transfer is closed, even before the expiry
+            # task moves it out of ACTIVE.
             deactivated = self.request.query_params.get("deactivated")
+            live = Q(status=TransferStatus.ACTIVE, expires_at__gt=timezone.now())
             if deactivated == "true":
-                qs = qs.exclude(status=TransferStatus.ACTIVE)
+                qs = qs.exclude(live)
             elif deactivated == "false":
-                qs = qs.filter(status=TransferStatus.ACTIVE)
+                qs = qs.filter(live)
 
             search = (self.request.query_params.get("search") or "").strip()
             if search:
@@ -100,15 +127,19 @@ class TransferViewSet(
                 _downloaded=event_of_type(TransferEventType.FILE_DOWNLOADED),
             ).order_by("-created_at")
         return (
-            models.Transfer.objects.filter(owner=self.request.user)
+            models.Transfer.objects.filter(
+                deposits.readable_deposits(self.request.user)
+            )
             .prefetch_related("files", "recipients")
             .order_by("-created_at")
         )
 
     def perform_destroy(self, instance):
-        """Hard-delete a transfer past its ACTIVE phase.
+        """Hard-delete a transfer past its ACTIVE phase, or a deposit in any
+        state: a deposit has no recipients waiting on its link, only the
+        space's owner and members, so there is no link to close first.
 
-        Two eligible states:
+        Two eligible states for a sent transfer:
 
         * ``PENDING_FILE_DELETION`` — link is already closed but S3
           objects still exist, waiting for the grace window to elapse.
@@ -141,7 +172,16 @@ class TransferViewSet(
         attribution needs the privacy-reviewed audit pipeline, not an
         infra log line.
         """
-        if instance.status == TransferStatus.ACTIVE:
+        # A space's members read its deposits; only the owner deletes them.
+        if instance.owner_id != self.request.user.id:
+            raise drf.exceptions.PermissionDenied(
+                "Only the owner of this space can delete its deposits."
+            )
+        if (
+            instance.status == TransferStatus.ACTIVE
+            and not instance.is_inbound
+            and not instance.is_expired
+        ):
             # Expected defensive rejection: the frontend hides the button on
             # ACTIVE, so reaching here means a raw DELETE (curl / script /
             # ops probe). Log at INFO — the guard fired as designed, this
@@ -157,9 +197,24 @@ class TransferViewSet(
                     )
                 }
             )
-        # PENDING_FILE_DELETION still owns bytes — wipe them before the
-        # row goes so the periodic sweep never finds orphan keys.
-        if instance.status == TransferStatus.PENDING_FILE_DELETION:
+        if instance.status == TransferStatus.ACTIVE:
+            # A deposit, or a transfer past its deadline whose expiry task
+            # has not run: its link is closed, so it goes at once. Closed
+            # first, so a storage failure leaves it to the hourly purge.
+            now = timezone.now()
+            models.Transfer.objects.filter(
+                pk=instance.pk, status=TransferStatus.ACTIVE
+            ).update(
+                status=TransferStatus.PENDING_FILE_DELETION,
+                deactivation_reason=DeactivationReason.EXPIRED
+                if instance.is_expired
+                else DeactivationReason.MANUAL,
+                pending_deletion_at=now,
+                updated_at=now,
+            )
+        # PENDING_FILE_DELETION still owns bytes — wipe them before the row
+        # goes so the periodic sweep never finds orphan keys.
+        if instance.status != TransferStatus.DEACTIVATED:
             if not instance.delete_s3_objects():
                 # Storage failure (S3 hiccup, credentials rot, bucket
                 # policy change) — WARNING so ops sees the rate. The
@@ -190,6 +245,42 @@ class TransferViewSet(
             log_agent_event(instance, TransferEventType.TRANSFER_DELETED, self.request)
             instance.delete()
         logger.info("Transfer %s hard-deleted", transfer_id)
+
+    @extend_schema(
+        request=TransferRenameSerializer,
+        responses={200: TransferDetailSerializer},
+    )
+    def partial_update(self, request, pk=None):
+        """Rename a transfer: its title is the only field that changes after
+        finalize. A deposit's original title stays in its received event."""
+        transfer = self.get_object()
+        serializer = TransferRenameSerializer(transfer, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_title = serializer.validated_data["title"]
+        with transaction.atomic():
+            # Locked: two renames each journal the title they replaced.
+            old_title = (
+                models.Transfer.objects.select_for_update()
+                .values_list("title", flat=True)
+                .filter(pk=transfer.pk)
+                .first()
+            )
+            # Deleted since get_object.
+            if old_title is None:
+                raise drf.exceptions.NotFound()
+            # Answer with the saved title, even when another rename set it.
+            transfer.title = new_title
+            if new_title != old_title:
+                # Only the title: a full save would write back a status that
+                # another request changed since get_object.
+                transfer.save(update_fields=["title", "updated_at"])
+                log_agent_event(
+                    transfer,
+                    TransferEventType.TRANSFER_RENAMED,
+                    request,
+                    payload={"old_title": old_title, "new_title": new_title},
+                )
+        return drf.response.Response(TransferDetailSerializer(transfer).data)
 
     @extend_schema(responses={200: TransferDetailSerializer})
     @action(detail=True, methods=["post"])

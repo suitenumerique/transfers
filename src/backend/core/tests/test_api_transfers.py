@@ -10,15 +10,17 @@ events.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.conf import settings
 from django.utils import timezone
 
 import pytest
 
+from core.api.viewsets.transfer import TransferViewSet
 from core.enums import ActorType, TransferEventType, TransferStatus
 from core.factories import TransferFactory, TransferFileFactory
-from core.models import TransferEvent
+from core.models import Transfer, TransferEvent
 from core.tests.conftest import assert_single_event
 
 API_URL = "/api/v1.0/transfers/"
@@ -211,6 +213,20 @@ class TestTransferList:
         assert response.status_code == 200
         ids = {row["id"] for row in response.data["results"]}
         assert ids == {str(active.id)}
+
+    def test_list_counts_a_past_deadline_transfer_as_closed(
+        self, authenticated_client, user
+    ):
+        """Its link is closed before the expiry task moves it out of ACTIVE."""
+        expired = TransferFactory(
+            owner=user,
+            status=TransferStatus.ACTIVE,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        live = authenticated_client.get(f"{API_URL}?deactivated=false")
+        closed = authenticated_client.get(f"{API_URL}?deactivated=true")
+        assert str(expired.id) not in {row["id"] for row in live.data["results"]}
+        assert str(expired.id) in {row["id"] for row in closed.data["results"]}
 
     def test_list_deactivated_true_returns_non_active(self, authenticated_client, user):
         TransferFactory(owner=user, status=TransferStatus.ACTIVE)
@@ -415,6 +431,19 @@ class TestTransferHardDelete:
         patched_s3.delete.assert_any_call(f.s3_key)
         assert not Transfer.objects.filter(id=transfer.id).exists()
 
+    def test_deletes_an_active_transfer_past_its_deadline(
+        self, patched_s3, authenticated_client, user
+    ):
+        """Its link is already closed: no need to wait for the expiry task."""
+        transfer = TransferFactory(
+            owner=user,
+            status=TransferStatus.ACTIVE,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        response = authenticated_client.delete(f"{API_URL}{transfer.id}/")
+        assert response.status_code == 204
+        assert not Transfer.objects.filter(id=transfer.id).exists()
+
     def test_refuses_when_s3_delete_fails(self, patched_s3, authenticated_client, user):
         """S3 hiccup on wipe → 400, row + files intact. Otherwise deleting
         the row would strand S3 objects the periodic sweep can no longer
@@ -614,3 +643,98 @@ class TestRecipientStatuses:
             response = authenticated_client.get(f"{API_URL}{transfer.id}/")
         assert response.status_code == 200
         assert len(response.data["recipients"]) == 20
+
+
+@pytest.mark.django_db
+class TestTransferRename:
+    """PATCH /api/v1.0/transfers/<id>/ — the owner renames a transfer."""
+
+    def test_owner_renames(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user, title="Old")
+        response = authenticated_client.patch(
+            f"{API_URL}{transfer.id}/", {"title": "  New name  "}, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["title"] == "New name"
+        transfer.refresh_from_db()
+        assert transfer.title == "New name"
+
+    def test_only_the_title_changes(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user)
+        expires_at = transfer.expires_at
+        response = authenticated_client.patch(
+            f"{API_URL}{transfer.id}/",
+            {"title": "New", "expires_at": "2099-01-01T00:00:00Z"},
+            format="json",
+        )
+        assert response.status_code == 200
+        transfer.refresh_from_db()
+        assert transfer.expires_at == expires_at
+
+    @pytest.mark.parametrize("title", ["", "   ", "x" * 81])
+    def test_rejects_an_empty_or_long_title(self, authenticated_client, user, title):
+        transfer = TransferFactory(owner=user, title="Old")
+        response = authenticated_client.patch(
+            f"{API_URL}{transfer.id}/", {"title": title}, format="json"
+        )
+        assert response.status_code == 400
+        transfer.refresh_from_db()
+        assert transfer.title == "Old"
+
+    def test_rejects_other_user(self, authenticated_client):
+        other_transfer = TransferFactory(title="Old")
+        response = authenticated_client.patch(
+            f"{API_URL}{other_transfer.id}/", {"title": "Mine"}, format="json"
+        )
+        assert response.status_code == 404
+        other_transfer.refresh_from_db()
+        assert other_transfer.title == "Old"
+
+    def test_unauthenticated(self, api_client):
+        transfer = TransferFactory()
+        response = api_client.patch(
+            f"{API_URL}{transfer.id}/", {"title": "New"}, format="json"
+        )
+        assert response.status_code == 401
+
+    def test_rename_is_journaled(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user, title="Old")
+        authenticated_client.patch(
+            f"{API_URL}{transfer.id}/", {"title": "New"}, format="json"
+        )
+        assert_single_event(
+            transfer.id,
+            TransferEventType.TRANSFER_RENAMED,
+            old_title="Old",
+            new_title="New",
+        )
+
+    def test_same_title_is_not_journaled(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user, title="Same")
+        response = authenticated_client.patch(
+            f"{API_URL}{transfer.id}/", {"title": "Same"}, format="json"
+        )
+        assert response.status_code == 200
+        assert not TransferEvent.objects.filter(transfer_id=transfer.id).exists()
+
+    def test_does_not_write_back_other_fields(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user)
+        stale = Transfer.objects.get(id=transfer.id)
+        # Deactivated by another request after the view read the row.
+        Transfer.objects.filter(id=transfer.id).update(
+            status=TransferStatus.DEACTIVATED
+        )
+        with patch.object(TransferViewSet, "get_object", return_value=stale):
+            authenticated_client.patch(
+                f"{API_URL}{transfer.id}/", {"title": "New"}, format="json"
+            )
+        transfer.refresh_from_db()
+        assert transfer.title == "New"
+        assert transfer.status == TransferStatus.DEACTIVATED
+
+    def test_put_is_not_allowed(self, authenticated_client, user):
+        transfer = TransferFactory(owner=user)
+        response = authenticated_client.put(
+            f"{API_URL}{transfer.id}/", {"title": "New"}, format="json"
+        )
+        assert response.status_code == 405

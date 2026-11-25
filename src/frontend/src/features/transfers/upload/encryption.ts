@@ -178,3 +178,15 @@ export function base64UrlDecode(s: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+
+// SHA-256 of a key's fragment, in hex: lets a deposit page tell a mangled
+// end-to-end link from a good one without the server ever seeing the key.
+export async function keyCheck(fragment: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(fragment),
+  );
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+}

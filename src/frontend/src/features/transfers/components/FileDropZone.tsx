@@ -11,9 +11,12 @@ interface FileDropZoneProps {
   // so the user can't miss the rejection reason. The parent is
   // responsible for clearing the error on the next add/remove.
   errorMessage?: string | null;
+  // Cap named in the hint; defaults to the transfer cap (a deposit space
+  // has its own).
+  maxTotalSize?: number;
 }
 
-function formatMaxSize(bytes: number): string {
+export function formatMaxSize(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
   if (gb >= 1) return `${Math.round(gb)} Go`;
   const mb = bytes / (1024 * 1024);
@@ -62,9 +65,14 @@ function useWindowFileDrag(): boolean {
   return dragging;
 }
 
-export function FileDropZone({ onChange, errorMessage }: FileDropZoneProps) {
+export function FileDropZone({
+  onChange,
+  errorMessage,
+  maxTotalSize,
+}: FileDropZoneProps) {
   const { t } = useTranslation();
   const config = useConfig();
+  const maxSize = maxTotalSize ?? config.TRANSFER_MAX_TOTAL_SIZE;
   const windowDragging = useWindowFileDrag();
   const hasError = Boolean(errorMessage);
 
@@ -108,7 +116,7 @@ export function FileDropZone({ onChange, errorMessage }: FileDropZoneProps) {
             </p>
             <p className="file-dropzone__hint">
               {t("Max {{size}}", {
-                size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+                size: formatMaxSize(maxSize),
               })}
             </p>
           </div>
@@ -131,7 +139,7 @@ export function FileDropZone({ onChange, errorMessage }: FileDropZoneProps) {
             </p>
             <p className="file-dropzone__hint">
               {t("Max {{size}}", {
-                size: formatMaxSize(config.TRANSFER_MAX_TOTAL_SIZE),
+                size: formatMaxSize(maxSize),
               })}
             </p>
           </div>

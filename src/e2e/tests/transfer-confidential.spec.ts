@@ -36,9 +36,7 @@ test("a confidential link carries its key in the fragment", async ({
   const other = await anonymousPage(browser);
   await other.goto(bareLink);
   await expect(
-    other.getByText(
-      "This transfer is confidential. Enter the decryption key the sender shared with you separately to unlock the files.",
-    ),
+    other.getByText("Shared with you separately by the sender."),
   ).toBeVisible();
   // A malformed key is refused at once. (A well-formed wrong key only fails
   // when the files are decrypted, by design.)

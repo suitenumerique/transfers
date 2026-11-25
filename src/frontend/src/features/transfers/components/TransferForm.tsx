@@ -59,7 +59,7 @@ function StorageGauge({
 // Plain CSS rotation — the SVG node itself is stable across draft
 // re-renders (row `key` is df.key, which doesn't change during polling),
 // so the animation keeps spinning without resetting every 2s tick.
-function ImportSpinner() {
+export function ImportSpinner() {
   return (
     <svg
       width="22"
@@ -91,7 +91,7 @@ function ImportSpinner() {
 // shrinks as percent grows so the brand-colored arc stretches clockwise
 // starting from the top. Clamped to [0, 100] in case upstream reports
 // floats / overshoot.
-function UploadRing({ percent }: { percent: number }) {
+export function UploadRing({ percent }: { percent: number }) {
   const p = Math.max(0, Math.min(100, percent));
   const radius = 9;
   const circumference = 2 * Math.PI * radius;
@@ -133,7 +133,7 @@ function stripExtension(filename: string): string {
   return filename.replace(/\.[^.]+$/, "");
 }
 
-function percent(df: DraftFile): number {
+export function percent(df: DraftFile): number {
   if (df.total === 0) return 0;
   return Math.min(100, Math.round((df.loaded / df.total) * 100));
 }
@@ -407,22 +407,14 @@ export function TransferForm() {
     }
 
     clearSubmitError();
-    // Snapshot the fragment before submit() runs `resetLocal` and clears it.
-    // Read the synchronous ref rather than draft.keyFragment: if the user
-    // clicks Send before the render triggered by the fragment's arrival has
-    // flushed, the state value on the draft object is still the prior null
-    // and the confirm URL loses its ``#…``. The ref is written the same tick
-    // the fragment lands, so it's always current.
-    // Only confidential transfers carry it to the confirm page (link: to
+    // Only confidential transfers carry the key to the confirm page (link: to
     // rebuild the working URL; email: to show the sender the key to share
     // separately). Normal transfers get a bare link — the backend serves the
     // key — so nothing to carry. Shown once: a refresh of the confirm URL
     // drops the fragment, matching "we don't store it".
-    const fragmentToCarry = draft.confidential
-      ? draft.keyFragmentRef.current
-      : null;
+    const confidential = draft.confidential;
     try {
-      const result = await draft.submit({
+      const { transfer: result, keyFragment } = await draft.submit({
         title,
         expires_in_days: expiresInDays,
         sharing_mode: sharingMode,
@@ -440,7 +432,7 @@ export function TransferForm() {
       navigate({
         to: "/confirm/$id",
         params: { id: result.id },
-        ...(fragmentToCarry ? { hash: fragmentToCarry } : {}),
+        ...(confidential && keyFragment ? { hash: keyFragment } : {}),
       });
     } catch (err) {
       // A cancel is a deliberate user action — stay on the form silently.

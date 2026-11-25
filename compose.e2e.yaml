@@ -128,7 +128,7 @@ services:
       keycloak:
         condition: service_healthy
 
-  # Sends the emails (invitations, download receipts).
+  # Sends the emails (invitations, receipts, deposit notifications).
   worker:
     # The image the backend service builds.
     image: transfers-e2e-backend

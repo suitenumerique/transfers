@@ -1,0 +1,11 @@
+{% autoescape off %}Un espace de dépôt a été partagé avec vous.
+
+{{ owner_label }} vous a donné accès à son espace de dépôt {{ space.name }} : vous voyez les fichiers qui y sont déposés et pouvez les télécharger.
+
+Connectez-vous avec ProConnect avec l'adresse {{ email }} pour y accéder.
+
+Ouvrir l'espace : {{ cta_url }}
+
+—
+Transferts — La Suite territoriale
+{% endautoescape %}

@@ -14,6 +14,7 @@ import {
   ciphertextSize,
   encryptChunk,
   generateTransferKey,
+  importTransferKey,
   totalParts,
 } from "../upload/encryption";
 import { MultipartUploader } from "../upload/MultipartUploader";
@@ -106,11 +107,6 @@ export interface TransferDraftHandle {
   // sender to share out-of-band (email); for normal transfers it is posted
   // to the backend at finalize instead.
   keyFragment: string | null;
-  // Synchronous mirror of ``keyFragment`` for callers that need to snapshot
-  // the value before ``submit()``'s reset clears it — a render may not have
-  // flushed between ``setKeyFragment`` and the click that fires submit, so
-  // the state ``keyFragment`` above can still be null in that window.
-  keyFragmentRef: { readonly current: string | null };
   // Two-phase submit state:
   // - `isAwaitingUploads`: user clicked Send but uploads are still running.
   //   Auto-finalize is armed but cancellable via `cancelSubmit()` or by
@@ -143,7 +139,10 @@ export interface TransferDraftHandle {
   addFile: (file: File) => void;
   attachFromDrive: (items: DrivePickedItem[]) => void;
   removeFile: (key: string) => void;
-  submit: (metadata: FinalizeMetadata) => Promise<TransferDetail>;
+  // With the key the transfer was sent with: Send may come before it exists.
+  submit: (
+    metadata: FinalizeMetadata,
+  ) => Promise<{ transfer: TransferDetail; keyFragment: string | null }>;
   // Disarm a pending auto-finalize. No-op if the draft isn't waiting on
   // uploads. Called when the user edits the draft (title / recipients /
   // file list) while the submit is armed — intent has shifted, the click
@@ -229,8 +228,37 @@ interface FinalizePendingResponse {
   import_progress?: DriveImportProgress[];
 }
 
-export function useTransferDraft(): TransferDraftHandle {
+export interface TransferDraftOptions {
+  // The draft endpoints: ``/drafts`` for an agent, ``/deposit-drafts`` for a
+  // depositor, whose session token rides in ``headers``.
+  basePath?: string;
+  headers?: Record<string, string>;
+  // A key chosen by someone else (the agent who made an end-to-end deposit
+  // space), as its URL fragment: files are encrypted with it, and it is
+  // never sent at finalize.
+  presetKey?: string;
+}
+
+type DraftFetch = <T>(path: string, init?: RequestInit) => Promise<T>;
+
+function makeDraftFetch({
+  basePath = "/drafts",
+  headers,
+}: TransferDraftOptions): DraftFetch {
+  return <T>(path: string, init?: RequestInit) =>
+    apiFetch<T>(`${basePath}${path}`, {
+      ...init,
+      headers: { ...init?.headers, ...headers },
+    });
+}
+
+export function useTransferDraft(
+  options: TransferDraftOptions = {},
+): TransferDraftHandle {
   const queryClient = useQueryClient();
+  // Fixed for the hook's lifetime: a depositor's session token is known
+  // before the upload step mounts.
+  const draftFetchRef = useRef<DraftFetch>(makeDraftFetch(options));
   // Canonical chunk size for the whole upload + encryption pipeline. Pulled from
   // /config/ so we can never disagree with the backend (which imposes its
   // own ``settings.TRANSFER_CHUNK_SIZE`` on encryption drafts) about where one
@@ -266,7 +294,8 @@ export function useTransferDraft(): TransferDraftHandle {
   // Synchronous mirror of `keyFragment`: submit would otherwise read a stale
   // null from its closure if Send is clicked before the render flushes.
   const keyFragmentRef = useRef<string | null>(null);
-  const confidentialRef = useRef(false);
+  const presetKey = options.presetKey;
+  const confidentialRef = useRef(Boolean(presetKey));
 
   // Refs mirror state so async work can observe the freshest list without
   // waiting for the next render.
@@ -350,7 +379,7 @@ export function useTransferDraft(): TransferDraftHandle {
     resetLocal();
     if (id) {
       try {
-        await apiFetch(`/drafts/${id}/abort/`, { method: "POST" });
+        await draftFetchRef.current(`/${id}/abort/`, { method: "POST" });
       } catch {
         // best-effort; the server cleanup task sweeps stale drafts anyway
       }
@@ -411,8 +440,8 @@ export function useTransferDraft(): TransferDraftHandle {
       signPart: async (partNumber) => {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
-        const resp = await apiFetch<SignPartResponse>(
-          `/drafts/${id}/sign-part/`,
+        const resp = await draftFetchRef.current<SignPartResponse>(
+          `/${id}/sign-part/`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -437,7 +466,7 @@ export function useTransferDraft(): TransferDraftHandle {
       .then(async (parts) => {
         const id = draftIdRef.current;
         if (!id) throw new Error("Draft was aborted");
-        await apiFetch(`/drafts/${id}/complete-upload/`, {
+        await draftFetchRef.current(`/${id}/complete-upload/`, {
           method: "POST",
           body: JSON.stringify({
             transfer_file_id: backendId,
@@ -541,7 +570,7 @@ export function useTransferDraft(): TransferDraftHandle {
         return;
       }
       try {
-        const resp = await apiFetch<DraftDetailResponse>(`/drafts/${id}/`);
+        const resp = await draftFetchRef.current<DraftDetailResponse>(`/${id}/`);
         // Do NOT bail on ``cancelled`` here — this effect re-runs on every
         // ``files`` change (each upload completion), so a strict cancel
         // would drop the response of a poll started for file N whenever
@@ -623,7 +652,7 @@ export function useTransferDraft(): TransferDraftHandle {
     isRetryingRef.current = true;
     setIsRetrying(true);
     try {
-      await apiFetch(`/drafts/${id}/rescan/`, { method: "POST" });
+      await draftFetchRef.current(`/${id}/rescan/`, { method: "POST" });
     } catch {
       // Network/hiccup — keep the timed-out state so the user can retry again.
       return;
@@ -652,7 +681,12 @@ export function useTransferDraft(): TransferDraftHandle {
         // encrypted client-side with it, and a non-confidential Drive import
         // is encrypted server-side with the same key at finalize.
         if (!encryptionKeyRef.current) {
-          const { cryptoKey, fragment } = await generateTransferKey();
+          const { cryptoKey, fragment } = presetKey
+            ? {
+                cryptoKey: await importTransferKey(presetKey),
+                fragment: presetKey,
+              }
+            : await generateTransferKey();
           encryptionKeyRef.current = cryptoKey;
           keyFragmentRef.current = fragment;
           setKeyFragment(fragment);
@@ -661,8 +695,8 @@ export function useTransferDraft(): TransferDraftHandle {
           draftFile.size,
           chunkSizeFromConfig,
         );
-        const resp = await apiFetch<AddFileResponse>(
-          "/drafts/add-file/",
+        const resp = await draftFetchRef.current<AddFileResponse>(
+          "/add-file/",
           {
             method: "POST",
             body: JSON.stringify({
@@ -694,16 +728,16 @@ export function useTransferDraft(): TransferDraftHandle {
             // file we just created IS the draft's only row, so aborting
             // the whole thing is the right cleanup.
             if (knownDraftId === null) {
-              await apiFetch(
-                `/drafts/${resp.draft_id}/abort/`,
+              await draftFetchRef.current(
+                `/${resp.draft_id}/abort/`,
                 { method: "POST" },
               );
               draftIdRef.current = null;
               draftInitPromiseRef.current = null;
               setDraftId(null);
             } else {
-              await apiFetch(
-                `/drafts/${resp.draft_id}/remove-file/`,
+              await draftFetchRef.current(
+                `/${resp.draft_id}/remove-file/`,
                 {
                   method: "POST",
                   body: JSON.stringify({
@@ -905,8 +939,8 @@ export function useTransferDraft(): TransferDraftHandle {
       if (!target.backendId || !draftIdRef.current) return;
 
       try {
-        await apiFetch(
-          `/drafts/${draftIdRef.current}/remove-file/`,
+        await draftFetchRef.current(
+          `/${draftIdRef.current}/remove-file/`,
           {
             method: "POST",
             body: JSON.stringify({ transfer_file_id: target.backendId }),
@@ -927,9 +961,9 @@ export function useTransferDraft(): TransferDraftHandle {
   );
 
   const submit = useCallback(
-    async (metadata: FinalizeMetadata): Promise<TransferDetail> => {
-      const id = draftIdRef.current;
-      if (!id) throw new Error("No draft to submit");
+    async (
+      metadata: FinalizeMetadata,
+    ): Promise<{ transfer: TransferDetail; keyFragment: string | null }> => {
       if (filesRef.current.length === 0) throw new Error("No files");
 
       cancelSubmitRef.current = false;
@@ -964,6 +998,11 @@ export function useTransferDraft(): TransferDraftHandle {
           };
           tick();
         });
+
+        // Read only now: Send can be clicked while the first add-file is
+        // still in flight, before the draft has an id.
+        const id = draftIdRef.current;
+        if (!id) throw new Error("No draft to submit");
 
         // Past the point of no cancel — flip the state so the UI locks
         // everything for the (short) /finalize/ round-trip.
@@ -1007,8 +1046,8 @@ export function useTransferDraft(): TransferDraftHandle {
         let driveInterval = DRIVE_IMPORT_POLL_INITIAL_MS;
         let finalized: TransferDetail;
         for (;;) {
-          const resp = await apiFetch<TransferDetail | FinalizePendingResponse>(
-            `/drafts/${id}/finalize/`,
+          const resp = await draftFetchRef.current<TransferDetail | FinalizePendingResponse>(
+            `/${id}/finalize/`,
             {
               method: "POST",
               body: JSON.stringify(finalizeBody),
@@ -1093,7 +1132,7 @@ export function useTransferDraft(): TransferDraftHandle {
 
         queryClient.invalidateQueries({ queryKey: ["transfers"] });
         resetLocal();
-        return finalized;
+        return { transfer: finalized, keyFragment: fragment };
       } finally {
         setAwaitingUploads(false);
         setIsFinalizing(false);
@@ -1126,11 +1165,6 @@ export function useTransferDraft(): TransferDraftHandle {
     error,
     confidential,
     keyFragment,
-    // Synchronous mirror of ``keyFragment`` for callers that need to snapshot
-    // the value before ``submit()``'s resetLocal clears it — a render may not
-    // have flushed between ``setKeyFragment`` and the click that fires submit,
-    // so the state value on the returned object can still be null.
-    keyFragmentRef,
     setConfidential,
     addFile,
     attachFromDrive,

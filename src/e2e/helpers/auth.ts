@@ -37,7 +37,7 @@ export async function signIn(page: Page, user: DevUser) {
   await page.goto("/");
   await page.getByRole("button", { name: "Sign in" }).first().click();
   await fillKeycloak(page, user);
-  await expect(page.getByRole("link", { name: "New", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "New transfer" })).toBeVisible();
 }
 
 // A page with no session. ``browser.newPage()`` would not do: in a test file

@@ -117,6 +117,26 @@
     margin-top: var(--c--globals--spacings--xs);
     flex-wrap: wrap;
   }
+
+  // The anonymous send, set apart from the agents' sign-in above.
+  &__send {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--c--globals--spacings--xs);
+    width: 100%;
+    margin-top: var(--c--globals--spacings--md);
+    padding: var(--c--globals--spacings--md);
+    border: 1px solid var(--c--contextuals--border--surface--primary);
+    border-radius: 8px;
+  }
+
+  &__send-title {
+    margin: 0;
+    font-size: var(--c--globals--font--sizes--md);
+    font-weight: 700;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
+  }
 }
 
 
@@ -146,6 +166,7 @@
   > .transfer-detail__link-box,
   > .transfer-detail__recipients-box,
   > .transfer-detail__file-list,
+  > .download-view--embedded,
   > .transfer-detail__actions {
     margin-top: var(--c--globals--spacings--md);
   }
@@ -165,6 +186,26 @@
       flex-shrink: 0;
       white-space: nowrap;
     }
+  }
+
+  // Inline rename: the input takes the title's place and type size.
+  &__header > &__title-form {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title-input {
+    width: 100%;
+    padding: 2px 6px;
+    margin-left: -7px;
+    border: 1px solid var(--c--contextuals--border--semantic--brand--primary, #3e5de7);
+    border-radius: 6px;
+    background: transparent;
+    font: inherit;
+    font-size: var(--c--globals--font--sizes--h3, 1.5rem);
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--c--contextuals--content--semantic--neutral--primary);
   }
 
   // Needs h1 prefix to beat the default .app-content h1 { margin-bottom: 1.5rem }
@@ -189,6 +230,28 @@
     gap: var(--c--globals--spacings--xs);
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+
+    // One line on a wide screen, past the column's edge if need be: the
+    // page has room beside it. A phone wraps it instead of scrolling.
+    @media (min-width: 1024px) {
+      flex-wrap: nowrap;
+      white-space: nowrap;
+
+      // Overflowing rather than squeezed: shrunk, the icons would vanish.
+      // A tooltip rendered inside the line keeps its own wrapping.
+      * {
+        flex-shrink: 0;
+      }
+
+      .c__tooltip {
+        width: max-content;
+        max-width: 320px;
+      }
+
+      .c__tooltip * {
+        flex-shrink: 1;
+      }
+    }
   }
 
   &__meta-item {
@@ -199,6 +262,11 @@
     > svg {
       width: 16px;
       height: 16px;
+    }
+
+    // A font icon (e.g. inbox, which the SVG set lacks), at the same size.
+    > .material-icons {
+      font-size: 16px;
     }
   }
 
@@ -354,7 +422,9 @@
   &__history-head,
   &__history-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    // minmax(0, …): each row is its own grid, so a column sized by its
+    // content (a depositor's email) would shift that row's columns.
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--c--globals--spacings--sm);
     padding:
       var(--c--globals--spacings--xs) 0;
@@ -399,6 +469,9 @@
     align-items: center;
     gap: var(--c--globals--spacings--sm);
     font-weight: 500;
+    // The label can carry a title or a filename with no space to break at.
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   // Same tile style as the file list above (32×32 neutral) so both lists
@@ -432,6 +505,12 @@
     padding-left: calc(14px + 6px);
     font-size: var(--c--globals--font--sizes--sm);
     color: var(--c--contextuals--content--semantic--neutral--secondary);
+  }
+
+  &__history-actor {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -1424,6 +1503,11 @@
       width: 16px;
       height: 16px;
     }
+
+    // A font icon (e.g. inbox, which the SVG set lacks), at the same size.
+    > .material-icons {
+      font-size: 16px;
+    }
   }
 
   &__meta-sep {
@@ -1439,6 +1523,7 @@
 
   &__auto-archive-alert,
   &__scan-alert,
+  &__depositor,
   &__encryption-error-alert,
   &__owner-alert,
   &__interrupted-alert {
@@ -1522,8 +1607,18 @@
   }
 
   &__download-all.c__button {
-    margin-top: var(--c--globals--spacings--md);
     justify-content: center;
+  }
+
+  // Inside the transfer page: its column, not the centered download card.
+  &--embedded {
+    max-width: none;
+    margin: 0;
+    text-align: start;
+  }
+
+  &--embedded &__file-list {
+    margin-top: 0;
   }
 }
 
@@ -1690,5 +1785,47 @@
 @keyframes file-item__ring-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+// "Download all" and the page's own buttons, side by side.
+.download-view__actions {
+  margin-top: var(--c--globals--spacings--md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xs);
+
+  // Halves of the row; alone, "Download all" takes it whole.
+  > .c__button {
+    flex: 1 1 200px;
+    width: auto;
+    justify-content: center;
+  }
+}
+
+// The depositor's name in the meta line: cut short, whole on hover.
+.depositor-meta__name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Its verified / not verified badge.
+.depositor-meta__badge {
+  display: inline-flex;
+  margin-left: var(--c--globals--spacings--3xs, 4px);
+  border-radius: 999px;
+
+  .c__badge,
+  [class*="badge"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  svg {
+    width: 14px;
+    height: 14px;
   }
 }

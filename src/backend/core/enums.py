@@ -55,6 +55,13 @@ class TransferEventType(models.TextChoices):
     # The agent hard-deleted the transfer. Outlives the row like every
     # event, so "who deleted it, when, from where" stays answerable.
     TRANSFER_DELETED = "transfer_deleted"
+    # Someone without an account deposited files (an inbound transfer). The
+    # deposit caps count these, so deleting a deposit gives nothing back.
+    DEPOSIT_RECEIVED = "deposit_received"
+    # An agent attached an anonymous send addressed to their email.
+    INBOUND_CLAIMED = "inbound_claimed"
+    # The agent renamed the transfer; the payload keeps both titles.
+    TRANSFER_RENAMED = "transfer_renamed"
 
 
 class ScanStatus(models.TextChoices):
@@ -88,6 +95,14 @@ class SharingMode(models.TextChoices):
 
     EMAIL = "email", "Email"
     LINK = "link", "Link"
+
+
+class TransferDirection(models.TextChoices):
+    """Who sent the files: an agent (outbound), or someone without an account
+    depositing them for an agent (inbound)."""
+
+    OUTBOUND = "outbound", "Outbound"
+    INBOUND = "inbound", "Inbound"
 
 
 class ActorType(models.TextChoices):

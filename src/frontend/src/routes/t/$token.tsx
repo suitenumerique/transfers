@@ -1,10 +1,11 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@gouvfr-lasuite/cunningham-react";
-import { ProConnectButton, Spinner } from "@gouvfr-lasuite/ui-kit";
+import { ProConnectButton, Spinner, UserMenu } from "@gouvfr-lasuite/ui-kit";
 import { QuestionMark } from "@gouvfr-lasuite/ui-kit/icons";
 import { ApiError } from "@/features/api/client";
-import { login, useAuth } from "@/features/auth";
+import { loginAndReturn, logout, useAuth } from "@/features/auth";
 import { Gaufre } from "@/features/layouts/components/gaufre";
 import { LanguagePicker } from "@/features/layouts/components/main/language-picker";
 import { useConfig } from "@/features/providers/config";
@@ -34,6 +35,22 @@ function DownloadPage() {
   const { r: recipientToken } = Route.useSearch();
   const config = useConfig();
   const { user } = useAuth();
+  // Read before DownloadView strips the key fragment: signing in must come
+  // back to the whole link, key included.
+  const [returnTo, setReturnTo] = useState(() => {
+    const { pathname, search, hash } = window.location;
+    return `${pathname}${search}${hash}`;
+  });
+  // A link pasted again in this tab brings its key in a new fragment.
+  // Read in the event itself: DownloadView strips it in a later effect.
+  useEffect(() => {
+    const onHashChange = () => {
+      const { pathname, search, hash } = window.location;
+      if (hash) setReturnTo(`${pathname}${search}${hash}`);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const { data, isLoading, isError, error } = useDownloadTransfer(
     token,
@@ -59,8 +76,14 @@ function DownloadPage() {
         <p className="download-page__status">{messages[reason]}</p>
       );
     }
+    // A deposit is read on the agent's own page, not on the recipients' one.
+    if (data.direction === "inbound" && data.id) {
+      return <Navigate to="/transfers/$id" params={{ id: data.id }} replace />;
+    }
     return (
       <DownloadView
+        // Remounted per link: its key and confirmation are its own.
+        key={token}
         transfer={data}
         token={token!}
         recipientToken={recipientToken}
@@ -89,7 +112,17 @@ function DownloadPage() {
         <div className="download-page__topbar-right">
           <LanguagePicker size="small" compact />
           <Gaufre />
-          {!user && <ProConnectButton onClick={login} />}
+          {user ? (
+            <UserMenu
+              user={{
+                full_name: user.full_name ?? undefined,
+                email: user.email ?? "",
+              }}
+              logout={logout}
+            />
+          ) : (
+            <ProConnectButton onClick={() => loginAndReturn(returnTo)} />
+          )}
         </div>
       </header>
 
